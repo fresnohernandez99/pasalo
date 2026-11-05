@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Pasalo</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="me">
+      <div class="avatar" id="me-avatar">·</div>
+      <div class="me-text">
+        <input id="me-name" class="name-input" spellcheck="false" autocomplete="off" title="Tu nombre en la red (pulsa Intro para guardarlo)">
+        <div class="sub" id="me-sub"></div>
+      </div>
+    </div>
+    <div class="dir">
+      <button id="open-dir" class="ghost" title="Abrir la carpeta de recibidos">
+        <span class="dir-caption">Recibidos en</span>
+        <span id="dir-label">…</span>
+      </button>
+      <button id="change-dir" class="ghost small">Cambiar</button>
+    </div>
+  </header>
+
+  <main>
+    <section class="panel peers-panel">
+      <div class="panel-head">
+        <h2>Equipos</h2>
+        <button id="refresh" class="ghost small">Buscar</button>
+      </div>
+      <div id="peers" class="peers"></div>
+      <form id="manual" class="manual">
+        <input id="manual-ip" placeholder="Añadir por IP, p. ej. 192.168.1.20" autocomplete="off" spellcheck="false">
+        <button class="small" type="submit">Añadir</button>
+      </form>
+      <p class="hint">Arrastra archivos o carpetas sobre un equipo para enviárselos.</p>
+    </section>
+
+    <section class="panel activity-panel">
+      <div class="panel-head">
+        <h2>Actividad</h2>
+        <button id="clear" class="ghost small">Limpiar terminadas</button>
+      </div>
+      <div id="activity" class="activity">
+        <div class="empty" id="activity-empty">Aquí aparecerán los envíos, las recepciones y los textos.</div>
+      </div>
+    </section>
+  </main>
+
+  <dialog id="text-dialog">
+    <form method="dialog" id="text-form">
+      <h3>Enviar texto a <span id="text-target"></span></h3>
+      <textarea id="text-body" rows="7" placeholder="Escribe o pega aquí"></textarea>
+      <div class="row">
+        <button type="button" class="ghost" id="text-cancel">Cancelar</button>
+        <button type="submit">Enviar</button>
+      </div>
+    </form>
+  </dialog>
+
+  <div id="toast" class="toast" hidden></div>
+  <script src="main.js"></script>
+</body>
+</html>
