@@ -11,6 +11,7 @@ pub mod protocol;
 mod receiver;
 mod remote;
 mod sender;
+mod talk;
 
 use std::net::SocketAddr;
 use std::path::Path;
@@ -22,6 +23,7 @@ pub use iroh::EndpointId;
 pub use receiver::Receiver;
 pub use remote::{ALPN, Remote, parse_code};
 pub use sender::{Greeting, SendOptions, probe, send_paths, send_text};
+pub use talk::{ChatMessage, MAX_IMAGE, Signal, Status, TALK_ALPN, Talk, VoiceLink};
 
 /// A dónde se envía: un equipo de la LAN por TCP o uno remoto por su código.
 #[derive(Debug, Clone)]
@@ -38,6 +40,11 @@ pub struct LocalInfo {
     pub name: String,
     pub platform: String,
     pub transfer_port: u16,
+    /// Código de iroh y puerto UDP donde escucha, si las conexiones remotas
+    /// están activas. Se anuncian en la LAN para poder abrir el canal cifrado
+    /// (chat y llamadas) directo y sin internet.
+    pub code: Option<String>,
+    pub remote_port: Option<u16>,
 }
 
 impl LocalInfo {
@@ -47,6 +54,8 @@ impl LocalInfo {
             name: name.into(),
             platform: std::env::consts::OS.to_string(),
             transfer_port: protocol::TRANSFER_PORT,
+            code: None,
+            remote_port: None,
         }
     }
 

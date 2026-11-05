@@ -17,7 +17,7 @@ use crate::protocol::{
     CHUNK, ItemState, LONG, Message, PROTOCOL_VERSION, SHORT, configure_stream, hash_prefix, read_msg,
     timed, unexpected, write_msg,
 };
-use crate::{Direction, Error, Event, EventSender, LocalInfo, Remote, TransferId};
+use crate::{Direction, Error, Event, EventSender, LocalInfo, Remote, TALK_ALPN, Talk, TransferId};
 
 /// Acepta conexiones y guarda lo recibido en `dest`. Acepta todo lo que llega,
 /// como Dukto.
@@ -101,16 +101,25 @@ impl Receiver {
         }
     }
 
-    /// Acepta conexiones de equipos remotos que llegan por iroh. Termina al
-    /// cerrar `remote`.
-    pub async fn run_remote(&self, remote: Remote) {
+    /// Acepta conexiones de equipos remotos que llegan por iroh: las de
+    /// archivos las atiende aquí y las del chat y las llamadas se las pasa a
+    /// `talk` (si no hay, se rechazan). Termina al cerrar `remote`.
+    pub async fn run_remote(&self, remote: Remote, talk: Option<Talk>) {
         while let Some(incoming) = remote.endpoint.accept().await {
             let this = self.clone();
+            let talk = talk.clone();
             tokio::spawn(async move {
                 let conn = match incoming.await {
                     Ok(conn) => conn,
                     Err(e) => return tracing::debug!("conexión remota fallida: {e}"),
                 };
+                if conn.alpn() == TALK_ALPN {
+                    match talk {
+                        Some(talk) => talk.accept(conn),
+                        None => conn.close(0u32.into(), b"sin chat"),
+                    }
+                    return;
+                }
                 let Ok(Ok((mut send, mut recv))) = tokio::time::timeout(SHORT, conn.accept_bi()).await else {
                     return;
                 };

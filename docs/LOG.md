@@ -38,3 +38,23 @@ Rama `chat-llamadas`. Cada entrada: qué se hizo, cómo se probó y qué queda.
   `Connection::alpn()` para repartir conexiones por protocolo.
 - Codec2 en Rust puro (`codec2` 0.3.1): según su documentación solo están
   implementados de verdad 3200 y 2400 bps. Por comprobar los modos más bajos.
+
+### Núcleo del chat (`pasalo-core/src/talk.rs`)
+- Canal `pasalo/talk/1` sobre iroh. Una conexión por pareja, reutilizada en
+  los dos sentidos; cada mensaje en su stream con acuse (`Ack`).
+- Mensajes de texto e imagen (hasta 25 MB), historial en `<dir>/<código>.jsonl`
+  (añadir líneas; gana la última por id) e imágenes en `<dir>/media/`.
+- Estados: `pending` → `delivered` (el otro confirmó) / `received`.
+  Los pendientes se reintentan cada 20 s y cuando cambia la dirección del
+  equipo; el receptor descarta repetidos por id.
+- Señales de llamada (`Signal { call, kind, data }`): el núcleo solo las
+  transporta; la interfaz decide qué significan.
+- Voz: `Talk::voice(peer)` da un `VoiceLink` con datagramas de esa conexión.
+- El descubrimiento LAN anuncia `code` y `remote_port` (campos opcionales, los
+  equipos viejos los ignoran) para conectar por iroh directo sin internet.
+- **Pruebas** (`tests/talk.rs`, sin internet, dos equipos por 127.0.0.1):
+  texto + imagen de 300 KB con acuse, mensaje pendiente que llega cuando el
+  otro equipo vuelve con la misma clave en otro puerto, señales y datagramas.
+- **Fallo encontrado por las pruebas y corregido**: un reintento se ignoraba
+  si el intento anterior seguía colgado contra la dirección vieja (hasta 30 s).
+  Ahora el intento viejo se cancela y empieza uno nuevo (1 s en vez de >20 s).

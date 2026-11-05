@@ -95,7 +95,7 @@ async fn main() -> Result<()> {
                 Ok(remote) => {
                     println!("Código para recibir desde otras redes: {}", remote.code());
                     let receiver = receiver.clone();
-                    tokio::spawn(async move { receiver.run_remote(remote).await });
+                    tokio::spawn(async move { receiver.run_remote(remote, None).await });
                 }
                 Err(e) => eprintln!("Sin conexiones remotas: {e}"),
             }
@@ -209,6 +209,8 @@ async fn print_events(mut rx: mpsc::UnboundedReceiver<Event>) {
                 println!("\n✗ {error}{}", if will_retry { " (reintentando…)" } else { "" });
             }
             Event::TextReceived { from, text } => println!("Texto de {from}:\n{text}"),
+            // El CLI no tiene chat ni llamadas.
+            Event::Chat { .. } | Event::Signal { .. } => {}
         }
     }
 }

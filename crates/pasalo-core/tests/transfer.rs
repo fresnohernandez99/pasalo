@@ -261,7 +261,7 @@ async fn sends_to_remote_by_code() {
     let receiver = Receiver::new(dst.path(), LocalInfo::new("receptor-id", "receptor"), tx.clone());
     tokio::spawn({
         let listening = listening.clone();
-        async move { receiver.run_remote(listening).await }
+        async move { receiver.run_remote(listening, None).await }
     });
     listening.online().await;
 

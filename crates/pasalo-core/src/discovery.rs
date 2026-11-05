@@ -29,6 +29,10 @@ pub struct Peer {
     pub platform: String,
     /// Dirección TCP donde recibe archivos.
     pub addr: SocketAddr,
+    /// Código de iroh, si tiene conexiones remotas activas.
+    pub code: Option<String>,
+    /// Dirección UDP de iroh en la LAN (para el chat y las llamadas sin internet).
+    pub remote_addr: Option<SocketAddr>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -48,6 +52,11 @@ struct Beacon {
     name: String,
     platform: String,
     port: u16,
+    // Opcionales para seguir entendiéndose con versiones que no los mandan.
+    #[serde(default)]
+    code: Option<String>,
+    #[serde(default)]
+    remote_port: Option<u16>,
 }
 
 type PeerMap = Arc<Mutex<HashMap<String, (Peer, Instant)>>>;
@@ -118,6 +127,8 @@ fn beacon(local: &LocalInfo, kind: Kind) -> Vec<u8> {
         name: local.name.clone(),
         platform: local.platform.clone(),
         port: local.transfer_port,
+        code: local.code.clone(),
+        remote_port: local.remote_port,
     })
     .expect("el beacon siempre se serializa")
 }
@@ -179,6 +190,8 @@ async fn recv_loop(socket: Arc<UdpSocket>, local: LocalInfo, port: u16, peers: P
             name: b.name,
             platform: b.platform,
             addr: SocketAddr::new(from.ip(), b.port),
+            code: b.code,
+            remote_addr: b.remote_port.map(|port| SocketAddr::new(from.ip(), port)),
         };
         let is_new = {
             let mut map = peers.lock().unwrap();

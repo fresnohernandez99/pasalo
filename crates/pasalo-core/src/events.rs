@@ -6,6 +6,7 @@ use serde::Serialize;
 use tokio::sync::mpsc::UnboundedSender;
 
 use crate::Peer;
+use crate::talk::{ChatMessage, Signal};
 
 pub type TransferId = u64;
 pub type EventSender = UnboundedSender<Event>;
@@ -59,6 +60,18 @@ pub enum Event {
     TextReceived {
         from: String,
         text: String,
+    },
+    /// Mensaje de chat nuevo o que cambió de estado (p. ej. ya entregado).
+    /// `name` es el nombre del equipo que lo envió, si llegó de fuera.
+    Chat {
+        message: ChatMessage,
+        name: Option<String>,
+    },
+    /// Señal de llamada de otro equipo (`peer` es su código).
+    Signal {
+        peer: String,
+        name: String,
+        signal: Signal,
     },
 }
 

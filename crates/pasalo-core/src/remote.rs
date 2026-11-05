@@ -4,10 +4,11 @@
 //! por un relay. Por encima va el mismo protocolo que en la LAN.
 
 use std::io;
+use std::net::SocketAddr;
 use std::path::Path;
 
 use iroh::endpoint::{Connection, QuicTransportConfig, RecvStream, SendStream, VarInt, presets};
-use iroh::{Endpoint, EndpointId, SecretKey};
+use iroh::{Endpoint, EndpointAddr, EndpointId, SecretKey};
 
 use crate::Error;
 use crate::protocol::{SHORT, timed};
@@ -42,7 +43,7 @@ impl Remote {
         let endpoint = Endpoint::builder(presets::N0)
             .transport_config(transport)
             .secret_key(key)
-            .alpns(vec![ALPN.to_vec()])
+            .alpns(vec![ALPN.to_vec(), crate::talk::TALK_ALPN.to_vec()])
             .bind()
             .await
             .map_err(io::Error::other)?;
@@ -52,6 +53,11 @@ impl Remote {
     /// Código que hay que pasarle a otro equipo para que pueda enviarnos cosas.
     pub fn code(&self) -> String {
         self.endpoint.id().to_string()
+    }
+
+    /// Puerto UDP IPv4 donde escucha iroh, para anunciarlo en la LAN.
+    pub fn port(&self) -> Option<u16> {
+        self.endpoint.bound_sockets().iter().find(|a| a.is_ipv4()).map(|a| a.port())
     }
 
     /// Espera a estar conectado a un relay: hasta entonces los demás no pueden
@@ -65,8 +71,18 @@ impl Remote {
         self.endpoint.close().await;
     }
 
+    /// Conecta con `id`. Con `lan` (su IP:puerto de iroh en la LAN, si se
+    /// conoce por el descubrimiento) la conexión directa no necesita internet.
+    pub(crate) async fn connect(&self, id: EndpointId, alpn: &[u8], lan: Option<SocketAddr>) -> Result<Connection, Error> {
+        let addr = match lan {
+            Some(lan) => EndpointAddr::new(id).with_ip_addr(lan),
+            None => EndpointAddr::new(id),
+        };
+        timed(SHORT, async { self.endpoint.connect(addr, alpn).await.map_err(io::Error::other) }).await
+    }
+
     pub(crate) async fn open(&self, id: EndpointId) -> Result<(Connection, SendStream, RecvStream), Error> {
-        let conn = timed(SHORT, async { self.endpoint.connect(id, ALPN).await.map_err(io::Error::other) }).await?;
+        let conn = self.connect(id, ALPN, None).await?;
         let (send, recv) = conn.open_bi().await.map_err(io::Error::other)?;
         Ok((conn, send, recv))
     }
