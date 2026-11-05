@@ -56,7 +56,27 @@ iroh conecta los dos equipos directamente cuando las redes lo permiten; si no, e
 - En **Android 17 o superior**, acepta el permiso de **red local** cuando Pasalo lo pida. Sin él, Android bloquea en silencio todo el tráfico con tu red local.
 - **Mantén Pasalo abierto mientras recibes.** Android congela las apps en segundo plano y la transferencia se para. Sigue cuando vuelves a la app.
 - Lo recibido se guarda en `Download/Pasalo`.
+- Necesita Android 8.0 o superior.
 - Se pueden enviar archivos, pero no carpetas enteras. Los archivos elegidos se copian a la caché de la app antes de enviarse, así que para enviar 10 GB hacen falta otros 10 GB libres.
+
+## Chat y llamadas
+
+Los equipos que tienen código (cualquiera con conexiones remotas, también en tu red) muestran un botón **Chat**:
+
+- **Mensajes e imágenes**, cifrados de punto a punto por iroh con la clave de cada equipo. Las imágenes se reducen a 1600 px antes de enviarse. Los mensajes que no se pueden entregar quedan pendientes y se reintentan hasta que se llegue al otro equipo.
+- **Llamadas de voz** hechas en Rust, sin WebRTC ni servidores: Opus o Codec2 sobre datagramas QUIC no fiables. La calidad se puede cambiar durante la llamada y el otro lado cambia también. Medido con los dos lados hablando a la vez (el peor caso):
+
+  | Calidad | Consumo de red | Retraso añadido |
+  |---|---|---|
+  | Alta (Opus 24 kbps) | ~57 kbps | ~60 ms |
+  | Normal (Opus 12 kbps) | ~35 kbps | ~80 ms |
+  | Baja (Opus 6 kbps) | ~19 kbps | ~360 ms |
+  | Mínima (Codec2 1300 bps) | ~9 kbps | ~440 ms |
+
+  Durante los silencios no se envía nada. En Baja y Mínima cada paquete lleva también el anterior, así que las pérdidas sueltas se recuperan.
+- **Videollamadas** con WebRTC en la app. La señalización va por el canal cifrado de iroh y el vídeo usa el servidor STUN público de Google. Si fallan en alguna red, añade tu propio servidor TURN en ⚙ Ajustes. La calidad del vídeo se limita a 150, 500 o 1500 kbps.
+
+En Android, permite el micrófono (y la cámara para el vídeo). En escritorio las llamadas solo tienen una supresión de eco básica: usa auriculares. En Linux, WebKitGTK puede no soportar WebRTC, así que las videollamadas pueden no funcionar allí.
 
 ## Línea de comandos
 
@@ -70,6 +90,8 @@ pasalo send 192.168.1.20 foto.jpg      # envía a una IP (o IP:puerto)
 pasalo send "PC Oficina" Fotos/        # envía a un equipo por su nombre
 pasalo send <código> grande.iso        # envía a un equipo remoto por su código
 pasalo text <destino> "hola"           # envía un texto
+pasalo chat <destino> "hola" --image a.jpg  # mensaje de chat cifrado (código o nombre en la red)
+pasalo call <destino> --mode minimum --voice-in voz.raw    # llamada de prueba con un archivo de audio
 ```
 
 `--name` cambia el nombre con el que te ven los demás. `PASALO_CONFIG_DIR` permite simular varios equipos en la misma máquina para hacer pruebas.
@@ -87,7 +109,7 @@ pasalo text <destino> "hola"           # envía un texto
 
 ### Seguridad y privacidad
 
-- **En la red local el tráfico no va cifrado.** Cualquiera en la misma red puede ver lo que envías. Si necesitas cifrado, usa un código remoto: las conexiones por iroh siempre van cifradas y autenticadas con la clave del equipo.
+- **Los archivos enviados por la red local no van cifrados.** Cualquiera en la misma red puede ver lo que envías. El chat y las llamadas van siempre por iroh, cifrados y autenticados con la clave de cada equipo, también en la red local; igual que los archivos enviados por código remoto.
 - **Pasalo acepta todo lo que recibe**, como [Dukto](https://sourceforge.net/projects/dukto/). Cualquiera en tu red, o cualquiera que tenga tu código, puede enviarte archivos.
 - Tu código remoto vive en el archivo `remote_key`, en la carpeta de configuración de la app. Quien tenga ese archivo puede hacerse pasar por tu equipo.
 

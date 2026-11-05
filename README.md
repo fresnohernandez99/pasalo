@@ -56,7 +56,27 @@ iroh connects the two devices directly when the networks allow it, and otherwise
 - On **Android 17+**, allow the **local network** permission when Pasalo asks for it. Without it, Android silently blocks all traffic with your local network.
 - **Keep Pasalo open while receiving.** Android freezes apps in the background, which pauses transfers. They resume when you return.
 - Received files go to `Download/Pasalo`.
+- Requires Android 8.0 or newer.
 - You can send files but not whole folders. Picked files are copied to the app's cache before sending, so sending a 10 GB file needs another 10 GB free.
+
+## Chat and calls
+
+Devices with a code (any device with remote connections, on your network too) show a **Chat** button:
+
+- **Messages and images**, end-to-end encrypted over iroh with each device's key. Images are downscaled to 1600 px before sending. Messages that can't be delivered stay pending and are retried until the other device is reachable.
+- **Voice calls** built in Rust, with no WebRTC and no servers: Opus or Codec2 over unreliable QUIC datagrams. You can change the quality during the call, and the other side switches too. Measured with both sides talking at once (worst case):
+
+  | Quality | Network use | Delay added |
+  |---|---|---|
+  | High (Opus 24 kbps) | ~57 kbps | ~60 ms |
+  | Normal (Opus 12 kbps) | ~35 kbps | ~80 ms |
+  | Low (Opus 6 kbps) | ~19 kbps | ~360 ms |
+  | Minimum (Codec2 1300 bps) | ~9 kbps | ~440 ms |
+
+  Nothing is sent during silence. In Low and Minimum every packet also carries the previous one, so isolated losses are recovered.
+- **Video calls** use WebRTC in the app. Signaling goes over the encrypted iroh channel and video uses Google's public STUN server. If they fail on some networks, add your own TURN server in ⚙ Settings. Video quality is capped at 150, 500 or 1500 kbps.
+
+On Android, allow the microphone (and the camera for video). Desktop calls have only basic echo suppression: use headphones. On Linux, WebKitGTK may not support WebRTC, so video calls may not work there.
 
 ## Command line
 
@@ -70,6 +90,8 @@ pasalo send 192.168.1.20 photo.jpg     # send to an IP (or IP:port)
 pasalo send "Office PC" Photos/        # send to a device by its name
 pasalo send <code> big.iso             # send to a remote device by its code
 pasalo text <target> "hello"           # send text
+pasalo chat <target> "hi" --image a.jpg  # encrypted chat message (code or name on the network)
+pasalo call <target> --mode minimum --voice-in voice.raw   # test call with an audio file
 ```
 
 `--name` changes the name others see. `PASALO_CONFIG_DIR` lets you run several instances on one machine for testing. The CLI's own messages are in Spanish for now.
@@ -87,7 +109,7 @@ pasalo text <target> "hello"           # send text
 
 ### Security and privacy
 
-- **On the local network, traffic is not encrypted.** Anyone on the same network can see what you send. Use a remote code if you need encryption: iroh connections are always encrypted and authenticated with the device's key.
+- **File transfers on the local network are not encrypted.** Anyone on the same network can see what you send. Chat and calls always go over iroh, encrypted and authenticated with each device's key, on the local network too; so do file transfers sent by remote code.
 - **Pasalo accepts everything it receives**, like [Dukto](https://sourceforge.net/projects/dukto/). Anyone on your network, or anyone who has your code, can send you files.
 - Your remote code lives in `remote_key` in the app's config folder. Whoever has that file can pretend to be your device.
 

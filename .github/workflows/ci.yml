@@ -1,4 +1,4 @@
-# Tests and lints the core and the CLI on every push and pull request.
+# Tests and lints the core, the CLI and the voice crate on every push and pull request.
 
 name: CI
 
@@ -16,9 +16,12 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
+      - name: ALSA (micrófono y altavoz de las llamadas)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libasound2-dev
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
       - uses: Swatinem/rust-cache@v2
-      - run: cargo clippy -p pasalo-core -p pasalo-cli --all-targets -- -D warnings
-      - run: cargo test -p pasalo-core -p pasalo-cli
+      - run: cargo clippy -p pasalo-core -p pasalo-cli -p pasalo-call --all-targets -- -D warnings
+      - run: cargo test -p pasalo-core -p pasalo-cli -p pasalo-call
