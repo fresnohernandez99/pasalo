@@ -18,6 +18,8 @@ use crate::{AppState, CmdError, CmdResult};
 pub struct VoiceCall {
     peer: String,
     call: Arc<pasalo_call::Call>,
+    /// Para medir lo que pasa de verdad por la conexión.
+    link: pasalo_core::VoiceSender,
     pump: JoinHandle<()>,
 }
 
@@ -96,6 +98,7 @@ pub async fn voice_start(app: AppHandle, state: State<'_, AppState>, peer: Strin
     let talk = state.talk()?;
     let mut link = talk.voice(&peer).await.map_err(CmdError::core)?;
     let sender = link.sender.clone();
+    let measured = link.sender.clone();
     // Abrir los dispositivos de audio bloquea un momento.
     let call = tokio::task::spawn_blocking(move || {
         pasalo_call::Call::start(mode, move |packet| {
@@ -112,7 +115,7 @@ pub async fn voice_start(app: AppHandle, state: State<'_, AppState>, peer: Strin
             receiving.push(&packet);
         }
     });
-    *state.voice.lock().unwrap() = Some(VoiceCall { peer, call, pump });
+    *state.voice.lock().unwrap() = Some(VoiceCall { peer, call, link: measured, pump });
     Ok(())
 }
 
@@ -166,7 +169,8 @@ fn stop(app: &AppHandle, state: &AppState) {
 
 #[derive(Serialize)]
 pub struct VoiceStats {
-    /// Bytes por la red (con cabeceras estimadas) desde que empezó.
+    /// Bytes medidos por la conexión (UDP con cabeceras IP), acumulados: la
+    /// interfaz calcula el ritmo con la diferencia entre lecturas.
     sent: u64,
     received: u64,
     lost: u64,
@@ -177,10 +181,12 @@ pub struct VoiceStats {
 pub fn voice_stats(state: State<'_, AppState>) -> Option<VoiceStats> {
     use std::sync::atomic::Ordering::Relaxed;
     let voice = state.voice.lock().unwrap();
-    let stats = voice.as_ref()?.call.stats();
+    let voice = voice.as_ref()?;
+    let stats = voice.call.stats();
+    let (sent, received) = voice.link.wire_bytes();
     Some(VoiceStats {
-        sent: stats.wire_bytes_sent(),
-        received: stats.wire_bytes_received(),
+        sent,
+        received,
         lost: stats.lost_packets.load(Relaxed),
         recovered: stats.recovered_packets.load(Relaxed),
     })

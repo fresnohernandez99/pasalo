@@ -22,7 +22,7 @@ const VIDEO_PRESETS = {
 };
 const RING_TIMEOUT = 45_000;
 
-let call = null;
+let live = null;
 
 // ---------- ajustes (TURN y modo por defecto) ----------
 
@@ -258,8 +258,8 @@ async function call_(command, args) {
 // ---------- llamadas ----------
 
 function signal(kind, data = null) {
-  if (!call) return Promise.resolve();
-  return invoke('call_signal', { peer: call.peer.code, call: call.id, kind, data }).catch((err) => {
+  if (!live) return Promise.resolve();
+  return invoke('call_signal', { peer: live.peer.code, call: live.id, kind, data }).catch((err) => {
     if (kind !== 'hangup') toast(errorText(err), true);
     throw err;
   });
@@ -268,40 +268,40 @@ function signal(kind, data = null) {
 /** `to` es `{ code, name }`. */
 async function startCall(to, media) {
   if (!to?.code) return;
-  if (call) {
+  if (live) {
     toast(t('call.busy_self'), true);
     return;
   }
   const s = talkSettings();
-  call = { id: crypto.randomUUID(), peer: { code: to.code, name: to.name }, media, role: 'caller', state: 'ringing' };
-  call.mode = media === 'voice' ? s.voiceMode : s.videoQuality;
+  live = { id: crypto.randomUUID(), peer: { code: to.code, name: to.name }, media, role: 'caller', state: 'ringing' };
+  live.mode = media === 'voice' ? s.voiceMode : s.videoQuality;
   showCall();
   try {
-    await signal('invite', { media, mode: call.mode });
+    await signal('invite', { media, mode: live.mode });
   } catch {
     endCall();
     return;
   }
-  call.ringTimer = setTimeout(() => hangup('no_answer'), RING_TIMEOUT);
+  live.ringTimer = setTimeout(() => hangup('no_answer'), RING_TIMEOUT);
 }
 
 function onSignal({ peer, name, signal: s }) {
   if (s.kind === 'invite') {
-    if (call) {
+    if (live) {
       invoke('call_signal', { peer, call: s.call, kind: 'busy', data: null }).catch(() => {});
       return;
     }
     ensureRemotePeer(peer, name);
-    call = { id: s.call, peer: { code: peer, name }, media: s.data?.media || 'voice', role: 'callee', state: 'incoming' };
-    call.mode = call.media === 'voice' ? s.data?.mode || 'normal' : talkSettings().videoQuality;
+    live = { id: s.call, peer: { code: peer, name }, media: s.data?.media || 'voice', role: 'callee', state: 'incoming' };
+    live.mode = live.media === 'voice' ? s.data?.mode || 'normal' : talkSettings().videoQuality;
     showCall();
     startRinging();
     return;
   }
-  if (!call || s.call !== call.id || peer !== call.peer.code) return;
+  if (!live || s.call !== live.id || peer !== live.peer.code) return;
   switch (s.kind) {
     case 'accept':
-      clearTimeout(call.ringTimer);
+      clearTimeout(live.ringTimer);
       startMedia();
       break;
     case 'decline':
@@ -311,10 +311,10 @@ function onSignal({ peer, name, signal: s }) {
       break;
     case 'mode':
       // La otra persona cambió de modo: se usa el mismo en los dos sentidos.
-      if (call.media === 'voice' && s.data?.mode) {
-        call.mode = s.data.mode;
-        $('#call-mode').value = call.mode;
-        invoke('voice_mode', { mode: call.mode });
+      if (live.media === 'voice' && s.data?.mode) {
+        live.mode = s.data.mode;
+        $('#call-mode').value = live.mode;
+        invoke('voice_mode', { mode: live.mode });
       }
       break;
     case 'sdp':
@@ -328,7 +328,7 @@ function onSignal({ peer, name, signal: s }) {
 
 async function acceptCall() {
   stopRinging();
-  if (!call) return;
+  if (!live) return;
   try {
     await signal('accept');
   } catch {
@@ -350,14 +350,14 @@ function hangup(reason) {
 }
 
 async function startMedia() {
-  call.state = 'active';
-  call.started = Date.now();
+  live.state = 'active';
+  live.started = Date.now();
   showCall();
   try {
-    if (call.media === 'voice') {
-      await invoke('voice_start', { peer: call.peer.code, mode: call.mode });
-      call.last = null;
-      call.statsTimer = setInterval(updateVoiceStats, 1000);
+    if (live.media === 'voice') {
+      await invoke('voice_start', { peer: live.peer.code, mode: live.mode });
+      live.last = null;
+      live.statsTimer = setInterval(updateVoiceStats, 1000);
     } else {
       await startVideo();
     }
@@ -366,13 +366,13 @@ async function startMedia() {
     hangup();
     return;
   }
-  call.clock = setInterval(() => updateCallState(), 1000);
+  live.clock = setInterval(() => updateCallState(), 1000);
 }
 
 function endCall(message) {
-  if (!call) return;
-  const c = call;
-  call = null;
+  if (!live) return;
+  const c = live;
+  live = null;
   stopRinging();
   clearTimeout(c.ringTimer);
   clearInterval(c.statsTimer);
@@ -384,10 +384,11 @@ function endCall(message) {
 }
 
 function showCall() {
-  const c = call;
+  const c = live;
   $('#call').hidden = false;
   $('#call').className = `call ${c.media} ${c.state}`;
   $('#call-name').textContent = c.peer.name;
+  if (c.state !== 'active') $('#call-stats').textContent = '';
   $('#call-accept').hidden = c.state !== 'incoming';
   $('#call-decline').hidden = c.state !== 'incoming';
   $('#call-hangup').hidden = c.state === 'incoming';
@@ -401,12 +402,12 @@ function showCall() {
 }
 
 function updateCallState() {
-  if (!call) return;
+  if (!live) return;
   let text;
-  if (call.state === 'incoming') text = t(call.media === 'voice' ? 'call.incoming_voice' : 'call.incoming_video');
-  else if (call.state === 'ringing') text = t('call.ringing');
+  if (live.state === 'incoming') text = t(live.media === 'voice' ? 'call.incoming_voice' : 'call.incoming_video');
+  else if (live.state === 'ringing') text = t('call.ringing');
   else {
-    const s = Math.floor((Date.now() - call.started) / 1000);
+    const s = Math.floor((Date.now() - live.started) / 1000);
     text = `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
   }
   $('#call-state').textContent = text;
@@ -414,15 +415,15 @@ function updateCallState() {
 
 async function updateVoiceStats() {
   const stats = await invoke('voice_stats').catch(() => null);
-  if (!stats || !call) return;
-  if (call.last) {
-    const up = ((stats.sent - call.last.sent) * 8) / 1000;
-    const down = ((stats.received - call.last.received) * 8) / 1000;
+  if (!stats || !live) return;
+  if (live.last) {
+    const up = ((stats.sent - live.last.sent) * 8) / 1000;
+    const down = ((stats.received - live.last.received) * 8) / 1000;
     const parts = [t('call.stats', { up: up.toFixed(1), down: down.toFixed(1) })];
     if (stats.lost) parts.push(t('call.lost', { lost: stats.lost, recovered: stats.recovered }));
     $('#call-stats').textContent = parts.join(' · ');
   }
-  call.last = stats;
+  live.last = stats;
 }
 
 $('#call-accept').addEventListener('click', acceptCall);
@@ -430,36 +431,36 @@ $('#call-decline').addEventListener('click', declineCall);
 $('#call-hangup').addEventListener('click', () => hangup());
 
 $('#call-mute').addEventListener('click', () => {
-  if (!call) return;
-  call.muted = !call.muted;
-  $('#call-mute').classList.toggle('on', call.muted);
-  if (call.media === 'voice') invoke('voice_mute', { muted: call.muted });
-  call.local?.getAudioTracks().forEach((track) => (track.enabled = !call.muted));
+  if (!live) return;
+  live.muted = !live.muted;
+  $('#call-mute').classList.toggle('on', live.muted);
+  if (live.media === 'voice') invoke('voice_mute', { muted: live.muted });
+  live.local?.getAudioTracks().forEach((track) => (track.enabled = !live.muted));
 });
 
 $('#call-speaker').addEventListener('click', () => {
-  if (!call) return;
-  call.speaker = !call.speaker;
-  $('#call-speaker').classList.toggle('on', call.speaker);
-  invoke('voice_speaker', { speaker: call.speaker });
+  if (!live) return;
+  live.speaker = !live.speaker;
+  $('#call-speaker').classList.toggle('on', live.speaker);
+  invoke('voice_speaker', { speaker: live.speaker });
 });
 
 $('#call-cam').addEventListener('click', () => {
-  if (!call?.local) return;
-  call.camOff = !call.camOff;
-  $('#call-cam').classList.toggle('on', call.camOff);
-  call.local.getVideoTracks().forEach((track) => (track.enabled = !call.camOff));
+  if (!live?.local) return;
+  live.camOff = !live.camOff;
+  $('#call-cam').classList.toggle('on', live.camOff);
+  live.local.getVideoTracks().forEach((track) => (track.enabled = !live.camOff));
 });
 
 $('#call-mode').addEventListener('change', (ev) => {
-  if (!call) return;
-  call.mode = ev.target.value;
-  if (call.media === 'voice') {
-    saveTalkSettings({ voiceMode: call.mode });
-    if (call.state === 'active') invoke('voice_mode', { mode: call.mode });
-    signal('mode', { mode: call.mode }).catch(() => {});
+  if (!live) return;
+  live.mode = ev.target.value;
+  if (live.media === 'voice') {
+    saveTalkSettings({ voiceMode: live.mode });
+    if (live.state === 'active') invoke('voice_mode', { mode: live.mode });
+    signal('mode', { mode: live.mode }).catch(() => {});
   } else {
-    saveTalkSettings({ videoQuality: call.mode });
+    saveTalkSettings({ videoQuality: live.mode });
     applyVideoQuality();
   }
 });
@@ -494,16 +495,16 @@ function stopRinging() {
 // ---------- vídeo (WebRTC) ----------
 
 async function startVideo() {
-  const preset = VIDEO_PRESETS[call.mode] || VIDEO_PRESETS.normal;
-  call.local = await navigator.mediaDevices.getUserMedia({
+  const preset = VIDEO_PRESETS[live.mode] || VIDEO_PRESETS.normal;
+  live.local = await navigator.mediaDevices.getUserMedia({
     audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
     video: { width: { ideal: preset.width }, height: { ideal: preset.height }, frameRate: { ideal: preset.fps } },
   });
-  $('#call-local').srcObject = call.local;
+  $('#call-local').srcObject = live.local;
   const pc = new RTCPeerConnection({ iceServers: iceServers() });
-  call.pc = pc;
-  call.pendingIce = [];
-  for (const track of call.local.getTracks()) pc.addTrack(track, call.local);
+  live.pc = pc;
+  live.pendingIce = [];
+  for (const track of live.local.getTracks()) pc.addTrack(track, live.local);
   pc.onicecandidate = (ev) => ev.candidate && signal('ice', ev.candidate.toJSON()).catch(() => {});
   pc.ontrack = (ev) => ($('#call-remote').srcObject = ev.streams[0]);
   pc.onconnectionstatechange = () => {
@@ -511,24 +512,24 @@ async function startVideo() {
   };
   await applyVideoQuality();
   // Quien llama hace la oferta; quien contesta espera a recibirla.
-  if (call.role === 'caller') {
+  if (live.role === 'caller') {
     await pc.setLocalDescription(await pc.createOffer());
     await signal('sdp', { type: pc.localDescription.type, sdp: pc.localDescription.sdp });
-  } else if (call.pendingOffer) {
-    await onRemoteSdp(call.pendingOffer);
+  } else if (live.pendingOffer) {
+    await onRemoteSdp(live.pendingOffer);
   }
 }
 
 async function onRemoteSdp(desc) {
-  if (!call) return;
-  if (!call.pc) {
+  if (!live) return;
+  if (!live.pc) {
     // Llegó la oferta antes de tener la cámara lista.
-    call.pendingOffer = desc;
+    live.pendingOffer = desc;
     return;
   }
-  const pc = call.pc;
+  const pc = live.pc;
   await pc.setRemoteDescription(desc);
-  for (const c of call.pendingIce.splice(0)) await pc.addIceCandidate(c).catch(() => {});
+  for (const c of live.pendingIce.splice(0)) await pc.addIceCandidate(c).catch(() => {});
   if (desc.type === 'offer') {
     await pc.setLocalDescription(await pc.createAnswer());
     await applyVideoQuality();
@@ -537,18 +538,18 @@ async function onRemoteSdp(desc) {
 }
 
 async function onRemoteIce(candidate) {
-  if (!call?.pc || !call.pc.remoteDescription) {
-    (call.pendingIce ||= []).push(candidate);
+  if (!live?.pc || !live.pc.remoteDescription) {
+    (live.pendingIce ||= []).push(candidate);
     return;
   }
-  await call.pc.addIceCandidate(candidate).catch(() => {});
+  await live.pc.addIceCandidate(candidate).catch(() => {});
 }
 
 // Limita lo que sube cada uno: con mala señal es lo que manda.
 async function applyVideoQuality() {
-  if (!call?.pc) return;
-  const preset = VIDEO_PRESETS[call.mode] || VIDEO_PRESETS.normal;
-  for (const sender of call.pc.getSenders()) {
+  if (!live?.pc) return;
+  const preset = VIDEO_PRESETS[live.mode] || VIDEO_PRESETS.normal;
+  for (const sender of live.pc.getSenders()) {
     if (!sender.track) continue;
     const params = sender.getParameters();
     if (!params.encodings?.length) params.encodings = [{}];
@@ -575,5 +576,5 @@ function stopVideo(c) {
 // Al cambiar de idioma (main.js ya repinta lo suyo).
 $('#lang').addEventListener('change', () => {
   renderChat();
-  if (call) showCall();
+  if (live) showCall();
 });

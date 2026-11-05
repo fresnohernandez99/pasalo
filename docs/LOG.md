@@ -120,3 +120,31 @@ Rama `chat-llamadas`. Cada entrada: qué se hizo, cómo se probó y qué queda.
 - **Aprendido midiendo**: la supresión de eco recortaba la voz cuando los dos
   hablan a la vez (es su función con altavoz). Ahora se puede desactivar; el
   CLI la desactiva porque trabaja con archivos.
+
+### Pruebas en Android (emulador) contra el CLI de la Mac
+- El Pixel 6 se desconectó, así que se usó un emulador **nuevo** (`PasaloTest`,
+  Android 16, x86_64) para no tocar los AVD del usuario (uno estaba lleno).
+  Con el micrófono del host el emulador se colgaba al abrir el audio (corre
+  como root y sin ventana); se configuró `hw.audioInput = no` (micro mudo).
+- El emulador está detrás de su NAT y no ve la LAN de la Mac: todo fue por
+  iroh **entre redes** (código remoto, relay/hole punching).
+- **Funciona**: añadir contacto por código; chat emulador → Mac (✓ entregado)
+  y Mac → emulador; historial persistente; llamada de voz saliente (la Mac
+  contesta sola): ~23 kbps medidos en normal, cambio a mínima en caliente →
+  la Mac lo adopta y baja a ~6 kbps; colgar desde el móvil; llamada entrante
+  (timbre, contestar, ~15 kbps medidos en baja) y colgar desde la Mac.
+- **Fallos encontrados y corregidos**:
+  1. `let call` en `talk.js` chocaba con la función global `call()` de
+     `main.js` → `talk.js` no cargaba (chat, contactos y "Añadir" rotos sin
+     aviso). Renombrado a `live`.
+  2. `main.js` pintaba la lista antes de cargar `talk.js` → arranque en
+     `DOMContentLoaded`.
+  3. La pantalla de llamada salía al abrir la app: el CSS `display:flex`
+     ganaba al atributo `hidden` → regla global `[hidden]{display:none!important}`.
+  4. Teclado: con Android 15+ la página se dibuja bajo el teclado y la barra
+     de navegación; el plugin pasa `--kb`/`--nav` a CSS (escuchando los insets
+     en el contenedor, no en el WebView, para no pisar el margen de Tauri).
+  5. AAudio exige Android 8 (API 26): `minSdk` 24 → 26.
+  6. Las estadísticas de la llamada anterior se quedaban; ahora la app muestra
+     el consumo medido (UDP) y no el estimado.
+- Errores de JavaScript ahora salen como aviso en pantalla (`JS: …`).

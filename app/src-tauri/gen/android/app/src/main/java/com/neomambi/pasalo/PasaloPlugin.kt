@@ -13,6 +13,8 @@ import android.webkit.WebView
 import androidx.activity.result.ActivityResult
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
 import app.tauri.annotation.ActivityCallback
 import app.tauri.annotation.Command
 import app.tauri.annotation.InvokeArg
@@ -47,6 +49,31 @@ class PasaloPlugin(private val activity: Activity) : Plugin(activity) {
     }
     requestLocalNetwork()
     cleanOldCopies()
+    passInsetsToPage(webView)
+  }
+
+  /**
+   * La app dibuja bajo las barras del sistema (Android 15+) y el teclado ya no
+   * encoge la página, así que se le dice cuánto ocupan con las variables CSS
+   * `--kb` (teclado) y `--nav` (barra de navegación).
+   */
+  private fun passInsetsToPage(webView: WebView) {
+    // En el contenedor y no en el WebView: Tauri tiene su propio listener en
+    // el WebView (el margen de la barra de estado) y no hay que pisarlo. El
+    // contenedor pasa los insets intactos a sus hijos.
+    val container = webView.parent as? android.view.View ?: webView
+    ViewCompat.setOnApplyWindowInsetsListener(container) { view, insets ->
+      val density = view.resources.displayMetrics.density
+      val ime = insets.getInsets(WindowInsetsCompat.Type.ime()).bottom / density
+      val nav = insets.getInsets(WindowInsetsCompat.Type.navigationBars()).bottom / density
+      webView.evaluateJavascript(
+        "var s=document.documentElement.style;s.setProperty('--kb','${ime}px');" +
+          "s.setProperty('--nav','${if (ime > 0) 0f else nav}px');",
+        null,
+      )
+      insets
+    }
+    ViewCompat.requestApplyInsets(container)
   }
 
   /** Micrófono para las llamadas de voz (las de WebRTC lo pide el WebView). */

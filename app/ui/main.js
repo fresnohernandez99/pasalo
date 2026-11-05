@@ -3,6 +3,14 @@ const { listen } = window.__TAURI__.event;
 
 const $ = (sel) => document.querySelector(sel);
 
+// En el móvil no hay consola a mano: un error de JavaScript se ve como aviso.
+window.addEventListener('error', (ev) => toast(`JS: ${ev.message}`, true));
+window.addEventListener('unhandledrejection', (ev) => {
+  const reason = ev.reason;
+  if (reason && typeof reason === 'object' && 'code' in reason) return; // ya lo mostró call()
+  toast(`JS: ${reason?.message || reason}`, true);
+});
+
 const peers = new Map(); // device_id → { device_id, name, platform, addr }
 const items = new Map(); // clave → transferencia o texto
 let selected = null;
@@ -608,4 +616,5 @@ async function init() {
   renderPeers();
 }
 
-init();
+// Después de cargar todos los scripts: talk.js define cosas que usa renderPeers().
+window.addEventListener('DOMContentLoaded', init);
