@@ -6,7 +6,9 @@ use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
 use pasalo_core::protocol::{DISCOVERY_PORT, TRANSFER_PORT};
-use pasalo_core::{Discovery, Event, EventSender, LocalInfo, Peer, Receiver, SendOptions, TransferId};
+use pasalo_core::{
+    Discovery, Event, EventSender, Greeting, LocalInfo, Peer, Receiver, Remote, SendOptions, Target, TransferId,
+};
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_dialog::DialogExt;
@@ -25,7 +27,7 @@ struct Settings {
 /// Un envío que se puede pausar (abortando la tarea) y reanudar (volviendo a
 /// enviar lo mismo con el mismo id).
 struct Outgoing {
-    addr: SocketAddr,
+    target: Target,
     paths: Vec<PathBuf>,
     task: Option<JoinHandle<()>>,
 }
@@ -36,6 +38,8 @@ struct AppState {
     local: Mutex<LocalInfo>,
     receiver: Receiver,
     discovery: tokio::sync::Mutex<Option<Discovery>>,
+    /// `None` si no se pudo arrancar (p. ej. sin red al abrir la app).
+    remote: Option<Remote>,
     events: EventSender,
     outgoing: Mutex<HashMap<TransferId, Outgoing>>,
 }
@@ -53,13 +57,31 @@ impl AppState {
         if job.task.as_ref().is_some_and(|task| !task.is_finished()) {
             return;
         }
-        let (addr, paths) = (job.addr, job.paths.clone());
+        let (target, paths) = (job.target.clone(), job.paths.clone());
         let local = self.local.lock().unwrap().clone();
         let events = self.events.clone();
         job.task = Some(tokio::spawn(async move {
             let opts = SendOptions::default();
-            let _ = pasalo_core::send_paths(id, addr, &local, &paths, &opts, &events).await;
+            let _ = pasalo_core::send_paths(id, &target, &local, &paths, &opts, &events).await;
         }));
+    }
+
+    /// `IP:puerto`, solo `IP` (puerto por defecto) o el código de un equipo remoto.
+    fn parse_target(&self, target: &str) -> CmdResult<Target> {
+        let target = target.trim();
+        if let Ok(addr) = target.parse::<SocketAddr>() {
+            return Ok(Target::Lan(addr));
+        }
+        if let Ok(ip) = target.parse::<IpAddr>() {
+            return Ok(Target::Lan(SocketAddr::new(ip, TRANSFER_PORT)));
+        }
+        let Some(code) = pasalo_core::parse_code(target) else {
+            return Err(format!("\"{target}\" no es una IP ni un código de equipo válido"));
+        };
+        match &self.remote {
+            Some(remote) => Ok(Target::Remote(remote.clone(), code)),
+            None => Err("Las conexiones remotas no están disponibles: reinicia Pasalo con conexión a internet".into()),
+        }
     }
 
     async fn restart_discovery(&self) {
@@ -81,6 +103,8 @@ struct Snapshot {
     dir: PathBuf,
     port: u16,
     ips: Vec<String>,
+    /// Código para que te envíen desde otras redes.
+    code: Option<String>,
     peers: Vec<Peer>,
 }
 
@@ -92,7 +116,8 @@ async fn snapshot(state: State<'_, AppState>) -> CmdResult<Snapshot> {
         Some(discovery) => discovery.peers(),
         None => Vec::new(),
     };
-    Ok(Snapshot { name: settings.name, dir: settings.dir, port, ips: local_ips(), peers })
+    let code = state.remote.as_ref().map(Remote::code);
+    Ok(Snapshot { name: settings.name, dir: settings.dir, port, ips: local_ips(), code, peers })
 }
 
 #[tauri::command]
@@ -167,18 +192,26 @@ async fn send(state: State<'_, AppState>, target: String, paths: Vec<PathBuf>) -
     if paths.is_empty() {
         return Err("No hay nada que enviar".into());
     }
-    let addr = parse_target(&target)?;
+    let target = state.parse_target(&target)?;
     let id = pasalo_core::new_transfer_id();
-    state.outgoing.lock().unwrap().insert(id, Outgoing { addr, paths, task: None });
+    state.outgoing.lock().unwrap().insert(id, Outgoing { target, paths, task: None });
     state.spawn_send(id);
     Ok(id)
 }
 
 #[tauri::command]
 async fn send_text(state: State<'_, AppState>, target: String, text: String) -> CmdResult<()> {
-    let addr = parse_target(&target)?;
+    let target = state.parse_target(&target)?;
     let local = state.local.lock().unwrap().clone();
-    pasalo_core::send_text(addr, &local, &text).await.map_err(|e| e.to_string())
+    pasalo_core::send_text(&target, &local, &text).await.map_err(|e| e.to_string())
+}
+
+/// Comprueba que se llega a un equipo (por IP o por código) y devuelve cómo se llama.
+#[tauri::command]
+async fn probe(state: State<'_, AppState>, target: String) -> CmdResult<Greeting> {
+    let target = state.parse_target(&target)?;
+    let local = state.local.lock().unwrap().clone();
+    pasalo_core::probe(&target, &local).await.map_err(|e| format!("No se pudo conectar: {e}"))
 }
 
 #[tauri::command]
@@ -201,18 +234,6 @@ async fn forget(state: State<'_, AppState>, id: TransferId) -> CmdResult<()> {
         task.abort();
     }
     Ok(())
-}
-
-/// `IP:puerto` o solo `IP` (puerto por defecto).
-fn parse_target(target: &str) -> CmdResult<SocketAddr> {
-    let target = target.trim();
-    if let Ok(addr) = target.parse::<SocketAddr>() {
-        return Ok(addr);
-    }
-    target
-        .parse::<IpAddr>()
-        .map(|ip| SocketAddr::new(ip, TRANSFER_PORT))
-        .map_err(|_| format!("\"{target}\" no es una dirección IP válida"))
 }
 
 fn local_ips() -> Vec<String> {
@@ -268,12 +289,22 @@ fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
         let running = receiver.clone();
         tokio::spawn(async move { running.run(listener).await });
 
+        let remote = Remote::start(Some(&config_dir.join("remote_key")))
+            .await
+            .inspect_err(|e| eprintln!("no se pudieron iniciar las conexiones remotas: {e}"))
+            .ok();
+        if let Some(remote) = remote.clone() {
+            let running = receiver.clone();
+            tokio::spawn(async move { running.run_remote(remote).await });
+        }
+
         let state = AppState {
             settings_path,
             settings: Mutex::new(settings),
             local: Mutex::new(local),
             receiver,
             discovery: tokio::sync::Mutex::new(None),
+            remote,
             events,
             outgoing: Mutex::default(),
         };
@@ -291,7 +322,7 @@ fn main() {
         .setup(setup)
         .invoke_handler(tauri::generate_handler![
             snapshot, refresh, set_name, choose_dir, open_dir, reveal, pick_files, pick_folder, send,
-            send_text, pause, resume, forget
+            send_text, probe, pause, resume, forget
         ])
         .run(tauri::generate_context!())
         .expect("error al iniciar Pasalo");

@@ -19,6 +19,12 @@
 //! La reanudación sale sola: si la conexión se corta, el emisor vuelve a
 //! mandar la misma oferta y el receptor contesta desde qué byte seguir cada
 //! archivo según lo que ya tiene en disco.
+//!
+//! Un `Done` justo después del `Hello` es solo una presentación (para conocer
+//! el nombre del otro equipo) y el receptor contesta con `Result`.
+//!
+//! El canal es una conexión TCP en la LAN o un stream bidireccional de iroh
+//! (QUIC) con equipos remotos; los mensajes son los mismos.
 
 use std::future::Future;
 use std::path::Path;

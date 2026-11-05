@@ -13,6 +13,10 @@
       <div class="me-text">
         <input id="me-name" class="name-input" spellcheck="false" autocomplete="off" title="Tu nombre en la red (pulsa Intro para guardarlo)">
         <div class="sub" id="me-sub"></div>
+        <div class="sub code-line" id="code-line" hidden>
+          Código remoto: <span id="me-code" title="Pásaselo a quien te quiera enviar desde otra red"></span>
+          <button id="copy-code" class="ghost small">Copiar</button>
+        </div>
       </div>
     </div>
     <div class="dir">
@@ -32,7 +36,7 @@
       </div>
       <div id="peers" class="peers"></div>
       <form id="manual" class="manual">
-        <input id="manual-ip" placeholder="Añadir por IP, p. ej. 192.168.1.20" autocomplete="off" spellcheck="false">
+        <input id="manual-ip" placeholder="Añadir por IP o código remoto" autocomplete="off" spellcheck="false">
         <button class="small" type="submit">Añadir</button>
       </form>
       <p class="hint">Arrastra archivos o carpetas sobre un equipo para enviárselos.</p>

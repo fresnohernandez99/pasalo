@@ -6,8 +6,8 @@ use std::sync::{Arc, Mutex, RwLock};
 use std::time::{Duration, UNIX_EPOCH};
 
 use tokio::fs::{self, OpenOptions};
-use tokio::io::{AsyncRead, AsyncReadExt, AsyncSeekExt, AsyncWriteExt, BufReader, BufWriter};
-use tokio::net::{TcpListener, TcpStream};
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncSeekExt, AsyncWrite, AsyncWriteExt, BufReader, BufWriter};
+use tokio::net::TcpListener;
 use tokio::sync::watch;
 
 use crate::events::{Progress, label};
@@ -17,7 +17,7 @@ use crate::protocol::{
     CHUNK, ItemState, LONG, Message, PROTOCOL_VERSION, SHORT, configure_stream, hash_prefix, read_msg,
     timed, unexpected, write_msg,
 };
-use crate::{Direction, Error, Event, EventSender, LocalInfo, TransferId};
+use crate::{Direction, Error, Event, EventSender, LocalInfo, Remote, TransferId};
 
 /// Acepta conexiones y guarda lo recibido en `dest`. Acepta todo lo que llega,
 /// como Dukto.
@@ -88,7 +88,10 @@ impl Receiver {
                 Ok((stream, _)) => {
                     configure_stream(&stream);
                     let this = self.clone();
-                    tokio::spawn(async move { this.handle(stream).await });
+                    tokio::spawn(async move {
+                        let (rd, wr) = stream.into_split();
+                        this.handle(rd, wr).await
+                    });
                 }
                 Err(e) => {
                     tracing::warn!("error aceptando conexión: {e}");
@@ -98,9 +101,35 @@ impl Receiver {
         }
     }
 
-    async fn handle(&self, stream: TcpStream) {
+    /// Acepta conexiones de equipos remotos que llegan por iroh. Termina al
+    /// cerrar `remote`.
+    pub async fn run_remote(&self, remote: Remote) {
+        while let Some(incoming) = remote.endpoint.accept().await {
+            let this = self.clone();
+            tokio::spawn(async move {
+                let conn = match incoming.await {
+                    Ok(conn) => conn,
+                    Err(e) => return tracing::debug!("conexión remota fallida: {e}"),
+                };
+                let Ok(Ok((mut send, mut recv))) = tokio::time::timeout(SHORT, conn.accept_bi()).await else {
+                    return;
+                };
+                this.handle(&mut recv, &mut send).await;
+                // Cerrar sin esperar puede perder la última respuesta: se
+                // termina el canal y se deja que el emisor cierre la conexión.
+                let _ = send.finish();
+                let _ = tokio::time::timeout(SHORT, conn.closed()).await;
+            });
+        }
+    }
+
+    async fn handle<R, W>(&self, rd: R, wr: W)
+    where
+        R: AsyncRead + Unpin,
+        W: AsyncWrite + Unpin,
+    {
         let mut started = None;
-        if let Err(e) = self.session(stream, &mut started).await {
+        if let Err(e) = self.session(rd, wr, &mut started).await {
             tracing::warn!("recepción fallida: {e}");
             if let Some(id) = started {
                 let _ = self.inner.events.send(Event::TransferFailed {
@@ -123,11 +152,14 @@ impl Receiver {
             .clone()
     }
 
-    async fn session(&self, stream: TcpStream, started: &mut Option<TransferId>) -> Result<(), Error> {
+    async fn session<R, W>(&self, rd: R, wr: W, started: &mut Option<TransferId>) -> Result<(), Error>
+    where
+        R: AsyncRead + Unpin,
+        W: AsyncWrite + Unpin,
+    {
         let inner = &*self.inner;
         let dest = self.dest();
         let local = inner.local.read().unwrap().clone();
-        let (rd, wr) = stream.into_split();
         let mut rd = BufReader::with_capacity(CHUNK, rd);
         let mut wr = BufWriter::new(wr);
 
@@ -141,8 +173,11 @@ impl Receiver {
             return Err(Error::Rejected(reason));
         }
 
-        let Message::Offer { items, text } = read_msg(&mut rd, SHORT).await? else {
-            return Err(unexpected("offer"));
+        let (items, text) = match read_msg(&mut rd, SHORT).await? {
+            Message::Offer { items, text } => (items, text),
+            // Solo venía a presentarse (ver `probe`).
+            Message::Done => return write_msg(&mut wr, &Message::Result { error: None }).await,
+            _ => return Err(unexpected("offer")),
         };
         if let Some(text) = text {
             write_msg(&mut wr, &Message::Accept { items: Vec::new() }).await?;

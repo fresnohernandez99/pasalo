@@ -110,6 +110,8 @@ input:focus, textarea:focus { border-color: var(--accent); }
 }
 .name-input:hover { border-color: var(--border); }
 .me .sub { padding-left: 0; }
+.code-line { display: flex; align-items: center; gap: 6px; margin-top: 2px; }
+#me-code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; -webkit-user-select: text; user-select: text; }
 .dir { display: flex; align-items: center; gap: 8px; min-width: 0; }
 #open-dir { display: flex; flex-direction: column; align-items: flex-start; max-width: 300px; padding: 4px 10px; }
 .dir-caption { font-size: 11px; color: var(--muted); }

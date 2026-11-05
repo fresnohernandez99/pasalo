@@ -1,10 +1,10 @@
 use std::collections::HashSet;
 use std::fs::Metadata;
 use std::io::{self, SeekFrom};
-use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, UNIX_EPOCH};
 
+use iroh::endpoint::Connection;
 use tokio::fs::File;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncSeekExt, AsyncWrite, AsyncWriteExt, BufReader, BufWriter};
 use tokio::net::TcpStream;
@@ -16,7 +16,7 @@ use crate::protocol::{
     CHUNK, Item, ItemState, LONG, Message, SHORT, configure_stream, hash_prefix, read_msg, timed,
     unexpected, write_msg,
 };
-use crate::{Direction, Error, Event, EventSender, LocalInfo, TransferId};
+use crate::{Direction, Error, Event, EventSender, LocalInfo, Target, TransferId};
 
 #[derive(Debug, Clone)]
 pub struct SendOptions {
@@ -40,7 +40,7 @@ struct Entry {
 /// llamar con los mismos archivos (aunque sea tras reiniciar) también reanuda.
 pub async fn send_paths(
     id: TransferId,
-    addr: SocketAddr,
+    target: &Target,
     local: &LocalInfo,
     paths: &[PathBuf],
     opts: &SendOptions,
@@ -54,7 +54,7 @@ pub async fn send_paths(
 
     let mut attempt = 0;
     loop {
-        match send_once(addr, local, &entries, id, events).await {
+        match send_once(target, local, &entries, id, events).await {
             Ok(()) => {
                 let _ = events.send(Event::TransferFinished {
                     id,
@@ -81,8 +81,8 @@ pub async fn send_paths(
     }
 }
 
-pub async fn send_text(addr: SocketAddr, local: &LocalInfo, text: &str) -> Result<(), Error> {
-    let (mut rd, mut wr) = connect(addr).await?;
+pub async fn send_text(target: &Target, local: &LocalInfo, text: &str) -> Result<(), Error> {
+    let (mut rd, mut wr, _conn) = connect(target).await?;
     handshake(&mut rd, &mut wr, local).await?;
     write_msg(&mut wr, &Message::Offer { items: Vec::new(), text: Some(text.to_string()) }).await?;
     match read_msg(&mut rd, SHORT).await? {
@@ -94,24 +94,52 @@ pub async fn send_text(addr: SocketAddr, local: &LocalInfo, text: &str) -> Resul
     read_result(&mut rd).await
 }
 
+/// Cómo se presenta el otro equipo.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct Greeting {
+    pub name: String,
+    pub platform: String,
+}
+
+/// Se presenta al otro equipo sin enviar nada y devuelve cómo se llama.
+/// Sirve para comprobar que se llega a un equipo remoto al añadirlo.
+pub async fn probe(target: &Target, local: &LocalInfo) -> Result<Greeting, Error> {
+    let (mut rd, mut wr, _conn) = connect(target).await?;
+    let greeting = handshake(&mut rd, &mut wr, local).await?;
+    write_msg(&mut wr, &Message::Done).await?;
+    read_result(&mut rd).await?;
+    Ok(greeting)
+}
+
 fn backoff(attempt: u32) -> Duration {
     Duration::from_secs(1 << attempt.min(4)).min(Duration::from_secs(10))
 }
 
-type Reader = BufReader<tokio::net::tcp::OwnedReadHalf>;
-type Writer = BufWriter<tokio::net::tcp::OwnedWriteHalf>;
+type Reader = BufReader<Box<dyn AsyncRead + Send + Unpin>>;
+type Writer = BufWriter<Box<dyn AsyncWrite + Send + Unpin>>;
 
-async fn connect(addr: SocketAddr) -> Result<(Reader, Writer), Error> {
-    let stream = timed(SHORT, TcpStream::connect(addr)).await?;
-    configure_stream(&stream);
-    let (rd, wr) = stream.into_split();
-    Ok((BufReader::new(rd), BufWriter::with_capacity(CHUNK, wr)))
+/// Abre el canal. Con un equipo remoto también devuelve la conexión, que hay
+/// que mantener viva mientras se usa: al soltarla se cierra.
+async fn connect(target: &Target) -> Result<(Reader, Writer, Option<Connection>), Error> {
+    let (rd, wr, conn): (Box<dyn AsyncRead + Send + Unpin>, Box<dyn AsyncWrite + Send + Unpin>, _) = match target {
+        Target::Lan(addr) => {
+            let stream = timed(SHORT, TcpStream::connect(addr)).await?;
+            configure_stream(&stream);
+            let (rd, wr) = stream.into_split();
+            (Box::new(rd), Box::new(wr), None)
+        }
+        Target::Remote(remote, id) => {
+            let (conn, send, recv) = remote.open(*id).await?;
+            (Box::new(recv), Box::new(send), Some(conn))
+        }
+    };
+    Ok((BufReader::new(rd), BufWriter::with_capacity(CHUNK, wr), conn))
 }
 
-async fn handshake(rd: &mut Reader, wr: &mut Writer, local: &LocalInfo) -> Result<String, Error> {
+async fn handshake(rd: &mut Reader, wr: &mut Writer, local: &LocalInfo) -> Result<Greeting, Error> {
     write_msg(wr, &local.hello()).await?;
     match read_msg(rd, SHORT).await? {
-        Message::Hello { name, .. } => Ok(name),
+        Message::Hello { name, platform, .. } => Ok(Greeting { name, platform }),
         Message::Reject { reason } => Err(Error::Rejected(reason)),
         _ => Err(unexpected("hello")),
     }
@@ -127,14 +155,14 @@ async fn read_result<R: AsyncRead + Unpin>(rd: &mut R) -> Result<(), Error> {
 }
 
 async fn send_once(
-    addr: SocketAddr,
+    target: &Target,
     local: &LocalInfo,
     entries: &[Entry],
     id: TransferId,
     events: &EventSender,
 ) -> Result<(), Error> {
-    let (mut rd, mut wr) = connect(addr).await?;
-    let peer = handshake(&mut rd, &mut wr, local).await?;
+    let (mut rd, mut wr, _conn) = connect(target).await?;
+    let peer = handshake(&mut rd, &mut wr, local).await?.name;
 
     let items = entries.iter().map(|e| e.item.clone()).collect();
     write_msg(&mut wr, &Message::Offer { items, text: None }).await?;

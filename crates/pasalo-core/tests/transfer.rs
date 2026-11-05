@@ -2,7 +2,7 @@ use std::net::SocketAddr;
 use std::path::Path;
 
 use pasalo_core::{
-    Direction, Error, Event, LocalInfo, Receiver, SendOptions, new_transfer_id, send_paths, send_text,
+    Direction, Error, Event, LocalInfo, Receiver, SendOptions, Target, new_transfer_id, send_paths, send_text,
 };
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
@@ -91,10 +91,10 @@ async fn resumes_interrupted_transfer() {
     let no_retry = SendOptions { max_retries: 0 };
 
     let proxy = cutting_proxy(addr, 3 * MIB).await;
-    let cut = send_paths(new_transfer_id(), proxy, &sender, std::slice::from_ref(&folder), &no_retry, &tx).await;
+    let cut = send_paths(new_transfer_id(), &Target::Lan(proxy), &sender, std::slice::from_ref(&folder), &no_retry, &tx).await;
     assert!(cut.is_err(), "el primer intento debía cortarse");
 
-    send_paths(new_transfer_id(), addr, &sender, std::slice::from_ref(&folder), &no_retry, &tx).await.unwrap();
+    send_paths(new_transfer_id(), &Target::Lan(addr), &sender, std::slice::from_ref(&folder), &no_retry, &tx).await.unwrap();
 
     let out = dst.path().join("Fotos");
     assert_eq!(std::fs::read(out.join("sub/grande.bin")).unwrap(), big);
@@ -157,7 +157,7 @@ async fn retries_on_its_own() {
 
     let (tx, mut rx) = mpsc::unbounded_channel();
     let sender = LocalInfo::new("emisor-id", "emisor");
-    send_paths(new_transfer_id(), proxy, &sender, &[file], &SendOptions { max_retries: 3 }, &tx).await.unwrap();
+    send_paths(new_transfer_id(), &Target::Lan(proxy), &sender, &[file], &SendOptions { max_retries: 3 }, &tx).await.unwrap();
     assert_eq!(std::fs::read(dst.path().join("video.mp4")).unwrap(), content);
 
     let mut retried = false;
@@ -180,8 +180,8 @@ async fn renames_on_collision() {
     let (tx, _rx) = mpsc::unbounded_channel();
     let opts = SendOptions::default();
     let sender = LocalInfo::new("emisor-id", "emisor");
-    send_paths(new_transfer_id(), addr, &sender, std::slice::from_ref(&file), &opts, &tx).await.unwrap();
-    send_paths(new_transfer_id(), addr, &sender, &[file], &opts, &tx).await.unwrap();
+    send_paths(new_transfer_id(), &Target::Lan(addr), &sender, std::slice::from_ref(&file), &opts, &tx).await.unwrap();
+    send_paths(new_transfer_id(), &Target::Lan(addr), &sender, &[file], &opts, &tx).await.unwrap();
 
     assert!(dst.path().join("nota.txt").exists());
     assert!(dst.path().join("nota (1).txt").exists());
@@ -191,7 +191,7 @@ async fn renames_on_collision() {
 async fn receives_text() {
     let dst = tempfile::tempdir().unwrap();
     let (addr, mut events) = start_receiver(dst.path()).await;
-    send_text(addr, &LocalInfo::new("emisor-id", "emisor"), "hola mundo").await.unwrap();
+    send_text(&Target::Lan(addr), &LocalInfo::new("emisor-id", "emisor"), "hola mundo").await.unwrap();
     let text = loop {
         if let Some(Event::TextReceived { from, text }) = events.recv().await {
             assert_eq!(from, "emisor");
@@ -233,4 +233,46 @@ async fn rejects_paths_outside_destination() {
 fn rejected_is_not_retried() {
     assert!(!Error::Rejected("no".into()).is_retryable());
     assert!(Error::Timeout.is_retryable());
+}
+
+#[tokio::test]
+async fn probe_returns_name_without_sending() {
+    let dst = tempfile::tempdir().unwrap();
+    let (addr, mut events) = start_receiver(dst.path()).await;
+    let greeting = pasalo_core::probe(&Target::Lan(addr), &LocalInfo::new("emisor-id", "emisor")).await.unwrap();
+    assert_eq!(greeting.name, "receptor");
+    assert!(events.try_recv().is_err());
+    assert_eq!(std::fs::read_dir(dst.path()).unwrap().count(), 0);
+}
+
+/// Pasa por los relays y el DNS de iroh, así que necesita internet:
+/// `cargo test -p pasalo-core -- --ignored`.
+#[tokio::test]
+#[ignore]
+async fn sends_to_remote_by_code() {
+    let src = tempfile::tempdir().unwrap();
+    let dst = tempfile::tempdir().unwrap();
+    let file = src.path().join("remoto.bin");
+    let content = data(5 * MIB, 42);
+    std::fs::write(&file, &content).unwrap();
+
+    let (tx, _rx) = mpsc::unbounded_channel();
+    let listening = pasalo_core::Remote::start(None).await.unwrap();
+    let receiver = Receiver::new(dst.path(), LocalInfo::new("receptor-id", "receptor"), tx.clone());
+    tokio::spawn({
+        let listening = listening.clone();
+        async move { receiver.run_remote(listening).await }
+    });
+    listening.online().await;
+
+    let code = pasalo_core::parse_code(&listening.code()).unwrap();
+    let dialing = pasalo_core::Remote::start(None).await.unwrap();
+    let target = Target::Remote(dialing.clone(), code);
+    let sender = LocalInfo::new("emisor-id", "emisor");
+    assert_eq!(pasalo_core::probe(&target, &sender).await.unwrap().name, "receptor");
+    send_paths(new_transfer_id(), &target, &sender, &[file], &SendOptions::default(), &tx).await.unwrap();
+    assert_eq!(std::fs::read(dst.path().join("remoto.bin")).unwrap(), content);
+
+    dialing.shutdown().await;
+    listening.shutdown().await;
 }

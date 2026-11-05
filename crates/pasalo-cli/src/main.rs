@@ -6,11 +6,11 @@ use std::time::Duration;
 use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand};
 use pasalo_core::protocol::{DISCOVERY_PORT, TRANSFER_PORT};
-use pasalo_core::{Direction, Discovery, Event, LocalInfo, Receiver, SendOptions};
+use pasalo_core::{Direction, Discovery, Event, LocalInfo, Receiver, Remote, SendOptions, Target};
 use tokio::sync::mpsc;
 
 #[derive(Parser)]
-#[command(name = "pasalo", version, about = "Transferencia de archivos en la LAN con reanudación")]
+#[command(name = "pasalo", version, about = "Transferencia de archivos en la LAN o entre redes, con reanudación")]
 struct Cli {
     /// Nombre con el que te ven los demás (por defecto, el del equipo)
     #[arg(long, global = true)]
@@ -35,7 +35,7 @@ enum Command {
         #[arg(long, default_value_t = 3)]
         wait: u64,
     },
-    /// Envía archivos o carpetas a un equipo (IP, IP:puerto o nombre)
+    /// Envía archivos o carpetas a un equipo (IP, IP:puerto, nombre o código remoto)
     Send {
         target: String,
         #[arg(required = true)]
@@ -44,7 +44,7 @@ enum Command {
         #[arg(long, default_value_t = 30)]
         retries: u32,
     },
-    /// Envía un texto a un equipo
+    /// Envía un texto a un equipo (IP, IP:puerto, nombre o código remoto)
     Text { target: String, text: String },
 }
 
@@ -90,7 +90,16 @@ async fn main() -> Result<()> {
                 local.transfer_port
             );
             tokio::spawn(print_events(rx));
-            Receiver::new(dir, local, tx).run(listener).await;
+            let receiver = Receiver::new(dir, local, tx);
+            match Remote::start(Some(&config_dir.join("remote_key"))).await {
+                Ok(remote) => {
+                    println!("Código para recibir desde otras redes: {}", remote.code());
+                    let receiver = receiver.clone();
+                    tokio::spawn(async move { receiver.run_remote(remote).await });
+                }
+                Err(e) => eprintln!("Sin conexiones remotas: {e}"),
+            }
+            receiver.run(listener).await;
         }
         Command::Peers { wait } => {
             let discovery = Discovery::start(local, DISCOVERY_PORT, tx).await?;
@@ -104,30 +113,39 @@ async fn main() -> Result<()> {
             }
         }
         Command::Send { target, paths, retries } => {
-            let addr = resolve(&target, &local).await?;
+            let target = resolve(&target, &local).await?;
             let printer = tokio::spawn(print_events(rx));
             let opts = SendOptions { max_retries: retries };
-            let result = pasalo_core::send_paths(pasalo_core::new_transfer_id(), addr, &local, &paths, &opts, &tx).await;
+            let result = pasalo_core::send_paths(pasalo_core::new_transfer_id(), &target, &local, &paths, &opts, &tx).await;
+            close(&target).await;
             drop(tx);
             let _ = printer.await;
             result?;
         }
         Command::Text { target, text } => {
-            let addr = resolve(&target, &local).await?;
-            pasalo_core::send_text(addr, &local, &text).await?;
+            let target = resolve(&target, &local).await?;
+            let result = pasalo_core::send_text(&target, &local, &text).await;
+            close(&target).await;
+            result?;
             println!("Texto enviado.");
         }
     }
     Ok(())
 }
 
-/// Acepta `IP:puerto`, `IP` o el nombre de un equipo visible en la red.
-async fn resolve(target: &str, local: &LocalInfo) -> Result<SocketAddr> {
+/// Acepta `IP:puerto`, `IP`, el código de un equipo remoto o el nombre de un
+/// equipo visible en la red.
+async fn resolve(target: &str, local: &LocalInfo) -> Result<Target> {
     if let Ok(addr) = target.parse::<SocketAddr>() {
-        return Ok(addr);
+        return Ok(Target::Lan(addr));
     }
     if let Ok(ip) = target.parse::<IpAddr>() {
-        return Ok(SocketAddr::new(ip, TRANSFER_PORT));
+        return Ok(Target::Lan(SocketAddr::new(ip, TRANSFER_PORT)));
+    }
+    if let Some(code) = pasalo_core::parse_code(target) {
+        // Para enviar basta un código de usar y tirar.
+        let remote = Remote::start(None).await.context("no se pudo iniciar la conexión remota")?;
+        return Ok(Target::Remote(remote, code));
     }
     let (tx, mut rx) = mpsc::unbounded_channel();
     let discovery = Discovery::start(local.clone(), DISCOVERY_PORT, tx).await?;
@@ -136,7 +154,7 @@ async fn resolve(target: &str, local: &LocalInfo) -> Result<SocketAddr> {
     loop {
         tokio::select! {
             event = rx.recv() => match event {
-                Some(Event::PeerFound(peer)) if peer.name.eq_ignore_ascii_case(target) => return Ok(peer.addr),
+                Some(Event::PeerFound(peer)) if peer.name.eq_ignore_ascii_case(target) => return Ok(Target::Lan(peer.addr)),
                 Some(_) => {}
                 None => break,
             },
@@ -147,6 +165,13 @@ async fn resolve(target: &str, local: &LocalInfo) -> Result<SocketAddr> {
     match visible.is_empty() {
         true => bail!("no se encontró \"{target}\" y no hay ningún equipo visible"),
         false => bail!("no se encontró \"{target}\"; equipos visibles: {}", visible.join(", ")),
+    }
+}
+
+/// Cierra la conexión remota avisando al otro lado.
+async fn close(target: &Target) {
+    if let Target::Remote(remote, _) = target {
+        remote.shutdown().await;
     }
 }
 

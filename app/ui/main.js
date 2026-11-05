@@ -8,6 +8,7 @@ const items = new Map(); // clave → transferencia o texto
 let selected = null;
 let textPeer = null;
 let textSeq = 0;
+let myCode = null;
 
 const PLATFORMS = {
   macos: 'Mac',
@@ -16,6 +17,7 @@ const PLATFORMS = {
   android: 'Android',
   ios: 'iPhone',
   manual: 'Añadido a mano',
+  remote: 'Remoto',
 };
 
 const STATUS = {
@@ -97,6 +99,48 @@ function saveManualPeers() {
   } catch {}
 }
 
+// Los remotos se guardan con nombre: al añadirlos se pregunta al otro equipo.
+function loadRemotePeers() {
+  try {
+    for (const p of JSON.parse(localStorage.getItem('remotePeers') || '[]')) addRemotePeer(p, false);
+  } catch {}
+}
+
+function saveRemotePeers() {
+  const list = [...peers.values()]
+    .filter((p) => p.platform === 'remote')
+    .map(({ addr, name, os }) => ({ code: addr, name, os }));
+  try {
+    localStorage.setItem('remotePeers', JSON.stringify(list));
+  } catch {}
+}
+
+function addRemotePeer({ code, name, os }, save = true) {
+  peers.set(`remote:${code}`, { device_id: `remote:${code}`, name, platform: 'remote', os, addr: code });
+  if (save) saveRemotePeers();
+  renderPeers();
+}
+
+function isCode(value) {
+  return /^[0-9a-z]{52,64}$/i.test(value.replace(/\s/g, ''));
+}
+
+function shortCode(code) {
+  return `${code.slice(0, 6)}…${code.slice(-4)}`;
+}
+
+async function addByCode(input) {
+  const code = input.replace(/\s/g, '').toLowerCase();
+  if (code === myCode) {
+    toast('Ese es tu propio código', true);
+    return;
+  }
+  toast('Conectando con el equipo remoto…');
+  const hello = await call('probe', { target: code });
+  addRemotePeer({ code, name: hello.name, os: hello.platform });
+  toast(`Añadido ${hello.name}`);
+}
+
 function addManualPeer(input, save = true) {
   const value = input.trim();
   if (!value) return;
@@ -111,7 +155,7 @@ function renderPeers() {
   const container = $('#peers');
   if (!list.length) {
     container.innerHTML = `<div class="empty">Buscando equipos en la red…<br>
-      <span>Abre Pasalo en otro equipo conectado a la misma red.</span></div>`;
+      <span>Abre Pasalo en otro equipo conectado a la misma red, o añade uno de otra red con su código.</span></div>`;
     return;
   }
   container.innerHTML = list
@@ -121,17 +165,25 @@ function renderPeers() {
       <div class="avatar">${esc(initials(p.name))}</div>
       <div class="info">
         <div class="pname">${esc(p.name)}</div>
-        <div class="sub">${esc(PLATFORMS[p.platform] || p.platform)} · ${esc(p.addr)}</div>
+        <div class="sub">${peerSub(p)}</div>
       </div>
       <div class="peer-actions">
         <button class="ghost" data-act="files">Archivos</button>
         <button class="ghost" data-act="folder">Carpeta</button>
         <button class="ghost" data-act="text">Texto</button>
-        ${p.platform === 'manual' ? '<button class="ghost remove" data-act="remove" title="Quitar">✕</button>' : ''}
+        ${['manual', 'remote'].includes(p.platform) ? '<button class="ghost remove" data-act="remove" title="Quitar">✕</button>' : ''}
       </div>
     </div>`,
     )
     .join('');
+}
+
+function peerSub(p) {
+  if (p.platform === 'remote') {
+    const os = PLATFORMS[p.os] || p.os;
+    return `${esc(PLATFORMS.remote)}${os ? ` (${esc(os)})` : ''} · <span title="${esc(p.addr)}">${esc(shortCode(p.addr))}</span>`;
+  }
+  return `${esc(PLATFORMS[p.platform] || p.platform)} · ${esc(p.addr)}`;
 }
 
 $('#peers').addEventListener('click', async (ev) => {
@@ -151,13 +203,20 @@ $('#peers').addEventListener('click', async (ev) => {
   } else if (act === 'remove') {
     peers.delete(peer.device_id);
     saveManualPeers();
+    saveRemotePeers();
   }
   renderPeers();
 });
 
-$('#manual').addEventListener('submit', (ev) => {
+$('#manual').addEventListener('submit', async (ev) => {
   ev.preventDefault();
-  addManualPeer($('#manual-ip').value);
+  const value = $('#manual-ip').value.trim();
+  if (!value) return;
+  if (isCode(value)) {
+    await addByCode(value);
+  } else {
+    addManualPeer(value);
+  }
   $('#manual-ip').value = '';
 });
 
@@ -467,6 +526,9 @@ function showSettings(s) {
   $('#me-sub').textContent = `IP ${ips} · puerto ${s.port}`;
   $('#dir-label').textContent = s.dir;
   $('#open-dir').title = `Abrir ${s.dir}`;
+  myCode = s.code;
+  $('#code-line').hidden = !s.code;
+  if (s.code) $('#me-code').textContent = shortCode(s.code);
 }
 
 async function saveName() {
@@ -491,6 +553,10 @@ $('#me-name').addEventListener('keydown', (ev) => {
 });
 $('#me-name').addEventListener('blur', saveName);
 $('#open-dir').addEventListener('click', () => call('open_dir'));
+$('#copy-code').addEventListener('click', async () => {
+  await navigator.clipboard.writeText(myCode);
+  toast('Código copiado: pásaselo a quien te vaya a enviar algo');
+});
 $('#change-dir').addEventListener('click', async () => {
   const dir = await call('choose_dir');
   if (dir) $('#dir-label').textContent = dir;
@@ -502,6 +568,7 @@ async function init() {
   $('#me-name').dataset.saved = s.name;
   for (const p of s.peers) peers.set(p.device_id, p);
   loadManualPeers();
+  loadRemotePeers();
   renderPeers();
 }
 

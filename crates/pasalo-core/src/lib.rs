@@ -1,5 +1,6 @@
-//! Núcleo de pasalo: descubrimiento de equipos en la LAN y transferencias
-//! de archivos que se pueden reanudar si se interrumpen.
+//! Núcleo de pasalo: descubrimiento de equipos en la LAN, conexiones entre
+//! redes distintas con iroh y transferencias de archivos que se pueden
+//! reanudar si se interrumpen.
 
 mod discovery;
 mod error;
@@ -8,15 +9,26 @@ mod ledger;
 mod paths;
 pub mod protocol;
 mod receiver;
+mod remote;
 mod sender;
 
+use std::net::SocketAddr;
 use std::path::Path;
 
 pub use discovery::{Discovery, Peer};
 pub use error::Error;
 pub use events::{Direction, Event, EventSender, TransferId, new_transfer_id};
+pub use iroh::EndpointId;
 pub use receiver::Receiver;
-pub use sender::{SendOptions, send_paths, send_text};
+pub use remote::{ALPN, Remote, parse_code};
+pub use sender::{Greeting, SendOptions, probe, send_paths, send_text};
+
+/// A dónde se envía: un equipo de la LAN por TCP o uno remoto por su código.
+#[derive(Debug, Clone)]
+pub enum Target {
+    Lan(SocketAddr),
+    Remote(Remote, EndpointId),
+}
 
 /// Identidad de este equipo tal como la ven los demás.
 #[derive(Debug, Clone)]
