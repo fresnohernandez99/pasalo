@@ -58,3 +58,34 @@ Rama `chat-llamadas`. Cada entrada: qué se hizo, cómo se probó y qué queda.
 - **Fallo encontrado por las pruebas y corregido**: un reintento se ignoraba
   si el intento anterior seguía colgado contra la dirección vieja (hasta 30 s).
   Ahora el intento viejo se cancela y empieza uno nuevo (1 s en vez de >20 s).
+
+### Voz en Rust (`crates/pasalo-call`)
+- Códecs: Opus vía `unsafe-libopus` (libopus traducida a Rust, sin C: compila
+  igual para Android) y Codec2 1300 bps en Rust puro.
+- Paquete: `[modo][seq][n][frames]`; durante el silencio no se envía nada
+  (detector de voz con umbral adaptativo y 400 ms de cola).
+- Modos baja y mínima: cada paquete lleva también los frames del anterior,
+  así una pérdida suelta se recupera entera.
+- Búfer de reproducción: al menos 2 paquetes antes de sonar; si la otra
+  persona deja de hablar, suena lo que quede sin esperar a la frase siguiente.
+- Supresión de eco sencilla: mientras suena la otra persona, solo cuenta como
+  voz lo que sea claramente más fuerte que su eco.
+- **Mediciones** con 13,8 s de voz en español (`say`, voz Eddy MX), ejemplo
+  `cargo run --release -p pasalo-call --example muestras`. "Red" incluye ~60
+  bytes de IP/UDP/QUIC por paquete:
+
+  | Modo | Paquete | Voz | Red | Pérdidas 10 % | Pérdidas 20 % |
+  |---|---|---|---|---|---|
+  | alta (Opus 24k) | 20 ms | 22,0 kbps | 45,5 kbps | relleno | relleno |
+  | normal (Opus 12k) | 40 ms | 11,4 kbps | 23,2 kbps | relleno | relleno |
+  | baja (Opus 6k NB + copia) | 120 ms | 10,8 kbps | 14,7 kbps | 10/10 recuperados | 15/22 |
+  | mínima (Codec2 1300 + copia) | 160 ms | 3,0 kbps | **6,0 kbps** | 8/8 recuperados | 13/15 |
+
+- Retraso añadido por el búfer: ~60-80 ms (alta, normal), ~360 ms (baja),
+  ~440 ms (mínima). Es el precio de meter mucho audio por paquete.
+- **Fallo encontrado**: el PLC de `unsafe-libopus` satura (picos de 32767) y
+  deja mal los frames siguientes. Reproducido en una prueba unitaria con un
+  tono; con voz, 10 % de pérdidas daba 3,2× la energía de entrada. Se usa un
+  relleno propio (repetir el último frame a media voz) y la prueba queda.
+- Muestras para escuchar (fuera de git): `dist/muestras/<modo>-perdida<N>.wav`
+  y `original.wav`.
