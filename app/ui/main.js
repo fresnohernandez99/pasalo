@@ -9,6 +9,7 @@ let selected = null;
 let textPeer = null;
 let textSeq = 0;
 let myCode = null;
+let settings = null;
 
 const PLATFORMS = {
   macos: 'Mac',
@@ -16,18 +17,12 @@ const PLATFORMS = {
   linux: 'Linux',
   android: 'Android',
   ios: 'iPhone',
-  manual: 'Añadido a mano',
-  remote: 'Remoto',
 };
 
-const STATUS = {
-  connecting: 'Conectando…',
-  retrying: 'Reconectando…',
-  paused: 'En pausa',
-  interrupted: 'Interrumpida',
-  done: 'Completado',
-  error: 'Error',
-};
+function platformName(platform) {
+  if (platform === 'manual' || platform === 'remote') return t(`platform.${platform}`);
+  return PLATFORMS[platform] || platform;
+}
 
 // ---------- utilidades ----------
 
@@ -36,7 +31,7 @@ function esc(value) {
 }
 
 function bytes(n) {
-  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+  const units = t('units.bytes').split(' ');
   let i = 0;
   while (n >= 1024 && i < units.length - 1) {
     n /= 1024;
@@ -47,9 +42,9 @@ function bytes(n) {
 
 function duration(seconds) {
   if (!isFinite(seconds) || seconds <= 0) return '';
-  if (seconds < 60) return `${Math.ceil(seconds)} s`;
-  if (seconds < 3600) return `${Math.floor(seconds / 60)} min ${Math.ceil(seconds % 60)} s`;
-  return `${Math.floor(seconds / 3600)} h ${Math.floor((seconds % 3600) / 60)} min`;
+  if (seconds < 60) return t('dur.s', { n: Math.ceil(seconds) });
+  if (seconds < 3600) return t('dur.min', { m: Math.floor(seconds / 60), s: Math.ceil(seconds % 60) });
+  return t('dur.h', { h: Math.floor(seconds / 3600), m: Math.floor((seconds % 3600) / 60) });
 }
 
 function initials(name) {
@@ -60,9 +55,8 @@ function basename(path) {
   return path.split(/[\\/]/).filter(Boolean).pop() || path;
 }
 
-function label(paths) {
-  const names = paths.map(basename);
-  return names.length > 1 ? `${names[0]} y ${names.length - 1} más` : names[0];
+function label(names) {
+  return names.length > 1 ? t('label.more', { first: names[0], n: names.length - 1 }) : names[0] || '';
 }
 
 let toastTimer;
@@ -79,7 +73,7 @@ async function call(command, args) {
   try {
     return await invoke(command, args);
   } catch (err) {
-    toast(String(err), true);
+    toast(errorText(err), true);
     throw err;
   }
 }
@@ -132,13 +126,13 @@ function shortCode(code) {
 async function addByCode(input) {
   const code = input.replace(/\s/g, '').toLowerCase();
   if (code === myCode) {
-    toast('Ese es tu propio código', true);
+    toast(t('toast.own_code'), true);
     return;
   }
-  toast('Conectando con el equipo remoto…');
+  toast(t('toast.connecting_remote'));
   const hello = await call('probe', { target: code });
   addRemotePeer({ code, name: hello.name, os: hello.platform });
-  toast(`Añadido ${hello.name}`);
+  toast(t('toast.added', { name: hello.name }));
 }
 
 function addManualPeer(input, save = true) {
@@ -154,8 +148,8 @@ function renderPeers() {
   const list = [...peers.values()].sort((a, b) => a.name.localeCompare(b.name));
   const container = $('#peers');
   if (!list.length) {
-    container.innerHTML = `<div class="empty">Buscando equipos en la red…<br>
-      <span>Abre Pasalo en otro equipo conectado a la misma red, o añade uno de otra red con su código.</span></div>`;
+    container.innerHTML = `<div class="empty">${esc(t('peers.empty'))}<br>
+      <span>${esc(t('peers.empty_hint'))}</span></div>`;
     return;
   }
   container.innerHTML = list
@@ -168,10 +162,10 @@ function renderPeers() {
         <div class="sub">${peerSub(p)}</div>
       </div>
       <div class="peer-actions">
-        <button class="ghost" data-act="files">Archivos</button>
-        <button class="ghost" data-act="folder">Carpeta</button>
-        <button class="ghost" data-act="text">Texto</button>
-        ${['manual', 'remote'].includes(p.platform) ? '<button class="ghost remove" data-act="remove" title="Quitar">✕</button>' : ''}
+        <button class="ghost" data-act="files">${esc(t('btn.files'))}</button>
+        <button class="ghost" data-act="folder">${esc(t('btn.folder'))}</button>
+        <button class="ghost" data-act="text">${esc(t('btn.text'))}</button>
+        ${['manual', 'remote'].includes(p.platform) ? `<button class="ghost remove" data-act="remove" title="${esc(t('btn.remove'))}">✕</button>` : ''}
       </div>
     </div>`,
     )
@@ -180,10 +174,10 @@ function renderPeers() {
 
 function peerSub(p) {
   if (p.platform === 'remote') {
-    const os = PLATFORMS[p.os] || p.os;
-    return `${esc(PLATFORMS.remote)}${os ? ` (${esc(os)})` : ''} · <span title="${esc(p.addr)}">${esc(shortCode(p.addr))}</span>`;
+    const os = p.os ? platformName(p.os) : '';
+    return `${esc(platformName('remote'))}${os ? ` (${esc(os)})` : ''} · <span title="${esc(p.addr)}">${esc(shortCode(p.addr))}</span>`;
   }
-  return `${esc(PLATFORMS[p.platform] || p.platform)} · ${esc(p.addr)}`;
+  return `${esc(platformName(p.platform))} · ${esc(p.addr)}`;
 }
 
 $('#peers').addEventListener('click', async (ev) => {
@@ -222,7 +216,7 @@ $('#manual').addEventListener('submit', async (ev) => {
 
 $('#refresh').addEventListener('click', () => {
   call('refresh');
-  toast('Buscando equipos…');
+  toast(t('toast.searching'));
 });
 
 // ---------- envío ----------
@@ -230,10 +224,10 @@ $('#refresh').addEventListener('click', () => {
 async function sendPaths(peer, paths) {
   if (!paths || !paths.length) return;
   const id = await call('send', { target: peer.addr, paths });
-  const t = transfer(id, 'outgoing');
-  t.peer ||= peer.name;
-  t.name ||= label(paths);
-  update(t);
+  const tr = transfer(id, 'outgoing');
+  tr.peer ||= peer.name;
+  if (!tr.roots.length) tr.roots = paths.map(basename);
+  update(tr);
 }
 
 function openTextDialog(peer) {
@@ -252,7 +246,7 @@ $('#text-form').addEventListener('submit', async (ev) => {
   if (!text.trim() || !textPeer) return;
   $('#text-dialog').close();
   await call('send_text', { target: textPeer.addr, text });
-  toast(`Texto enviado a ${textPeer.name}`);
+  toast(t('toast.text_sent', { name: textPeer.name }));
 });
 
 // Arrastrar y soltar: Tauri da la posición en píxeles físicos.
@@ -279,7 +273,7 @@ listen('tauri://drag-drop', (ev) => {
   const fallback = peers.size === 1 ? [...peers.keys()][0] : selected;
   const peer = peers.get(card?.dataset.id ?? fallback);
   if (!peer) {
-    toast('Suelta los archivos encima de un equipo', true);
+    toast(t('toast.drop_on_peer'), true);
     return;
   }
   selected = peer.device_id;
@@ -294,7 +288,7 @@ function transfer(id, direction) {
   let t = items.get(key);
   if (!t) {
     t = {
-      key, kind: 'transfer', id, direction, peer: '', name: '', status: 'connecting',
+      key, kind: 'transfer', id, direction, peer: '', roots: [], status: 'connecting',
       total: 0, done: 0, resumed: 0, speed: 0, error: null, saved: [],
     };
     items.set(key, t);
@@ -340,52 +334,54 @@ function update(item) {
   if (item.kind === 'text') {
     el.className = 'item done';
     q('.icon').textContent = 'T';
-    q('.title').textContent = `Texto de ${item.from}`;
+    q('.title').textContent = t('item.text_from', { name: item.from });
     q('.status').textContent = item.time;
     q('.meta').hidden = true;
     q('.bar').hidden = true;
     q('.text').hidden = false;
     q('.text').textContent = item.text;
-    setButtons(el, [['copy', 'Copiar']]);
+    setButtons(el, [['copy', t('btn.copy')]]);
     return;
   }
 
-  const t = item;
-  const incoming = t.direction === 'incoming';
-  el.className = `item ${t.status}`;
+  const tr = item;
+  const incoming = tr.direction === 'incoming';
+  el.className = `item ${tr.status}`;
   q('.icon').textContent = incoming ? '↓' : '↑';
-  q('.title').textContent = t.name || (incoming ? 'Recibiendo…' : 'Enviando…');
+  q('.title').textContent = label(tr.roots) || t(incoming ? 'item.receiving' : 'item.sending');
 
-  const pct = t.total ? Math.min(100, (t.done / t.total) * 100) : t.status === 'done' ? 100 : 0;
-  q('.status').textContent = t.status === 'active' ? `${pct.toFixed(pct < 10 ? 1 : 0)} %` : STATUS[t.status] || '';
+  const pct = tr.total ? Math.min(100, (tr.done / tr.total) * 100) : tr.status === 'done' ? 100 : 0;
+  q('.status').textContent = tr.status === 'active' ? `${pct.toFixed(pct < 10 ? 1 : 0)} %` : t(`status.${tr.status}`);
   q('.fill').style.width = `${pct}%`;
 
   const parts = [];
-  if (t.peer) parts.push(`${incoming ? 'de' : 'a'} ${t.peer}`);
-  if (t.total) parts.push(t.status === 'done' ? bytes(t.total) : `${bytes(t.done)} de ${bytes(t.total)}`);
-  if (t.status === 'active' && t.speed > 0) {
-    parts.push(`${bytes(t.speed)}/s`);
-    const eta = duration((t.total - t.done) / t.speed);
-    if (eta) parts.push(`quedan ${eta}`);
+  if (tr.peer) parts.push(t(incoming ? 'meta.from' : 'meta.to', { peer: tr.peer }));
+  if (tr.total) {
+    parts.push(tr.status === 'done' ? bytes(tr.total) : t('meta.progress', { done: bytes(tr.done), total: bytes(tr.total) }));
   }
-  if (t.resumed > 0 && t.status !== 'done') parts.push(`reanudada desde ${bytes(t.resumed)}`);
+  if (tr.status === 'active' && tr.speed > 0) {
+    parts.push(`${bytes(tr.speed)}/s`);
+    const eta = duration((tr.total - tr.done) / tr.speed);
+    if (eta) parts.push(t('meta.left', { eta }));
+  }
+  if (tr.resumed > 0 && tr.status !== 'done') parts.push(t('meta.resumed', { size: bytes(tr.resumed) }));
   q('.meta').textContent = parts.join(' · ');
 
-  const showError = t.error && ['retrying', 'error', 'interrupted'].includes(t.status);
+  const showError = tr.error && ['retrying', 'error', 'interrupted'].includes(tr.status);
   q('.error').hidden = !showError;
   q('.error').textContent = showError
-    ? t.status === 'interrupted'
-      ? `${t.error}. Se reanudará cuando el emisor vuelva a enviarlo.`
-      : t.error
+    ? tr.status === 'interrupted'
+      ? t('meta.will_resume', { error: errorText(tr.error) })
+      : errorText(tr.error)
     : '';
 
   const buttons = [];
   if (!incoming) {
-    if (['connecting', 'active', 'retrying'].includes(t.status)) buttons.push(['pause', 'Pausar']);
-    if (['paused', 'error'].includes(t.status)) buttons.push(['resume', 'Reanudar'], ['remove', 'Quitar']);
+    if (['connecting', 'active', 'retrying'].includes(tr.status)) buttons.push(['pause', t('btn.pause')]);
+    if (['paused', 'error'].includes(tr.status)) buttons.push(['resume', t('btn.resume')], ['remove', t('btn.remove')]);
   }
-  if (incoming && t.status === 'done' && t.saved.length) buttons.push(['reveal', 'Mostrar']);
-  if (t.status === 'done') buttons.push(['remove', '✕']);
+  if (incoming && tr.status === 'done' && tr.saved.length) buttons.push(['reveal', t('btn.reveal')]);
+  if (tr.status === 'done') buttons.push(['remove', '✕']);
   setButtons(el, buttons);
 }
 
@@ -421,7 +417,7 @@ $('#activity').addEventListener('click', async (ev) => {
       break;
     case 'copy':
       await navigator.clipboard.writeText(item.text);
-      toast('Copiado');
+      toast(t('toast.copied'));
       break;
   }
 });
@@ -447,11 +443,11 @@ listen('pasalo', ({ payload: e }) => {
       break;
 
     case 'transfer_started': {
-      const t = transfer(e.id, e.direction);
-      if (t.status === 'paused') break;
-      Object.assign(t, {
+      const tr = transfer(e.id, e.direction);
+      if (tr.status === 'paused') break;
+      Object.assign(tr, {
         peer: e.peer,
-        name: e.name || t.name,
+        roots: e.roots.length ? e.roots : tr.roots,
         total: e.total_bytes,
         done: e.resumed_bytes,
         resumed: e.resumed_bytes,
@@ -460,44 +456,44 @@ listen('pasalo', ({ payload: e }) => {
         speed: 0,
         sample: null,
       });
-      update(t);
+      update(tr);
       break;
     }
 
     case 'progress': {
-      const t = items.get(`t${e.id}`);
-      if (!t || t.status === 'paused') break;
+      const tr = items.get(`t${e.id}`);
+      if (!tr || tr.status === 'paused') break;
       const now = performance.now();
-      if (t.sample) {
-        const dt = (now - t.sample.time) / 1000;
+      if (tr.sample) {
+        const dt = (now - tr.sample.time) / 1000;
         if (dt > 0) {
-          const instant = (e.done_bytes - t.sample.done) / dt;
-          t.speed = t.speed ? t.speed * 0.8 + instant * 0.2 : instant;
+          const instant = (e.done_bytes - tr.sample.done) / dt;
+          tr.speed = tr.speed ? tr.speed * 0.8 + instant * 0.2 : instant;
         }
       }
-      t.sample = { time: now, done: e.done_bytes };
-      t.done = e.done_bytes;
-      t.total = e.total_bytes;
-      if (t.status !== 'done') t.status = 'active';
-      update(t);
+      tr.sample = { time: now, done: e.done_bytes };
+      tr.done = e.done_bytes;
+      tr.total = e.total_bytes;
+      if (tr.status !== 'done') tr.status = 'active';
+      update(tr);
       break;
     }
 
     case 'transfer_finished': {
-      const t = transfer(e.id, e.direction);
-      Object.assign(t, { status: 'done', done: t.total, saved: e.saved, error: null });
-      update(t);
-      if (e.direction === 'incoming') toast(`Recibido ${t.name} de ${t.peer}`);
+      const tr = transfer(e.id, e.direction);
+      Object.assign(tr, { status: 'done', done: tr.total, saved: e.saved, error: null });
+      update(tr);
+      if (e.direction === 'incoming') toast(t('toast.received', { name: label(tr.roots), peer: tr.peer }));
       break;
     }
 
     case 'transfer_failed': {
-      const t = transfer(e.id, e.direction);
-      if (t.status === 'paused') break;
-      t.error = e.error;
-      t.speed = 0;
-      t.status = e.will_retry ? 'retrying' : e.direction === 'incoming' ? 'interrupted' : 'error';
-      update(t);
+      const tr = transfer(e.id, e.direction);
+      if (tr.status === 'paused') break;
+      tr.error = { code: e.code, detail: e.detail };
+      tr.speed = 0;
+      tr.status = e.will_retry ? 'retrying' : e.direction === 'incoming' ? 'interrupted' : 'error';
+      update(tr);
       break;
     }
 
@@ -507,11 +503,11 @@ listen('pasalo', ({ payload: e }) => {
         kind: 'text',
         from: e.from,
         text: e.text,
-        time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        time: new Date().toLocaleTimeString(lang, { hour: '2-digit', minute: '2-digit' }),
       };
       items.set(item.key, item);
       update(item);
-      toast(`Texto recibido de ${e.from}`);
+      toast(t('toast.text_received', { name: e.from }));
       break;
     }
   }
@@ -520,12 +516,13 @@ listen('pasalo', ({ payload: e }) => {
 // ---------- ajustes ----------
 
 function showSettings(s) {
+  settings = s;
   $('#me-name').value = s.name;
   $('#me-avatar').textContent = initials(s.name);
-  const ips = s.ips.length ? s.ips.join(', ') : 'sin red';
-  $('#me-sub').textContent = `IP ${ips} · puerto ${s.port}`;
+  const ips = s.ips.length ? s.ips.join(', ') : t('me.no_network');
+  $('#me-sub').textContent = t('me.sub', { ips, port: s.port });
   $('#dir-label').textContent = s.dir;
-  $('#open-dir').title = `Abrir ${s.dir}`;
+  $('#open-dir').title = t('dir.open_title', { dir: s.dir });
   document.body.classList.toggle('mobile', s.mobile);
   myCode = s.code;
   $('#code-line').hidden = !s.code;
@@ -542,7 +539,8 @@ async function saveName() {
   await call('set_name', { name });
   input.dataset.saved = name;
   $('#me-avatar').textContent = initials(name);
-  toast('Nombre actualizado');
+  settings.name = name;
+  toast(t('toast.name_updated'));
 }
 
 $('#me-name').addEventListener('keydown', (ev) => {
@@ -556,14 +554,31 @@ $('#me-name').addEventListener('blur', saveName);
 $('#open-dir').addEventListener('click', () => call('open_dir'));
 $('#copy-code').addEventListener('click', async () => {
   await navigator.clipboard.writeText(myCode);
-  toast('Código copiado: pásaselo a quien te vaya a enviar algo');
+  toast(t('toast.code_copied'));
 });
 $('#change-dir').addEventListener('click', async () => {
   const dir = await call('choose_dir');
-  if (dir) $('#dir-label').textContent = dir;
+  if (dir) showSettings({ ...settings, dir });
+});
+
+// ---------- idioma ----------
+
+function fillLangSelect() {
+  $('#lang').innerHTML = Object.keys(LANGS)
+    .map((code) => `<option value="${code}" ${code === lang ? 'selected' : ''}>${esc(LANGS[code]['lang.name'])}</option>`)
+    .join('');
+}
+
+$('#lang').addEventListener('change', (ev) => {
+  setLang(ev.target.value);
+  if (settings) showSettings(settings);
+  renderPeers();
+  for (const item of items.values()) update(item);
 });
 
 async function init() {
+  applyStatic();
+  fillLangSelect();
   const s = await call('snapshot');
   showSettings(s);
   $('#me-name').dataset.saved = s.name;

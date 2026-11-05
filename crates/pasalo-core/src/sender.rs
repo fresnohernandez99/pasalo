@@ -10,7 +10,7 @@ use tokio::io::{AsyncRead, AsyncReadExt, AsyncSeekExt, AsyncWrite, AsyncWriteExt
 use tokio::net::TcpStream;
 use walkdir::WalkDir;
 
-use crate::events::{Progress, label};
+use crate::events::Progress;
 use crate::paths::numbered;
 use crate::protocol::{
     CHUNK, Item, ItemState, LONG, Message, SHORT, configure_stream, hash_prefix, read_msg, timed,
@@ -69,6 +69,8 @@ pub async fn send_paths(
                     id,
                     direction: Direction::Outgoing,
                     error: e.to_string(),
+                    code: e.code(),
+                    detail: e.detail(),
                     will_retry,
                 });
                 if !will_retry {
@@ -193,7 +195,7 @@ async fn send_once(
         id,
         direction: Direction::Outgoing,
         peer,
-        name: label(&roots),
+        roots,
         files: files.count(),
         total_bytes: total,
         resumed_bytes: resumed,

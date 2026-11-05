@@ -20,7 +20,29 @@ use tokio::sync::mpsc;
 use tokio::sync::oneshot;
 use tokio::task::JoinHandle;
 
-type CmdResult<T> = Result<T, String>;
+type CmdResult<T> = Result<T, CmdError>;
+
+/// Error de un comando. La interfaz traduce `code` y muestra `detail` tal cual.
+#[derive(Debug, Serialize)]
+struct CmdError {
+    code: &'static str,
+    detail: String,
+}
+
+impl CmdError {
+    fn new(code: &'static str, detail: impl ToString) -> Self {
+        Self { code, detail: detail.to_string() }
+    }
+
+    /// Errores sin traducción propia (E/S, diálogos…): solo se muestra el detalle.
+    fn other(e: impl std::fmt::Display) -> Self {
+        Self::new("other", e)
+    }
+
+    fn core(e: pasalo_core::Error) -> Self {
+        Self { code: e.code(), detail: e.detail() }
+    }
+}
 
 #[derive(Clone, Serialize, Deserialize)]
 struct Settings {
@@ -51,8 +73,8 @@ struct AppState {
 impl AppState {
     fn save_settings(&self) -> CmdResult<()> {
         let settings = self.settings.lock().unwrap().clone();
-        let json = serde_json::to_vec_pretty(&settings).map_err(|e| e.to_string())?;
-        std::fs::write(&self.settings_path, json).map_err(|e| e.to_string())
+        let json = serde_json::to_vec_pretty(&settings).map_err(CmdError::other)?;
+        std::fs::write(&self.settings_path, json).map_err(CmdError::other)
     }
 
     fn spawn_send(&self, id: TransferId) {
@@ -80,11 +102,11 @@ impl AppState {
             return Ok(Target::Lan(SocketAddr::new(ip, TRANSFER_PORT)));
         }
         let Some(code) = pasalo_core::parse_code(target) else {
-            return Err(format!("\"{target}\" no es una IP ni un código de equipo válido"));
+            return Err(CmdError::new("invalid_target", target));
         };
         match &self.remote {
             Some(remote) => Ok(Target::Remote(remote.clone(), code)),
-            None => Err("Las conexiones remotas no están disponibles: reinicia Pasalo con conexión a internet".into()),
+            None => Err(CmdError::new("remote_unavailable", "")),
         }
     }
 
@@ -139,7 +161,7 @@ async fn refresh(state: State<'_, AppState>) -> CmdResult<()> {
 async fn set_name(state: State<'_, AppState>, name: String) -> CmdResult<()> {
     let name = name.trim().to_string();
     if name.is_empty() {
-        return Err("El nombre no puede estar vacío".into());
+        return Err(CmdError::new("empty_name", ""));
     }
     state.settings.lock().unwrap().name = name.clone();
     state.save_settings()?;
@@ -165,19 +187,19 @@ async fn choose_dir(app: AppHandle, state: State<'_, AppState>) -> CmdResult<Opt
 #[tauri::command]
 fn open_dir(app: AppHandle, state: State<'_, AppState>) -> CmdResult<()> {
     let dir = state.receiver.dest();
-    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-    app.opener().open_path(dir.to_string_lossy(), None::<&str>).map_err(|e| e.to_string())
+    std::fs::create_dir_all(&dir).map_err(CmdError::other)?;
+    app.opener().open_path(dir.to_string_lossy(), None::<&str>).map_err(CmdError::other)
 }
 
 #[tauri::command]
 fn reveal(app: AppHandle, path: PathBuf) -> CmdResult<()> {
-    app.opener().reveal_item_in_dir(path).map_err(|e| e.to_string())
+    app.opener().reveal_item_in_dir(path).map_err(CmdError::other)
 }
 
 #[cfg(target_os = "android")]
 #[tauri::command]
 async fn pick_files(app: AppHandle) -> CmdResult<Vec<PathBuf>> {
-    app.state::<android::Android>().pick_files().await
+    app.state::<android::Android>().pick_files().await.map_err(|e| CmdError::new("pick_failed", e))
 }
 
 #[cfg(desktop)]
@@ -187,14 +209,14 @@ async fn pick_files(app: AppHandle) -> CmdResult<Vec<PathBuf>> {
     app.dialog().file().pick_files(move |files| {
         let _ = tx.send(files);
     });
-    let files = rx.await.map_err(|e| e.to_string())?.unwrap_or_default();
+    let files = rx.await.map_err(CmdError::other)?.unwrap_or_default();
     Ok(files.into_iter().filter_map(|f| f.into_path().ok()).collect())
 }
 
 #[cfg(mobile)]
 #[tauri::command]
 async fn pick_folder(_app: AppHandle) -> CmdResult<Option<PathBuf>> {
-    Err("En el móvil solo se pueden elegir archivos".into())
+    Err(CmdError::new("mobile_files_only", ""))
 }
 
 #[cfg(desktop)]
@@ -204,14 +226,14 @@ async fn pick_folder(app: AppHandle) -> CmdResult<Option<PathBuf>> {
     app.dialog().file().pick_folder(move |folder| {
         let _ = tx.send(folder);
     });
-    let folder = rx.await.map_err(|e| e.to_string())?;
+    let folder = rx.await.map_err(CmdError::other)?;
     Ok(folder.and_then(|f| f.into_path().ok()))
 }
 
 #[tauri::command]
 async fn send(state: State<'_, AppState>, target: String, paths: Vec<PathBuf>) -> CmdResult<TransferId> {
     if paths.is_empty() {
-        return Err("No hay nada que enviar".into());
+        return Err(CmdError::new("nothing_to_send", ""));
     }
     let target = state.parse_target(&target)?;
     let id = pasalo_core::new_transfer_id();
@@ -224,7 +246,7 @@ async fn send(state: State<'_, AppState>, target: String, paths: Vec<PathBuf>) -
 async fn send_text(state: State<'_, AppState>, target: String, text: String) -> CmdResult<()> {
     let target = state.parse_target(&target)?;
     let local = state.local.lock().unwrap().clone();
-    pasalo_core::send_text(&target, &local, &text).await.map_err(|e| e.to_string())
+    pasalo_core::send_text(&target, &local, &text).await.map_err(CmdError::core)
 }
 
 /// Comprueba que se llega a un equipo (por IP o por código) y devuelve cómo se llama.
@@ -232,7 +254,7 @@ async fn send_text(state: State<'_, AppState>, target: String, text: String) -> 
 async fn probe(state: State<'_, AppState>, target: String) -> CmdResult<Greeting> {
     let target = state.parse_target(&target)?;
     let local = state.local.lock().unwrap().clone();
-    pasalo_core::probe(&target, &local).await.map_err(|e| format!("No se pudo conectar: {e}"))
+    pasalo_core::probe(&target, &local).await.map_err(|e| CmdError::new("connect_failed", e.detail()))
 }
 
 #[tauri::command]

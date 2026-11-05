@@ -80,7 +80,8 @@ class PasaloPlugin(private val activity: Activity) : Plugin(activity) {
         for (uri in uris) paths.put(copyToCache(uri, dir).absolutePath)
         invoke.resolve(JSObject().put("paths", paths))
       } catch (e: Exception) {
-        invoke.reject("No se pudo leer el archivo: ${e.message}")
+        // El texto lo pone la interfaz, en el idioma elegido (error `pick_failed`).
+        invoke.reject(e.message ?: e.javaClass.simpleName)
       }
     }.start()
   }

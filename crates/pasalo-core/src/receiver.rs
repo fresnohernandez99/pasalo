@@ -10,7 +10,7 @@ use tokio::io::{AsyncRead, AsyncReadExt, AsyncSeekExt, AsyncWrite, AsyncWriteExt
 use tokio::net::TcpListener;
 use tokio::sync::watch;
 
-use crate::events::{Progress, label};
+use crate::events::Progress;
 use crate::ledger::{LEDGER_DIR, Ledger, transfer_key};
 use crate::paths::{part_path, split_safe, unique_name};
 use crate::protocol::{
@@ -136,6 +136,8 @@ impl Receiver {
                     id,
                     direction: Direction::Incoming,
                     error: e.to_string(),
+                    code: e.code(),
+                    detail: e.detail(),
                     will_retry: false,
                 });
             }
@@ -282,7 +284,7 @@ impl Receiver {
             id,
             direction: Direction::Incoming,
             peer: peer.clone(),
-            name: label(&roots),
+            roots,
             files: items.iter().filter(|item| !item.is_dir).count(),
             total_bytes: total,
             resumed_bytes: resumed,

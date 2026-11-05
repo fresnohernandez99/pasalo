@@ -29,8 +29,8 @@ pub enum Event {
         id: TransferId,
         direction: Direction,
         peer: String,
-        /// Resumen de lo que se envía, p. ej. `Fotos y 2 más`.
-        name: String,
+        /// Nombres de primer nivel de lo que se envía (archivos y carpetas).
+        roots: Vec<String>,
         files: usize,
         total_bytes: u64,
         resumed_bytes: u64,
@@ -48,7 +48,12 @@ pub enum Event {
     TransferFailed {
         id: TransferId,
         direction: Direction,
+        /// Mensaje completo, en español (lo que muestra el CLI).
         error: String,
+        /// Tipo de error estable, para que la interfaz lo traduzca (ver [`crate::Error::code`]).
+        code: &'static str,
+        /// El detalle sin el prefijo del tipo.
+        detail: String,
         will_retry: bool,
     },
     TextReceived {
@@ -62,14 +67,6 @@ static NEXT_ID: AtomicU64 = AtomicU64::new(1);
 /// Id para un envío nuevo. Reutilizarlo en otro `send_paths` continúa el mismo envío.
 pub fn new_transfer_id() -> TransferId {
     NEXT_ID.fetch_add(1, Ordering::Relaxed)
-}
-
-pub(crate) fn label(roots: &[String]) -> String {
-    match roots {
-        [] => String::new(),
-        [one] => one.clone(),
-        [first, rest @ ..] => format!("{first} y {} más", rest.len()),
-    }
 }
 
 const PROGRESS_EVERY: Duration = Duration::from_millis(100);
