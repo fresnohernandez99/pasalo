@@ -1,0 +1,24 @@
+# Tests and lints the core and the CLI on every push and pull request.
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo clippy -p pasalo-core -p pasalo-cli --all-targets -- -D warnings
+      - run: cargo test -p pasalo-core -p pasalo-cli
