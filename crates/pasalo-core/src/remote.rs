@@ -6,7 +6,7 @@
 use std::io;
 use std::path::Path;
 
-use iroh::endpoint::{Connection, RecvStream, SendStream, presets};
+use iroh::endpoint::{Connection, QuicTransportConfig, RecvStream, SendStream, VarInt, presets};
 use iroh::{Endpoint, EndpointId, SecretKey};
 
 use crate::Error;
@@ -14,6 +14,11 @@ use crate::protocol::{SHORT, timed};
 
 /// Identifica el protocolo de pasalo dentro de iroh.
 pub const ALPN: &[u8] = b"pasalo/1";
+
+/// Bytes en vuelo por stream. El valor por defecto (1,25 MB) limita a unos
+/// 12 MB/s con 100 ms de latencia; con este, una transferencia entre redes
+/// lejanas puede llenar la conexión.
+const STREAM_WINDOW: u32 = 16 * 1024 * 1024;
 
 /// Punto de conexión remoto de este equipo. Clonarlo es barato.
 #[derive(Debug, Clone)]
@@ -29,7 +34,13 @@ impl Remote {
             Some(path) => load_or_create_key(path)?,
             None => SecretKey::generate(),
         };
+        let transport = QuicTransportConfig::builder()
+            .stream_receive_window(VarInt::from_u32(STREAM_WINDOW))
+            .receive_window(VarInt::from_u32(2 * STREAM_WINDOW))
+            .send_window(2 * STREAM_WINDOW as u64)
+            .build();
         let endpoint = Endpoint::builder(presets::N0)
+            .transport_config(transport)
             .secret_key(key)
             .alpns(vec![ALPN.to_vec()])
             .bind()

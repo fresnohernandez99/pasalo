@@ -3,7 +3,7 @@ use std::io::{self, SeekFrom};
 use std::net::Ipv4Addr;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, RwLock};
-use std::time::{Duration, UNIX_EPOCH};
+use std::time::{Duration, Instant, UNIX_EPOCH};
 
 use tokio::fs::{self, OpenOptions};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncSeekExt, AsyncWrite, AsyncWriteExt, BufReader, BufWriter};
@@ -290,6 +290,10 @@ impl Receiver {
 
         let mut progress = Progress::new(&inner.events, id, resumed, total);
         let mut errors = Vec::new();
+        // Guardar el registro tras cada archivo es O(n²) con miles de archivos
+        // pequeños. Si se pierde lo del último segundo, esos archivos se
+        // vuelven a pedir al reanudar.
+        let mut saved_at = Instant::now();
         for (i, state) in states.iter().enumerate() {
             let ItemState::From { offset } = *state else { continue };
             let (item, path) = (&items[i], &finals[i]);
@@ -314,7 +318,10 @@ impl Receiver {
                 fs::rename(&part, path).await?;
                 set_mtime(path, item.mtime);
                 ledger.done.insert(index);
-                ledger.save(&ledger_path)?;
+                if saved_at.elapsed() >= LEDGER_EVERY {
+                    ledger.save(&ledger_path)?;
+                    saved_at = Instant::now();
+                }
             } else {
                 let _ = fs::remove_file(&part).await;
                 errors.push(format!("{}: el contenido recibido no coincide", item.path));
@@ -326,6 +333,8 @@ impl Receiver {
             return Err(unexpected("done"));
         };
         if !errors.is_empty() {
+            // Para que al reintentar solo se pidan los que fallaron.
+            ledger.save(&ledger_path)?;
             let error = errors.join("; ");
             write_msg(&mut wr, &Message::Result { error: Some(error.clone()) }).await?;
             return Err(Error::Remote(error));
@@ -342,6 +351,9 @@ impl Receiver {
         Ok(())
     }
 }
+
+const LEDGER_EVERY: Duration = Duration::from_secs(1);
+const SYNC_FROM: u64 = 8 * 1024 * 1024;
 
 /// Recibe el resto de un archivo en `part` y devuelve el hash del archivo completo.
 async fn receive_file<R: AsyncRead + Unpin>(
@@ -386,7 +398,12 @@ async fn receive_file<R: AsyncRead + Unpin>(
     let flushed = file.flush().await;
     result?;
     flushed?;
-    file.sync_all().await?;
+    // `sync_all` solo protege de un apagón (si se corta la red o se cierra la
+    // app, lo escrito ya está en el sistema) y en macOS cuesta ~20 ms por
+    // archivo: con miles de archivos pequeños era casi todo el tiempo.
+    if size >= SYNC_FROM {
+        file.sync_all().await?;
+    }
     Ok(hasher.finalize().to_hex().to_string())
 }
 
