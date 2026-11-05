@@ -526,6 +526,7 @@ function showSettings(s) {
   $('#me-sub').textContent = `IP ${ips} · puerto ${s.port}`;
   $('#dir-label').textContent = s.dir;
   $('#open-dir').title = `Abrir ${s.dir}`;
+  document.body.classList.toggle('mobile', s.mobile);
   myCode = s.code;
   $('#code-line').hidden = !s.code;
   if (s.code) $('#me-code').textContent = shortCode(s.code);

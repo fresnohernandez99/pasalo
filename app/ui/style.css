@@ -243,6 +243,11 @@ dialog .row { display: flex; justify-content: flex-end; gap: 8px; margin-top: 10
 }
 .toast.error { background: var(--err); color: #fff; }
 
+/* En el móvil no hay carpetas que elegir, ni arrastrar y soltar, ni Finder. */
+.mobile [data-act="folder"], .mobile [data-act="reveal"], .mobile #change-dir, .mobile .hint { display: none; }
+.mobile #open-dir { pointer-events: none; }
+.mobile .topbar { padding-top: max(14px, env(safe-area-inset-top)); }
+
 @media (max-width: 700px) {
   main { grid-template-columns: 1fr; grid-template-rows: auto 1fr; }
   .peers { max-height: 260px; }
