@@ -353,6 +353,7 @@ async function startMedia() {
   live.state = 'active';
   live.started = Date.now();
   showCall();
+  live.clock = setInterval(() => updateCallState(), 1000);
   try {
     if (live.media === 'voice') {
       await invoke('voice_start', { peer: live.peer.code, mode: live.mode });
@@ -364,9 +365,7 @@ async function startMedia() {
   } catch (err) {
     toast(errorText(err), true);
     hangup();
-    return;
   }
-  live.clock = setInterval(() => updateCallState(), 1000);
 }
 
 function endCall(message) {
@@ -503,13 +502,16 @@ async function startVideo() {
   $('#call-local').srcObject = live.local;
   const pc = new RTCPeerConnection({ iceServers: iceServers() });
   live.pc = pc;
-  live.pendingIce = [];
+  // Pueden haber llegado candidatos mientras se encendía la cámara: no se tiran.
+  live.pendingIce ||= [];
   for (const track of live.local.getTracks()) pc.addTrack(track, live.local);
   pc.onicecandidate = (ev) => ev.candidate && signal('ice', ev.candidate.toJSON()).catch(() => {});
   pc.ontrack = (ev) => ($('#call-remote').srcObject = ev.streams[0]);
   pc.onconnectionstatechange = () => {
     if (pc.connectionState === 'failed') hangup('failed');
   };
+  live.last = null;
+  live.statsTimer = setInterval(updateVideoStats, 1000);
   await applyVideoQuality();
   // Quien llama hace la oferta; quien contesta espera a recibirla.
   if (live.role === 'caller') {
@@ -535,6 +537,30 @@ async function onRemoteSdp(desc) {
     await applyVideoQuality();
     await signal('sdp', { type: pc.localDescription.type, sdp: pc.localDescription.sdp });
   }
+}
+
+// Consumo real del vídeo (y su audio) con getStats, y el estado mientras conecta.
+async function updateVideoStats() {
+  const pc = live?.pc;
+  if (!pc) return;
+  if (pc.connectionState !== 'connected') {
+    $('#call-stats').textContent = t('call.connecting', { state: pc.connectionState });
+    return;
+  }
+  let sent = 0;
+  let received = 0;
+  (await pc.getStats()).forEach((r) => {
+    if (r.type === 'transport') {
+      sent += r.bytesSent || 0;
+      received += r.bytesReceived || 0;
+    }
+  });
+  if (live.last) {
+    const up = ((sent - live.last.sent) * 8) / 1000;
+    const down = ((received - live.last.received) * 8) / 1000;
+    $('#call-stats').textContent = t('call.stats', { up: up.toFixed(0), down: down.toFixed(0) });
+  }
+  live.last = { sent, received };
 }
 
 async function onRemoteIce(candidate) {

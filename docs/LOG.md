@@ -148,3 +148,32 @@ Rama `chat-llamadas`. Cada entrada: qué se hizo, cómo se probó y qué queda.
   6. Las estadísticas de la llamada anterior se quedaban; ahora la app muestra
      el consumo medido (UDP) y no el estimado.
 - Errores de JavaScript ahora salen como aviso en pantalla (`JS: …`).
+
+### Videollamadas (WebRTC) entre dos emuladores
+- Segundo emulador de prueba (`PasaloTest2`). Para depurar se activó a
+  ratos la depuración remota del WebView y se manejó la app por el
+  protocolo de DevTools desde la Mac (no queda en el código).
+- **Fallo encontrado**: la cola de candidatos ICE se vaciaba al encender la
+  cámara y se perdían los que llegaban antes. Corregido.
+- **Problema del entorno, no de Pasalo**: la wifi virtual que comparten los
+  emuladores ("netsim") pierde los paquetes UDP grandes; una señal de 6 KB
+  (la oferta SDP) se quedaba atascada y bloqueaba la conexión. Descartado que
+  fuese la MTU (con QUIC fijo en 1200 bytes seguía igual). La misma señal
+  emulador → Mac por la red real llega bien. Con el segundo emulador aislado
+  (`-feature -WiFiPacketStream`), los dos hablan como redes distintas.
+- **Funciona** entre redes: llamada, contestar, WebRTC `connected` en los dos
+  lados, vídeo remoto de 480 px, colgar se propaga. La calidad se aplica en
+  caliente (límite 1500 kbps en alta y 150 kbps en baja, más 24 kbps de
+  audio). Consumo medido ~100-145 kbps: la cámara emulada es casi una imagen
+  fija y el codificador por software no llega a los límites.
+- **Imagen por el chat**: una foto de 3000×2000 (365 KB) se reduce a
+  1600×1067 JPEG (51 KB), se entrega (✓), el otro lado la abre y le cuenta
+  como no leído.
+- Prueba nueva del núcleo: una ráfaga de 12 señales (una de 6 KB) llega entera.
+
+### Qué no se ha probado
+- Teléfono real con micrófono de verdad (el Pixel se desconectó) y el
+  modo de llamada/eco de Android en la práctica.
+- La app de escritorio con micrófono y cámara (no se puede manejar ni dar
+  permisos sin el usuario). Compila para macOS y Windows.
+- TURN (solo STUN de Google).

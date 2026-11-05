@@ -67,8 +67,9 @@ class PasaloPlugin(private val activity: Activity) : Plugin(activity) {
       val ime = insets.getInsets(WindowInsetsCompat.Type.ime()).bottom / density
       val nav = insets.getInsets(WindowInsetsCompat.Type.navigationBars()).bottom / density
       webView.evaluateJavascript(
-        "var s=document.documentElement.style;s.setProperty('--kb','${ime}px');" +
-          "s.setProperty('--nav','${if (ime > 0) 0f else nav}px');",
+        // Puede llegar antes de que exista la página: entonces no hace nada.
+        "if(document.documentElement){var s=document.documentElement.style;s.setProperty('--kb','${ime}px');" +
+          "s.setProperty('--nav','${if (ime > 0) 0f else nav}px');}",
         null,
       )
       insets

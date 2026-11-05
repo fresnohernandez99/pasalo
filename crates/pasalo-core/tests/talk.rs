@@ -124,3 +124,31 @@ async fn signals_and_voice_datagrams() {
     let first = tokio::time::timeout(Duration::from_secs(5), link_b.rx.recv()).await.unwrap().unwrap();
     assert_eq!(first.len(), 40);
 }
+
+/// WebRTC manda de golpe la oferta SDP (varios KB) y una ráfaga de candidatos
+/// ICE: tienen que llegar todos.
+#[tokio::test]
+async fn burst_of_signals_all_arrive() {
+    let (a, mut b) = pair().await;
+    let sdp = "v=0 ".repeat(1500);
+    let mut sends = Vec::new();
+    for i in 0..12 {
+        let talk = a.talk.clone();
+        let code = b.code.clone();
+        let data = if i == 0 { serde_json::json!({ "sdp": sdp }) } else { serde_json::json!({ "candidate": i }) };
+        sends.push(tokio::spawn(async move {
+            talk.signal(&code, Signal { call: "c".into(), kind: format!("k{i}"), data }).await
+        }));
+    }
+    for send in sends {
+        tokio::time::timeout(Duration::from_secs(20), send).await.expect("la señal no terminó").unwrap().unwrap();
+    }
+    let mut got = 0;
+    while got < 12 {
+        match tokio::time::timeout(Duration::from_secs(10), b.events.recv()).await {
+            Ok(Some(Event::Signal { .. })) => got += 1,
+            Ok(Some(_)) => {}
+            _ => panic!("solo llegaron {got} de 12 señales"),
+        }
+    }
+}
