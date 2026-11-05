@@ -13,7 +13,9 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
+base64 = "0.22"
 if-addrs = "0.13"
+pasalo-call = { version = "0.1.0", path = "../../crates/pasalo-call" }
 pasalo-core = { path = "../../crates/pasalo-core" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

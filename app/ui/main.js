@@ -164,12 +164,22 @@ function renderPeers() {
       <div class="peer-actions">
         <button class="ghost" data-act="files">${esc(t('btn.files'))}</button>
         <button class="ghost" data-act="folder">${esc(t('btn.folder'))}</button>
-        <button class="ghost" data-act="text">${esc(t('btn.text'))}</button>
+        ${chatButton(p)}
         ${['manual', 'remote'].includes(p.platform) ? `<button class="ghost remove" data-act="remove" title="${esc(t('btn.remove'))}">✕</button>` : ''}
       </div>
     </div>`,
     )
     .join('');
+}
+
+// Con código se chatea (cifrado, con historial y llamadas); sin él (equipos
+// añadidos por IP o versiones viejas) queda el texto suelto de siempre.
+function chatButton(p) {
+  const code = peerCode(p);
+  if (!code) return `<button class="ghost" data-act="text">${esc(t('btn.text'))}</button>`;
+  const unread = chat.unread.get(code) || 0;
+  const badge = unread ? ` <span class="badge">${unread}</span>` : '';
+  return `<button class="ghost" data-act="chat">${esc(t('btn.chat'))}${badge}</button>`;
 }
 
 function peerSub(p) {
@@ -194,6 +204,8 @@ $('#peers').addEventListener('click', async (ev) => {
     if (folder) sendPaths(peer, [folder]);
   } else if (act === 'text') {
     openTextDialog(peer);
+  } else if (act === 'chat') {
+    openChat(peer);
   } else if (act === 'remove') {
     peers.delete(peer.device_id);
     saveManualPeers();
@@ -433,7 +445,7 @@ $('#clear').addEventListener('click', () => {
 listen('pasalo', ({ payload: e }) => {
   switch (e.kind) {
     case 'peer_found':
-      peers.set(e.device_id, { device_id: e.device_id, name: e.name, platform: e.platform, addr: e.addr });
+      peers.set(e.device_id, { device_id: e.device_id, name: e.name, platform: e.platform, addr: e.addr, code: e.code });
       renderPeers();
       break;
 
@@ -496,6 +508,14 @@ listen('pasalo', ({ payload: e }) => {
       update(tr);
       break;
     }
+
+    case 'chat':
+      onChatEvent(e);
+      break;
+
+    case 'signal':
+      onSignal(e);
+      break;
 
     case 'text_received': {
       const item = {

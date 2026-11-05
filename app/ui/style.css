@@ -252,6 +252,93 @@ dialog .row { display: flex; justify-content: flex-end; gap: 8px; margin-top: 10
 }
 .toast.error { background: var(--err); color: #fff; }
 
+/* Chat */
+button.icon { padding: 4px 9px; font-size: 16px; line-height: 1.2; }
+.badge {
+  display: inline-block;
+  min-width: 18px;
+  padding: 0 5px;
+  border-radius: 9px;
+  background: var(--accent);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 600;
+  text-align: center;
+}
+.mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.chat {
+  position: fixed;
+  z-index: 10;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: min(460px, 100%);
+  display: flex;
+  flex-direction: column;
+  background: var(--panel);
+  border-left: 1px solid var(--border);
+  box-shadow: -8px 0 24px rgb(0 0 0 / .12);
+}
+.mobile .chat { width: 100%; border-left: none; padding-top: env(safe-area-inset-top); }
+.chat-head { display: flex; align-items: center; gap: 8px; padding: 10px 12px; border-bottom: 1px solid var(--border); }
+.chat-who { flex: 1; min-width: 0; }
+.chat-list { flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 6px; padding: 12px; }
+.bubble {
+  max-width: 80%;
+  padding: 7px 10px 4px;
+  border-radius: 14px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  -webkit-user-select: text;
+  user-select: text;
+}
+.bubble.out { align-self: flex-end; background: var(--accent-soft); border-color: transparent; }
+.bubble.in { align-self: flex-start; }
+.chat-text { white-space: pre-wrap; word-break: break-word; }
+.chat-meta { font-size: 11px; color: var(--muted); text-align: right; margin-top: 2px; }
+.chat-img { display: block; max-width: 100%; max-height: 260px; border-radius: 10px; cursor: zoom-in; }
+.chat-form { display: flex; align-items: flex-end; gap: 6px; padding: 10px 12px; border-top: 1px solid var(--border); }
+.mobile .chat-form { padding-bottom: max(10px, env(safe-area-inset-bottom)); }
+.chat-form textarea { flex: 1; resize: none; max-height: 140px; }
+.viewer { padding: 0; border: none; background: transparent; max-width: 96vw; max-height: 96vh; }
+.viewer img { max-width: 96vw; max-height: 92vh; border-radius: 8px; display: block; }
+
+/* Llamada */
+.call {
+  position: fixed;
+  z-index: 20;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  background: #0d0f13;
+  color: #e8eaee;
+  padding: max(24px, env(safe-area-inset-top)) 16px max(20px, env(safe-area-inset-bottom));
+}
+.call video { position: absolute; background: #000; }
+#call-remote { inset: 0; width: 100%; height: 100%; object-fit: contain; }
+#call-local { right: 12px; top: max(12px, env(safe-area-inset-top)); width: 28%; max-width: 200px; border-radius: 10px; z-index: 1; }
+.call.voice video { display: none; }
+.call-info { position: relative; z-index: 1; text-align: center; margin-top: 8vh; }
+.call.video.active .call-info { margin-top: 0; text-align: left; }
+.call.video.active .call-info .avatar { display: none; }
+.avatar.big { width: 88px; height: 88px; font-size: 36px; margin: 0 auto 14px; }
+.call-name { font-size: 22px; font-weight: 600; }
+.call-state { font-size: 15px; color: #9aa1ad; margin-top: 4px; font-variant-numeric: tabular-nums; }
+.call .sub { color: #9aa1ad; margin-top: 6px; font-variant-numeric: tabular-nums; }
+.call-bar { position: relative; z-index: 1; display: flex; flex-direction: column; gap: 12px; align-items: center; }
+.call-row { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; }
+.call button.ghost { color: #e8eaee; border-color: #3a3f48; background: rgb(255 255 255 / .06); }
+.call button.ghost.on { background: #e8eaee; color: #0d0f13; }
+.call .lang { color: #e8eaee; border-color: #3a3f48; background: #1a1d23; }
+.call-row > button.ok, .call-row > button.danger { min-width: 120px; padding: 10px 18px; border-radius: 24px; font-weight: 600; }
+button.ok { background: #16a34a; border-color: #16a34a; }
+button.danger { background: #dc2626; border-color: #dc2626; }
+
+/* Ajustes */
+.field { display: flex; flex-direction: column; gap: 4px; margin: 10px 0; font-size: 13px; color: var(--muted); }
+.field input, .field select { color: var(--text); }
+
 /* En el móvil no hay carpetas que elegir, ni arrastrar y soltar, ni Finder. */
 .mobile [data-act="folder"], .mobile [data-act="reveal"], .mobile #change-dir, .mobile .hint { display: none; }
 .mobile #open-dir { pointer-events: none; }

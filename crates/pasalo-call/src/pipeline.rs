@@ -121,6 +121,7 @@ pub struct Sender {
     previous: Vec<Vec<u8>>,
     seq: u16,
     muted: Arc<AtomicBool>,
+    echo_gate: bool,
     stats: Arc<Stats>,
 }
 
@@ -139,15 +140,25 @@ impl Sender {
             previous: Vec::new(),
             seq: 0,
             muted,
+            echo_gate: true,
             stats,
         }
     }
 
+    /// Con altavoz y sin cancelación de eco, mientras suena la otra persona
+    /// solo cuenta como voz lo que sea claramente más fuerte que su eco (se
+    /// comporta casi como un walkie). Con auriculares, o sin camino acústico
+    /// (archivos), sobra y corta a quien interrumpe.
+    pub fn set_echo_gate(&mut self, on: bool) {
+        self.echo_gate = on;
+    }
+
     pub fn set_mode(&mut self, mode: Mode) {
         if mode != self.mode {
-            let seq = self.seq;
+            let (seq, echo_gate) = (self.seq, self.echo_gate);
             *self = Self::new(mode, self.input_rate, self.stats.clone(), self.muted.clone());
             self.seq = seq;
+            self.echo_gate = echo_gate;
         }
     }
 
@@ -161,7 +172,7 @@ impl Sender {
             let far = self.stats.far_level();
             // Si está sonando la otra persona, solo cuenta como voz algo
             // claramente más fuerte que su eco.
-            let voice = self.vad.is_voice(&frame) && (far < 0.01 || rms(&frame) > far * 1.5);
+            let voice = self.vad.is_voice(&frame) && (!self.echo_gate || far < 0.01 || rms(&frame) > far * 1.5);
             if voice && !self.muted.load(Ordering::Relaxed) {
                 self.frames.push(self.encoder.encode(&to_i16(&frame)));
                 if self.frames.len() >= frames_per_packet(self.mode) {

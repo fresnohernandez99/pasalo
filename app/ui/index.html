@@ -26,6 +26,7 @@
       </button>
       <button id="change-dir" class="ghost small" data-i18n="dir.change"></button>
       <select id="lang" class="lang" aria-label="Language"></select>
+      <button id="open-settings" class="ghost small" data-i18n-title="settings.title">⚙</button>
     </div>
   </header>
 
@@ -65,8 +66,69 @@
     </form>
   </dialog>
 
+  <section id="chat" class="chat" hidden>
+    <header class="chat-head">
+      <button id="chat-close" class="ghost icon" data-i18n-title="btn.back">←</button>
+      <div class="chat-who">
+        <div id="chat-name" class="pname"></div>
+        <div id="chat-sub" class="sub mono"></div>
+      </div>
+      <button id="chat-voice" class="ghost icon" data-i18n-title="call.voice">📞</button>
+      <button id="chat-video" class="ghost icon" data-i18n-title="call.video">🎥</button>
+    </header>
+    <div id="chat-list" class="chat-list"></div>
+    <form id="chat-form" class="chat-form">
+      <button type="button" id="chat-image" class="ghost icon" data-i18n-title="chat.image">🖼</button>
+      <input type="file" id="chat-file" accept="image/*" multiple hidden>
+      <textarea id="chat-input" rows="1" data-i18n-placeholder="chat.placeholder"></textarea>
+      <button type="submit" class="icon" data-i18n-title="btn.send">➤</button>
+    </form>
+  </section>
+
+  <section id="call" class="call" hidden>
+    <video id="call-remote" autoplay playsinline></video>
+    <video id="call-local" autoplay playsinline muted></video>
+    <div class="call-info">
+      <div class="avatar big">☎</div>
+      <div id="call-name" class="call-name"></div>
+      <div id="call-state" class="call-state"></div>
+      <div id="call-stats" class="sub"></div>
+    </div>
+    <div class="call-bar">
+      <div id="call-controls-live" class="call-row">
+        <select id="call-mode" class="lang"></select>
+        <button id="call-mute" class="ghost" data-i18n="call.mute"></button>
+        <button id="call-speaker" class="ghost" data-i18n="call.speaker"></button>
+        <button id="call-cam" class="ghost" data-i18n="call.camera"></button>
+      </div>
+      <div class="call-row">
+        <button id="call-decline" class="danger" data-i18n="call.decline"></button>
+        <button id="call-accept" class="ok" data-i18n="call.accept"></button>
+        <button id="call-hangup" class="danger" data-i18n="call.hangup"></button>
+      </div>
+    </div>
+  </section>
+
+  <dialog id="settings-dialog">
+    <form id="settings-form">
+      <h3 data-i18n="settings.title"></h3>
+      <label class="field"><span data-i18n="settings.voice_mode"></span><select id="set-voice-mode"></select></label>
+      <p class="hint" data-i18n="settings.turn_hint"></p>
+      <label class="field"><span>TURN</span><input id="set-turn" placeholder="turn:turn.example.com:3478" autocomplete="off" spellcheck="false"></label>
+      <label class="field"><span data-i18n="settings.turn_user"></span><input id="set-turn-user" autocomplete="off" spellcheck="false"></label>
+      <label class="field"><span data-i18n="settings.turn_pass"></span><input id="set-turn-pass" type="password" autocomplete="off"></label>
+      <div class="row">
+        <button type="button" class="ghost" id="settings-cancel" data-i18n="btn.cancel"></button>
+        <button type="submit" data-i18n="btn.save"></button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="viewer" class="viewer"><img id="viewer-img" alt=""></dialog>
+
   <div id="toast" class="toast" hidden></div>
   <script src="i18n.js"></script>
   <script src="main.js"></script>
+  <script src="talk.js"></script>
 </body>
 </html>

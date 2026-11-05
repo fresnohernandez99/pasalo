@@ -1,6 +1,7 @@
 //! Lo que en Android hay que hacer desde Kotlin (`PasaloPlugin.kt`): tener
 //! el `MulticastLock` para recibir los anuncios de la LAN y elegir archivos,
-//! que llegan como `content://` y se copian a la caché para enviarlos.
+//! que llegan como `content://` y se copian a la caché para enviarlos; y el
+//! micrófono y el modo de llamada para la voz.
 
 use std::path::PathBuf;
 
@@ -25,7 +26,29 @@ struct Picked {
     paths: Vec<PathBuf>,
 }
 
+#[derive(Deserialize)]
+struct Granted {
+    granted: bool,
+}
+
+#[derive(serde::Serialize)]
+struct CallAudio {
+    on: bool,
+    speaker: bool,
+}
+
 impl Android {
+    /// Pide el permiso del micrófono (si hace falta) y dice si está concedido.
+    pub async fn request_audio(&self) -> bool {
+        self.0.run_mobile_plugin_async::<Granted>("requestAudio", ()).await.is_ok_and(|g| g.granted)
+    }
+
+    /// Modo de llamada de Android: suena por el auricular (o el altavoz) y el
+    /// sistema aplica su cancelación de eco.
+    pub fn call_audio(&self, on: bool, speaker: bool) {
+        let _ = self.0.run_mobile_plugin::<serde_json::Value>("callAudio", CallAudio { on, speaker });
+    }
+
     pub async fn pick_files(&self) -> Result<Vec<PathBuf>, String> {
         let picked: Picked = self.0.run_mobile_plugin_async("pickFiles", ()).await.map_err(|e| e.to_string())?;
         Ok(picked.paths)

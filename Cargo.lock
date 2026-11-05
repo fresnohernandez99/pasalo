@@ -3914,7 +3914,9 @@ dependencies = [
 name = "pasalo-app"
 version = "0.1.0"
 dependencies = [
+ "base64 0.22.1",
  "if-addrs",
+ "pasalo-call",
  "pasalo-core",
  "serde",
  "serde_json",
@@ -3941,9 +3943,12 @@ name = "pasalo-cli"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "bytes",
  "clap",
  "dirs 6.0.0",
+ "pasalo-call",
  "pasalo-core",
+ "serde_json",
  "tokio",
  "tracing-subscriber",
 ]

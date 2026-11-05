@@ -6,3 +6,11 @@ members = ["crates/pasalo-core", "crates/pasalo-cli", "crates/pasalo-call", "app
 version = "0.1.0"
 edition = "2024"
 license = "MIT"
+
+# Los códecs de voz sin optimizar no llegan a tiempo real; así también va
+# bien la app compilada en modo desarrollo.
+[profile.dev.package.unsafe-libopus]
+opt-level = 3
+
+[profile.dev.package.codec2]
+opt-level = 3

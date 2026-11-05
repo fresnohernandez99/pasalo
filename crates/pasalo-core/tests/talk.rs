@@ -116,9 +116,9 @@ async fn signals_and_voice_datagrams() {
 
     let link_a = a.talk.voice(&b.code).await.unwrap();
     let mut link_b = b.talk.voice(&a.code).await.unwrap();
-    assert!(link_a.max_size() >= 1000);
+    assert!(link_a.sender.max_size() >= 1000);
     for i in 0..20u8 {
-        link_a.send(bytes::Bytes::from(vec![i; 40]));
+        link_a.sender.send(bytes::Bytes::from(vec![i; 40]));
         tokio::time::sleep(Duration::from_millis(5)).await;
     }
     let first = tokio::time::timeout(Duration::from_secs(5), link_b.rx.recv()).await.unwrap().unwrap();

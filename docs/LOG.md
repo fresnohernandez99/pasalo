@@ -89,3 +89,34 @@ Rama `chat-llamadas`. Cada entrada: qué se hizo, cómo se probó y qué queda.
   relleno propio (repetir el último frame a media voz) y la prueba queda.
 - Muestras para escuchar (fuera de git): `dist/muestras/<modo>-perdida<N>.wav`
   y `original.wav`.
+
+### Integración en la app y el CLI
+- App: comandos `chat_*`, `call_signal`, `voice_*`; el estado guarda el chat
+  y la llamada; las direcciones LAN del descubrimiento se pasan al chat.
+  Interfaz en `app/ui/talk.js`: chat con imágenes (se reducen a 1600 px JPEG
+  antes de enviarse), llamadas entrantes/salientes con timbre, selector de
+  modo (se aplica en los dos sentidos), silencio, altavoz (Android) y
+  estadísticas; videollamadas con WebRTC (STUN de Google, TURN opcional en
+  Ajustes, calidad baja/normal/alta limitando bitrate, resolución y fps).
+- Android: permisos `RECORD_AUDIO`, `MODIFY_AUDIO_SETTINGS`, `CAMERA`; el
+  plugin pide el micrófono y pone el modo de llamada (auricular y procesado
+  de voz del sistema). macOS: `Info.plist` con los textos de micrófono y cámara.
+- CLI: `pasalo chat`, `pasalo call` y `pasalo listen --answer` para probar
+  con archivos de audio (sin micrófono).
+- **Prueba CLI ⇄ CLI por iroh directo en la LAN**: mensaje + imagen de 120 KB
+  entregados e idénticos; llamada contestada sola, 0 pérdidas.
+- **Consumo medido** con los contadores UDP de la conexión (incluye ACKs de
+  QUIC), los dos lados hablando sin parar a la vez (peor caso):
+
+  | Modo | Medido | Estimado |
+  |---|---|---|
+  | alta | ~57 kbps | ~45 |
+  | normal | ~35 kbps | ~23 |
+  | baja | ~19 kbps | ~15 |
+  | mínima | ~9 kbps | ~6 |
+
+  Abrir la conexión cuesta ~30 KB una vez (TLS y sondeo de rutas); en
+  silencio, la conexión gasta ~0,2 kbps.
+- **Aprendido midiendo**: la supresión de eco recortaba la voz cuando los dos
+  hablan a la vez (es su función con altavoz). Ahora se puede desactivar; el
+  CLI la desactiva porque trabaja con archivos.

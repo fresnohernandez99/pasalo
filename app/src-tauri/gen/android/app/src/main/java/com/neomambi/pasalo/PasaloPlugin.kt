@@ -4,6 +4,7 @@ import android.app.Activity
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.media.AudioManager
 import android.net.Uri
 import android.net.wifi.WifiManager
 import android.os.Build
@@ -14,6 +15,9 @@ import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import app.tauri.annotation.ActivityCallback
 import app.tauri.annotation.Command
+import app.tauri.annotation.InvokeArg
+import app.tauri.annotation.Permission
+import app.tauri.annotation.PermissionCallback
 import app.tauri.annotation.TauriPlugin
 import app.tauri.plugin.Invoke
 import app.tauri.plugin.JSArray
@@ -24,7 +28,13 @@ import java.io.File
 /**
  * Lo que la parte en Rust no puede hacer sola en Android (ver `src/android.rs`).
  */
-@TauriPlugin
+@InvokeArg
+class CallAudioArgs {
+  var on: Boolean = false
+  var speaker: Boolean = false
+}
+
+@TauriPlugin(permissions = [Permission(strings = [android.Manifest.permission.RECORD_AUDIO], alias = "microphone")])
 class PasaloPlugin(private val activity: Activity) : Plugin(activity) {
   private var multicastLock: WifiManager.MulticastLock? = null
 
@@ -37,6 +47,36 @@ class PasaloPlugin(private val activity: Activity) : Plugin(activity) {
     }
     requestLocalNetwork()
     cleanOldCopies()
+  }
+
+  /** Micrófono para las llamadas de voz (las de WebRTC lo pide el WebView). */
+  @Command
+  fun requestAudio(invoke: Invoke) {
+    if (ContextCompat.checkSelfPermission(activity, android.Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
+      invoke.resolve(JSObject().put("granted", true))
+    } else {
+      requestPermissionForAlias("microphone", invoke, "audioPermissionResult")
+    }
+  }
+
+  @PermissionCallback
+  fun audioPermissionResult(invoke: Invoke) {
+    val granted = ContextCompat.checkSelfPermission(activity, android.Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
+    invoke.resolve(JSObject().put("granted", granted))
+  }
+
+  /**
+   * Modo de llamada: el sistema enruta por el auricular (o el altavoz) y aplica
+   * su procesado de voz, que quita gran parte del eco.
+   */
+  @Command
+  fun callAudio(invoke: Invoke) {
+    val args = invoke.parseArgs(CallAudioArgs::class.java)
+    val audio = activity.getSystemService(Context.AUDIO_SERVICE) as AudioManager
+    audio.mode = if (args.on) AudioManager.MODE_IN_COMMUNICATION else AudioManager.MODE_NORMAL
+    @Suppress("DEPRECATION")
+    audio.isSpeakerphoneOn = args.on && args.speaker
+    invoke.resolve()
   }
 
   /** Desde Android 17, sin este permiso no se ve ni se llega a ningún equipo de la LAN. */

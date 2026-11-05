@@ -86,19 +86,31 @@ struct ImageMeta {
 
 /// Canal de voz con un equipo: datagramas QUIC, no fiables y sin reenvíos.
 pub struct VoiceLink {
-    conn: Connection,
+    pub sender: VoiceSender,
     pub rx: mpsc::UnboundedReceiver<Bytes>,
 }
 
-impl VoiceLink {
+/// Lado de envío de un [`VoiceLink`]; se puede clonar y usar desde otro hilo.
+#[derive(Clone)]
+pub struct VoiceSender(Connection);
+
+impl VoiceSender {
     /// Envía un paquete. Si no cabe o la conexión se cerró, se descarta.
     pub fn send(&self, packet: Bytes) -> bool {
-        self.conn.send_datagram(packet).is_ok()
+        self.0.send_datagram(packet).is_ok()
     }
 
     /// Tamaño máximo de un datagrama en esta conexión.
     pub fn max_size(&self) -> usize {
-        self.conn.max_datagram_size().unwrap_or(0)
+        self.0.max_datagram_size().unwrap_or(0)
+    }
+
+    /// Bytes medidos que han salido y entrado por esta conexión, con las
+    /// cabeceras IPv4 y UDP (28 bytes por datagrama). Incluye todo lo que
+    /// viaja por ella: voz, mensajes, acuses y pings de QUIC.
+    pub fn wire_bytes(&self) -> (u64, u64) {
+        let stats = self.0.stats();
+        (stats.udp_tx.bytes + 28 * stats.udp_tx.datagrams, stats.udp_rx.bytes + 28 * stats.udp_rx.datagrams)
     }
 }
 
@@ -203,7 +215,7 @@ impl Talk {
         let conn = self.connection(id).await?;
         let (tx, rx) = mpsc::unbounded_channel();
         self.inner.voice.lock().unwrap().insert(id, tx);
-        Ok(VoiceLink { conn, rx })
+        Ok(VoiceLink { sender: VoiceSender(conn), rx })
     }
 
     /// Deja de entregar datagramas de voz de `peer`.

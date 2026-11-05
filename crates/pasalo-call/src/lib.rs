@@ -6,12 +6,14 @@
 //! porque cada paquete dice con qué modo va.
 
 mod codec;
+#[cfg(feature = "devices")]
 mod device;
 mod dsp;
 mod pipeline;
 
 use serde::{Deserialize, Serialize};
 
+#[cfg(feature = "devices")]
 pub use device::{Call, CallError};
 pub use pipeline::{OVERHEAD, Receiver, Sender, Stats};
 

@@ -1,5 +1,6 @@
 #[cfg(target_os = "android")]
 mod android;
+mod talk;
 
 use std::collections::HashMap;
 use std::net::{IpAddr, SocketAddr};
@@ -8,7 +9,7 @@ use std::sync::Mutex;
 
 use pasalo_core::protocol::{DISCOVERY_PORT, TRANSFER_PORT};
 use pasalo_core::{
-    Discovery, Event, EventSender, Greeting, LocalInfo, Peer, Receiver, Remote, SendOptions, Target, TransferId,
+    Discovery, Event, EventSender, Greeting, LocalInfo, Peer, Receiver, Remote, SendOptions, Talk, Target, TransferId,
 };
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager, State};
@@ -66,6 +67,10 @@ struct AppState {
     discovery: tokio::sync::Mutex<Option<Discovery>>,
     /// `None` si no se pudo arrancar (p. ej. sin red al abrir la app).
     remote: Option<Remote>,
+    /// Chat y llamadas; existe si hay `remote`.
+    talk: Option<Talk>,
+    chat_dir: PathBuf,
+    voice: Mutex<Option<talk::VoiceCall>>,
     events: EventSender,
     outgoing: Mutex<HashMap<TransferId, Outgoing>>,
 }
@@ -171,6 +176,9 @@ async fn set_name(state: State<'_, AppState>, name: String) -> CmdResult<()> {
         local.clone()
     };
     state.receiver.set_local(local);
+    if let Some(talk) = &state.talk {
+        talk.set_name(&*state.settings.lock().unwrap().name);
+    }
     state.restart_discovery().await;
     Ok(())
 }
@@ -319,13 +327,8 @@ fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     let settings_path = config_dir.join("settings.json");
     let settings = load_settings(&settings_path, &handle);
 
+    let chat_dir = app.path().app_data_dir()?.join("chat");
     let (events, mut rx) = mpsc::unbounded_channel::<Event>();
-    let emitter = handle.clone();
-    tauri::async_runtime::spawn(async move {
-        while let Some(event) = rx.recv().await {
-            let _ = emitter.emit("pasalo", &event);
-        }
-    });
 
     let state = tauri::async_runtime::block_on(async {
         // Si el puerto está ocupado (otra instancia, el CLI…), cualquiera libre:
@@ -337,17 +340,22 @@ fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
         let mut local = LocalInfo::new(device_id, settings.name.clone());
         local.transfer_port = listener.local_addr()?.port();
 
-        let receiver = Receiver::new(&settings.dir, local.clone(), events.clone());
-        let running = receiver.clone();
-        tokio::spawn(async move { running.run(listener).await });
-
         let remote = Remote::start(Some(&config_dir.join("remote_key")))
             .await
             .inspect_err(|e| eprintln!("no se pudieron iniciar las conexiones remotas: {e}"))
             .ok();
+        if let Some(remote) = &remote {
+            local.code = Some(remote.code());
+            local.remote_port = remote.port();
+        }
+        let talk = remote.clone().map(|r| Talk::new(r, settings.name.clone(), &chat_dir, events.clone()));
+
+        let receiver = Receiver::new(&settings.dir, local.clone(), events.clone());
+        let running = receiver.clone();
+        tokio::spawn(async move { running.run(listener).await });
         if let Some(remote) = remote.clone() {
-            let running = receiver.clone();
-            tokio::spawn(async move { running.run_remote(remote).await });
+            let (running, talk) = (receiver.clone(), talk.clone());
+            tokio::spawn(async move { running.run_remote(remote, talk).await });
         }
 
         let state = AppState {
@@ -357,12 +365,29 @@ fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
             receiver,
             discovery: tokio::sync::Mutex::new(None),
             remote,
+            talk,
+            chat_dir,
+            voice: Mutex::new(None),
             events,
             outgoing: Mutex::default(),
         };
         state.restart_discovery().await;
         Ok::<_, std::io::Error>(state)
     })?;
+
+    // Los eventos esperan en el canal hasta aquí, así que no se pierde ninguno.
+    let (emitter, talk) = (handle.clone(), state.talk.clone());
+    tauri::async_runtime::spawn(async move {
+        while let Some(event) = rx.recv().await {
+            // Un equipo de la LAN con chat: se le puede hablar directo y sin internet.
+            if let (Event::PeerFound(peer), Some(talk)) = (&event, &talk)
+                && let (Some(code), Some(addr)) = (&peer.code, peer.remote_addr)
+            {
+                talk.set_lan_addr(code, addr);
+            }
+            let _ = emitter.emit("pasalo", &event);
+        }
+    });
     app.manage(state);
     Ok(())
 }
@@ -378,7 +403,10 @@ pub fn run() {
         .setup(setup)
         .invoke_handler(tauri::generate_handler![
             snapshot, refresh, set_name, choose_dir, open_dir, reveal, pick_files, pick_folder, send,
-            send_text, probe, pause, resume, forget
+            send_text, probe, pause, resume, forget,
+            talk::chat_history, talk::chat_send, talk::chat_send_image, talk::chat_image, talk::call_signal,
+            talk::voice_start, talk::voice_mode, talk::voice_mute, talk::voice_speaker, talk::voice_stop,
+            talk::voice_stats
         ])
         .run(tauri::generate_context!())
         .expect("error al iniciar Pasalo");
