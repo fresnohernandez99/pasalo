@@ -104,6 +104,9 @@ jobs:
           java-version: 17
 
       - uses: android-actions/setup-android@v3
+        with:
+          # The default list includes "tools", which the SDK no longer ships.
+          packages: platform-tools
 
       - name: Android NDK
         run: |
