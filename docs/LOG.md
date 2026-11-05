@@ -177,3 +177,13 @@ Rama `chat-llamadas`. Cada entrada: qué se hizo, cómo se probó y qué queda.
 - La app de escritorio con micrófono y cámara (no se puede manejar ni dar
   permisos sin el usuario). Compila para macOS y Windows.
 - TURN (solo STUN de Google).
+
+### Estado al terminar esta sesión
+- Builds de prueba (fuera de git): `dist/chat-llamadas/Pasalo-chat-llamadas-android.apk`
+  (firmado con la misma clave, ARM 64/32 y x86_64) y `Pasalo-chat-llamadas-macos.dmg`
+  (universal, con los textos de permiso de micrófono y cámara).
+- Muestras de audio de cada modo: `dist/muestras/`.
+- Emuladores de prueba creados: `PasaloTest` y `PasaloTest2` (~2,8 GB cada uno
+  en `~/.android/avd`); se pueden borrar.
+- Pendiente de probar con personas: voz real en el Pixel (eco, auricular /
+  altavoz), la app de escritorio con micrófono y cámara, y TURN.
