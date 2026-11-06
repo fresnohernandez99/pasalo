@@ -46,9 +46,9 @@ impl CmdError {
     }
 }
 
-/// Server de conexión por defecto (ver `server/README.md`): pon aquí la URL
-/// de tu despliegue en Vercel. Vacío, cada usuario la pone en Ajustes.
-const DEFAULT_SERVER: &str = "";
+/// Server de conexión por defecto (ver `server/README.md`). Se puede cambiar
+/// en Ajustes.
+const DEFAULT_SERVER: &str = "https://pasalo-server.vercel.app";
 
 #[derive(Clone, Serialize, Deserialize)]
 struct Settings {
@@ -422,7 +422,11 @@ fn local_ips() -> Vec<String> {
 }
 
 fn load_settings(path: &Path, app: &AppHandle) -> Settings {
-    if let Some(settings) = std::fs::read(path).ok().and_then(|bytes| serde_json::from_slice(&bytes).ok()) {
+    if let Some(mut settings) = std::fs::read(path).ok().and_then(|bytes| serde_json::from_slice::<Settings>(&bytes).ok()) {
+        // Guardado cuando no había server por defecto.
+        if settings.server.is_empty() {
+            settings.server = default_server();
+        }
         return settings;
     }
     let server = default_server();

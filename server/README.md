@@ -16,7 +16,7 @@ Es una sola función para Vercel (`api/[action].js`) con MongoDB (pensado para M
    | `MONGODB_DB` | Opcional. Nombre de la base de datos (por defecto `pasalo`) |
 
 4. Despliega y comprueba `https://<tu-proyecto>.vercel.app/api/health`. Tiene que contestar `{"ok":true}`.
-5. Pon `https://<tu-proyecto>.vercel.app` en `DEFAULT_SERVER` (`app/src-tauri/src/lib.rs`) antes de compilar la app, para que venga puesto. Si se deja vacío, cada usuario lo pone en ⚙ **Ajustes → Server de conexión**, que también sirve para cambiarlo.
+5. La app viene apuntando a `https://pasalo-server.vercel.app` (`DEFAULT_SERVER` en `app/src-tauri/src/lib.rs`). Para usar otro despliegue, cámbialo ahí antes de compilar o ponlo en ⚙ **Ajustes → Server de conexión**.
 
 Los índices (incluidos los TTL que borran lo abandonado) se crean solos la primera vez.
 
