@@ -5,7 +5,7 @@
   "description": "Server de señalización de Pasalo para Vercel con MongoDB",
   "scripts": {
     "dev": "node dev.js",
-    "test": "node --test test/"
+    "test": "node --test test/*.test.js"
   },
   "engines": {
     "node": ">=20.19"
