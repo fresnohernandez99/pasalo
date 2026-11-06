@@ -98,6 +98,18 @@ pub enum Event {
         name: String,
         signal: Signal,
     },
+    /// Se cayó la conexión con `peer` (su código) en plena llamada: la voz y
+    /// el vídeo ya no llegan.
+    TalkLost {
+        peer: String,
+    },
+    /// La pareja dejó de responder sin despedirse (se quedó sin red, cerró la
+    /// app…). Ya se volvió al server (`online`) o a solo red local.
+    PartnerLost {
+        code: String,
+        name: String,
+        online: bool,
+    },
     /// Quién está ahora en el server de conexión (sin contarnos).
     LobbyUsers {
         users: Vec<LobbyUser>,

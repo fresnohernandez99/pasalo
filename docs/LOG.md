@@ -295,3 +295,39 @@ más) y WebRTC se queda para el vídeo. El server es solo señalización.
 - Videollamadas con los presets nuevos; la app de escritorio con la interfaz
   nueva (compila).
 - Consumo de voz con RTT de datos móviles.
+
+## Sesión 2026-11-06 — Desconexiones
+
+### Fallos encontrados
+- **Llamada sin nadie al otro lado**: si el otro desaparecía sin colgar, nada
+  lo notaba. El canal de voz seguía abierto y la app seguía grabando.
+- **Llamada que arranca después de colgar**: si colgaban mientras
+  `voice_start` o `video_start` estaban en marcha (en Android, con el
+  permiso del micrófono pidiéndose), la voz o el vídeo arrancaban igual y
+  se quedaban encendidos.
+- **Pareja fantasma**: si la pareja cerraba la app o se quedaba sin red, este
+  lado seguía «conectado» con ella para siempre (y con `set_only`, sin aceptar
+  a nadie más). Como ninguno de los dos estaba en el server, no podían volver
+  a encontrarse.
+- Al desconectarse, la conexión de iroh con la pareja seguía abierta y se
+  reutilizaba al volver a emparejarse, ya muerta. Los mensajes pendientes
+  seguían reintentándose contra ella.
+- En Android, si `voice_start` fallaba, el audio se quedaba en modo llamada.
+
+### Cambios
+- `Talk::hold` mantiene abierta la conexión con la pareja y la reabre si se
+  cae; `Talk::release` la cierra, corta las entregas en curso y deja lo
+  pendiente para cuando vuelva (no se pierde nada).
+- `Event::TalkLost` cuando se cae la conexión en plena llamada: la app
+  corta la voz y el vídeo en Rust, y la interfaz cuelga.
+- `Event::PartnerLost`: si la pareja no vuelve en 20 s (60 s la primera
+  vez), se deja la pareja y se vuelve al server para poder reconectar.
+- En la interfaz, la llamada se corta si en 15 s no llega nada por la
+  conexión (iroh manda un keep-alive cada 5 s).
+- Al desconectarse (Desconectar, el otro se despide, se pierde la pareja o
+  la LAN deja de ver al equipo) se cuelga la llamada, se sale de su chat y
+  lo que se le envía queda en pausa. Sigue solo cuando el equipo vuelve; lo
+  que pausó el usuario no. En la LAN no se pausa una transferencia que sigue
+  avanzando: el descubrimiento puede perder anuncios.
+- Release: el alias de la clave sale de `ANDROID_KEY_ALIAS` (por defecto
+  `key0`) y se comprueba la clave antes de firmar.

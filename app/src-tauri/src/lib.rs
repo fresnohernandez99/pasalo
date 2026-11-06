@@ -92,7 +92,7 @@ fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
             {
                 talk.set_lan_addr(code, addr);
             }
-            crate::net::on_event(&emitter.state::<AppState>(), &event).await;
+            crate::net::on_event(&emitter, &event).await;
             let _ = emitter.emit("pasalo", &event);
         }
     });

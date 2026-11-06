@@ -15,6 +15,11 @@ import { noteTransfer } from './nav.js';
 /** clave → transferencia o texto */
 export const items = new Map();
 let textSeq = 0;
+/** Destinos (IP:puerto o código) de equipos que se fueron: lo que se les envía, en pausa. */
+const gone = new Set();
+// Una transferencia que avanzó hace menos de esto sigue viva aunque el
+// descubrimiento de la LAN haya dejado de ver al otro equipo.
+const STALL_MS = 5000;
 
 // Estados en los que todavía puede pasar algo.
 const LIVE = ['request', 'waiting', 'connecting', 'active', 'retrying', 'paused'];
@@ -44,6 +49,7 @@ export async function sendPaths(peer, paths) {
   if (!paths || !paths.length) return;
   const id = await call('send', { target: peer.addr, paths });
   const tr = transfer(id, 'outgoing');
+  tr.target = peer.addr;
   tr.peer ||= peer.name;
   if (!tr.roots.length) tr.roots = paths.map(basename);
   update(tr);
@@ -190,16 +196,57 @@ function removeItem(item) {
   emit('transfers:changed');
 }
 
+// ---------- desconexiones ----------
+
+/** Pausa lo que se envía a un destino. Devuelve si lo pausó. */
+async function pauseOne(tr) {
+  try {
+    await invoke('pause', { id: tr.id });
+  } catch {
+    return false;
+  }
+  Object.assign(tr, { status: 'paused', speed: 0, autoPaused: true });
+  update(tr);
+  return true;
+}
+
+/**
+ * El equipo con este destino se fue: lo que se le envía queda en pausa y
+ * sigue solo cuando vuelva. Con `sure` (la pareja se desconectó) se pausa
+ * todo; si no (la LAN dejó de verlo), solo lo que no avanza: el descubrimiento
+ * puede perder anuncios mientras la transferencia va bien.
+ */
+export function pauseFor(target, sure = false) {
+  if (!target) return;
+  gone.add(target);
+  const recent = performance.now() - STALL_MS;
+  for (const tr of items.values()) {
+    if (tr.kind !== 'transfer' || tr.direction !== 'outgoing' || tr.target !== target) continue;
+    if (!['connecting', 'waiting', 'active', 'retrying'].includes(tr.status)) continue;
+    if (!sure && tr.status === 'active' && tr.sample && tr.sample.time > recent) continue;
+    pauseOne(tr);
+  }
+}
+
+/** El equipo volvió: sigue lo que se pausó al irse (no lo que pausó el usuario). */
+export function resumeFor(target) {
+  if (!target || !gone.delete(target)) return;
+  for (const tr of items.values()) {
+    if (tr.kind !== 'transfer' || tr.target !== target || tr.status !== 'paused' || !tr.autoPaused) continue;
+    act(tr, 'resume').catch(() => {});
+  }
+}
+
 /** Lo que hace cada botón de una tarjeta (aquí y en la tira del chat). */
 export async function act(item, action) {
   switch (action) {
     case 'pause':
       await call('pause', { id: item.id });
-      Object.assign(item, { status: 'paused', speed: 0 });
+      Object.assign(item, { status: 'paused', speed: 0, autoPaused: false });
       update(item);
       break;
     case 'resume':
-      Object.assign(item, { status: 'connecting', error: null });
+      Object.assign(item, { status: 'connecting', error: null, autoPaused: false });
       update(item);
       await call('resume', { id: item.id });
       break;
@@ -320,6 +367,12 @@ export function onTransferEvent(e) {
       tr.error = { code: e.code, detail: e.detail };
       tr.speed = 0;
       tr.status = e.will_retry ? 'retrying' : e.direction === 'incoming' ? 'interrupted' : 'error';
+      // Al equipo que se fue no se le insiste: en pausa hasta que vuelva.
+      if (e.will_retry && gone.has(tr.target)) {
+        update(tr);
+        pauseOne(tr);
+        break;
+      }
       // Un «no» del otro lado no es un error.
       if (e.code === 'rejected' && ['declined', 'timeout', 'busy', 'cancelled'].includes(e.detail)) {
         tr.status = e.detail === 'cancelled' ? 'cancelled' : 'declined';

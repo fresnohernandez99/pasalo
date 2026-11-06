@@ -15,6 +15,9 @@ const VOICE_MODES = [
   ['minimum', 9],
 ];
 const RING_TIMEOUT = 45_000;
+// Sin recibir nada por la conexión en este tiempo (iroh manda un keep-alive
+// cada 5 s aunque nadie hable), el otro lado ya no está.
+const LINK_TIMEOUT = 15_000;
 const DEFAULTS = { voiceMode: 'normal', videoAudioMode: 'low', videoQuality: 'normal' };
 
 import { errorText, t } from '../i18n/index.js';
@@ -235,9 +238,15 @@ async function startMedia() {
   const c = live;
   try {
     await invoke('voice_start', { peer: c.peer.code, mode: c.audio });
-    if (c !== live) return;
+    // Colgaron mientras arrancaba: que no se quede grabando sin llamada.
+    if (c !== live) {
+      invoke('voice_stop').catch(() => {});
+      return;
+    }
+    c.voiceOn = true;
     if (c.speaker) invoke('voice_speaker', { speaker: true });
     c.last = null;
+    c.heardAt = Date.now();
     c.statsTimer = setInterval(updateStats, 1000);
     if (c.media === 'video') await startVideo(c);
   } catch (err) {
@@ -264,6 +273,10 @@ async function startVideo(c) {
   const frames = new Channel();
   frames.onmessage = (buffer) => c.receiver?.push(buffer);
   await invoke('video_start', { peer: c.peer.code, frames });
+  if (c !== live) {
+    invoke('video_stop').catch(() => {});
+    return;
+  }
 
   try {
     c.stream = await camera(c.facing);
@@ -347,11 +360,34 @@ function endCall(message) {
   if (message) toast(message);
 }
 
+/** Cuelga la llamada con `code` porque se fue: se desconectó o se cayó la conexión. */
+export function endCallWith(code, reason = 'lost') {
+  if (!live || live.peer.code !== code) return;
+  signal('hangup').catch(() => {});
+  endCall(t(`call.ended_${reason}`));
+}
+
+/** El núcleo vio caerse la conexión de la llamada (ya paró la voz y el vídeo). */
+export function onTalkLost({ peer }) {
+  if (live?.peer.code === peer) endCall(t('call.ended_lost'));
+}
+
 // Consumo medido de la conexión (voz, vídeo y todo lo demás) y, aparte, el vídeo.
+// También vigila que siga llegando algo: si no, la llamada se acabó.
 async function updateStats() {
-  const stats = await invoke('voice_stats').catch(() => null);
   const c = live;
-  if (!stats || !c) return;
+  const stats = await invoke('voice_stats').catch(() => null);
+  if (!c || c !== live) return;
+  if (!stats) {
+    // La voz ya no está en marcha (el núcleo la paró): no hay llamada.
+    if (c.voiceOn) endCallWith(c.peer.code);
+    return;
+  }
+  if (!c.last || stats.received > c.last.received) c.heardAt = Date.now();
+  else if (Date.now() - c.heardAt > LINK_TIMEOUT) {
+    endCallWith(c.peer.code);
+    return;
+  }
   if (c.last) {
     const kbps = (now, before) => (((now - before) * 8) / 1000).toFixed(c.media === 'video' ? 0 : 1);
     const parts = [t('call.stats', { up: kbps(stats.sent, c.last.sent), down: kbps(stats.received, c.last.received) })];

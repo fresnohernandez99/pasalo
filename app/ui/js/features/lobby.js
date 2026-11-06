@@ -13,7 +13,9 @@ import { initials, shortCode } from '../lib/format.js';
 import { call } from '../lib/tauri.js';
 import { toast } from '../lib/toast.js';
 import { app } from '../state.js';
+import { endCallWith } from './call.js';
 import { addRemotePeer, avatar, removePeer } from './peers.js';
+import { pauseFor, resumeFor } from './transfers.js';
 
 const net = {
   state: 'offline', // offline | connecting | online | paired
@@ -121,8 +123,9 @@ $('#net-toggle').addEventListener('click', async () => {
     }
     return;
   }
+  partnerGone('hangup');
+  $('#net-toggle').disabled = true;
   await call('net_disconnect').catch(() => {});
-  dropPartner();
   setNetState('offline');
 });
 
@@ -183,6 +186,12 @@ export function onLobbyEvent(e) {
       setPartner(e.partner);
       toast(t('toast.paired', { name: e.partner.name }));
       return;
+    case 'partner_lost':
+      // Dejó de responder: el backend ya dejó la pareja y volvió al server si pudo.
+      if (net.partner?.code === e.code) partnerGone('lost');
+      setNetState(e.online ? 'online' : 'offline');
+      toast(t(e.online ? 'toast.partner_lost_online' : 'toast.partner_lost', { name: e.name }), true);
+      return;
     case 'lobby_error':
       net.error = e.detail;
       break;
@@ -194,9 +203,19 @@ function setPartner(partner) {
   net.partner = partner;
   addRemotePeer({ code: partner.code, name: partner.name, os: partner.platform, partner: true });
   setNetState('paired');
+  // Lo que quedó en pausa al perderla sigue solo.
+  resumeFor(partner.code);
 }
 
-function dropPartner() {
+/**
+ * Fuera la pareja: se cuelga la llamada con ella, lo que se le envía queda
+ * en pausa y su chat se cierra (al quitarla de la lista).
+ */
+function partnerGone(reason) {
+  const partner = net.partner;
+  if (!partner) return;
+  endCallWith(partner.code, reason);
+  pauseFor(partner.code, true);
   net.partner = null;
   removePeer('partner');
 }
@@ -204,7 +223,7 @@ function dropPartner() {
 /** La pareja se desconectó: el backend ya volvió a solo red local. */
 export function onUnpair(peer, name) {
   if (net.partner?.code !== peer) return;
-  dropPartner();
+  partnerGone('hangup');
   setNetState('offline');
   toast(t('toast.partner_left', { name }));
 }

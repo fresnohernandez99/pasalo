@@ -4,3 +4,7 @@
 node_modules
 .kotlin
 .vercel
+
+# Claves de firma: nunca al repositorio (es público).
+*.jks
+*.keystore

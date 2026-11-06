@@ -3,7 +3,7 @@
 // Tocar uno abre su chat; el botón de al lado envía archivos.
 
 import { t } from '../i18n/index.js';
-import { on } from '../lib/bus.js';
+import { emit, on } from '../lib/bus.js';
 import { $, $$, esc, setHtml } from '../lib/dom.js';
 import { initials } from '../lib/format.js';
 import { icon } from '../lib/icons.js';
@@ -11,7 +11,7 @@ import { call, listen } from '../lib/tauri.js';
 import { toast } from '../lib/toast.js';
 import { isMobile } from '../state.js';
 import { activePeerCode, openChat, unreadCount } from './chat.js';
-import { openTextDialog, sendPaths } from './transfers.js';
+import { openTextDialog, pauseFor, resumeFor, sendPaths } from './transfers.js';
 
 /** device_id → { device_id, name, platform, os?, addr, code? } */
 export const peers = new Map();
@@ -120,6 +120,7 @@ export function renderPeers() {
       </div>`;
   setHtml($('#peers'), html);
   $('#peers-hint').hidden = !list.length;
+  emit('peers:changed');
 }
 
 function peerRow(p) {
@@ -241,7 +242,11 @@ export function initPeers(snapshot) {
 export function onPeerEvent(e) {
   if (e.kind === 'peer_found') {
     peers.set(e.device_id, { device_id: e.device_id, name: e.name, platform: e.platform, addr: e.addr, code: e.code });
+    resumeFor(e.addr);
   } else {
+    // Lo que se le enviaba queda en pausa hasta que vuelva; su chat se cierra
+    // (ver chat.js). La llamada no: esa la corta la propia conexión si se cae.
+    pauseFor(peers.get(e.device_id)?.addr);
     peers.delete(e.device_id);
   }
   renderPeers();

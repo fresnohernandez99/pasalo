@@ -11,7 +11,7 @@ import { call, invoke, tryCall } from '../lib/tauri.js';
 import { toast } from '../lib/toast.js';
 import { isMobile } from '../state.js';
 import { onBack, setPaneOpen } from './nav.js';
-import { avatar, ensureRemotePeer, peerCode } from './peers.js';
+import { avatar, ensureRemotePeer, findPeerByCode, peerCode } from './peers.js';
 import { act, items, liveWith, sendPaths } from './transfers.js';
 import { openViewer } from './viewer.js';
 
@@ -314,6 +314,15 @@ $('#chat-strip').addEventListener('click', (ev) => {
 });
 
 on('transfers:changed', renderStrip);
+
+// El equipo del chat abierto se fue (dejó la LAN o la pareja se desconectó):
+// se sale del chat. Lo que quedó sin entregar se envía cuando vuelva.
+on('peers:changed', () => {
+  if (!chat.peer || findPeerByCode(chat.peer.code)) return;
+  const { name } = chat.peer;
+  closeChat();
+  toast(t('toast.peer_gone', { name }));
+});
 
 // ---------- eventos ----------
 

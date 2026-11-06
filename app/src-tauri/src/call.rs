@@ -54,8 +54,25 @@ pub async fn voice_start(app: AppHandle, state: State<'_, AppState>, peer: Strin
         }
         android.call_audio(true, false);
     }
+    let started = start_voice(&state, &peer, mode).await;
+    // Si no arrancó, nada se queda a medias: ni el canal ni el audio en modo llamada.
+    if started.is_err() {
+        if let Some(talk) = &state.talk {
+            talk.end_voice(&peer);
+        }
+        #[cfg(target_os = "android")]
+        {
+            use tauri::Manager;
+            app.state::<crate::android::Android>().call_audio(false, false);
+        }
+    }
+    let _ = &app;
+    started
+}
+
+async fn start_voice(state: &AppState, peer: &str, mode: Mode) -> CmdResult<()> {
     let talk = state.talk()?;
-    let mut link = talk.voice(&peer).await.map_err(CmdError::core)?;
+    let mut link = talk.voice(peer).await.map_err(CmdError::core)?;
     let sender = link.sender.clone();
     let measured = link.sender.clone();
     // Abrir los dispositivos de audio bloquea un momento.
@@ -74,7 +91,7 @@ pub async fn voice_start(app: AppHandle, state: State<'_, AppState>, peer: Strin
             receiving.push(&packet);
         }
     });
-    *state.voice.lock().unwrap() = Some(VoiceCall { peer, call, link: measured, pump });
+    *state.voice.lock().unwrap() = Some(VoiceCall { peer: peer.to_string(), call, link: measured, pump });
     Ok(())
 }
 
@@ -109,6 +126,17 @@ pub async fn voice_speaker(app: AppHandle, speaker: bool) {
 pub async fn voice_stop(app: AppHandle, state: State<'_, AppState>) -> CmdResult<()> {
     stop(&app, &state);
     Ok(())
+}
+
+/// Corta la voz y el vídeo si son con `peer` (se desconectó o se perdió la conexión).
+pub fn stop_with(app: &AppHandle, state: &AppState, peer: &str) {
+    let same = |other: &str| pasalo_core::parse_code(other) == pasalo_core::parse_code(peer);
+    if state.voice.lock().unwrap().as_ref().is_some_and(|v| same(&v.peer)) {
+        stop(app, state);
+    }
+    if state.video.lock().unwrap().as_ref().is_some_and(|v| same(&v.peer)) {
+        stop_video(state);
+    }
 }
 
 fn stop(app: &AppHandle, state: &AppState) {

@@ -10,11 +10,14 @@
 //! Una conexión sin uso se cierra a los [`IDLE`]: abierta, iroh manda un
 //! keep-alive cada 5 s por cada ruta.
 //!
+//! Si se cae la conexión con un equipo con el que hay una llamada, sale
+//! [`Event::TalkLost`].
+//!
 //! Los mensajes que no se pueden entregar quedan pendientes. Se reintentan en
 //! cuanto el otro equipo aparece (se conecta o se le ve en la LAN) y, por si
 //! acaso, cada vez más espaciados; el receptor descarta los repetidos por id.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::io;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
@@ -51,6 +54,8 @@ const VIDEO_MAX_LAG: Duration = Duration::from_millis(700);
 const VIDEO_TIMEOUT: Duration = Duration::from_secs(10);
 /// Tiempo sin mensajes ni voz tras el que se cierra una conexión.
 pub const IDLE: Duration = Duration::from_secs(90);
+/// Pausa entre intentos de reconectar en [`Talk::hold`].
+const HOLD_RETRY: Duration = Duration::from_secs(2);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -204,6 +209,8 @@ struct Inner {
     backoff: Mutex<HashMap<String, (Instant, u32)>>,
     /// IP:puerto de iroh de los equipos de la LAN, sacado del descubrimiento.
     lan: Mutex<HashMap<EndpointId, SocketAddr>>,
+    /// Equipos cuya conexión se mantiene abierta aunque no se use (ver [`Talk::hold`]).
+    pinned: Mutex<HashSet<EndpointId>>,
     voice: Mutex<HashMap<EndpointId, mpsc::UnboundedSender<Bytes>>>,
     video: Mutex<HashMap<EndpointId, mpsc::UnboundedSender<Bytes>>>,
     /// Mensajes salientes sin entregar, por id.
@@ -228,6 +235,7 @@ impl Talk {
                 used: Default::default(),
                 backoff: Default::default(),
                 lan: Default::default(),
+                pinned: Default::default(),
                 voice: Default::default(),
                 video: Default::default(),
                 pending: Mutex::new(pending),
@@ -323,6 +331,73 @@ impl Talk {
         if let Some(id) = crate::parse_code(peer) {
             self.inner.video.lock().unwrap().remove(&id);
         }
+    }
+
+    /// Mantiene abierta la conexión con `peer` (la pareja): si se cae, la
+    /// vuelve a abrir. Termina con `true` al llamar a [`Talk::release`], o con
+    /// `false` si no se logra conectar en `first` (la primera vez) o en
+    /// `grace` (tras un corte): el otro se fue.
+    pub async fn hold(&self, peer: &str, first: Duration, grace: Duration) -> bool {
+        let Some(id) = crate::parse_code(peer) else { return false };
+        self.inner.pinned.lock().unwrap().insert(id);
+        let pinned = || self.inner.pinned.lock().unwrap().contains(&id);
+        let mut wait = first;
+        loop {
+            let deadline = Instant::now() + wait;
+            wait = grace;
+            let conn = loop {
+                if !pinned() {
+                    return true;
+                }
+                match self.connection(id).await {
+                    Ok(conn) => {
+                        // Lo que quedó sin entregar mientras no estaba, ya.
+                        self.retry(Some(peer));
+                        break conn;
+                    }
+                    Err(e) if Instant::now() < deadline => {
+                        tracing::debug!("sin conexión con {}: {e}", id.fmt_short());
+                        tokio::time::sleep(HOLD_RETRY).await;
+                    }
+                    Err(_) => {
+                        self.inner.pinned.lock().unwrap().remove(&id);
+                        return false;
+                    }
+                }
+            };
+            conn.closed().await;
+        }
+    }
+
+    /// Deja de hablar con `peer` (se desconectó o nos desconectamos): cierra
+    /// la conexión, corta las entregas en curso y no reintenta lo pendiente
+    /// hasta que vuelva a aparecer. Lo pendiente no se pierde.
+    pub fn release(&self, peer: &str) {
+        let Some(id) = crate::parse_code(peer) else { return };
+        let peer = id.to_string();
+        self.inner.pinned.lock().unwrap().remove(&id);
+        self.inner.voice.lock().unwrap().remove(&id);
+        self.inner.video.lock().unwrap().remove(&id);
+        self.inner.lan.lock().unwrap().remove(&id);
+        self.inner.used.lock().unwrap().remove(&id);
+        {
+            let pending = self.inner.pending.lock().unwrap();
+            let mut delivering = self.inner.delivering.lock().unwrap();
+            delivering.retain(|msg, (_, task)| {
+                let theirs = pending.get(msg).is_some_and(|m| m.peer == peer);
+                if theirs {
+                    task.abort();
+                }
+                !theirs
+            });
+        }
+        self.inner.backoff.lock().unwrap().insert(peer, (Instant::now() + RETRY_MAX, 10));
+        let this = self.clone();
+        tokio::spawn(async move {
+            if let Some(conn) = this.inner.conns.lock().await.remove(&id) {
+                conn.close(0u32.into(), b"desconectado");
+            }
+        });
     }
 
     /// Atiende una conexión entrante del protocolo talk.
@@ -421,8 +496,11 @@ impl Talk {
             let used = self.inner.used.lock().unwrap();
             let voice = self.inner.voice.lock().unwrap();
             let video = self.inner.video.lock().unwrap();
+            let pinned = self.inner.pinned.lock().unwrap();
             used.iter()
-                .filter(|(id, at)| at.elapsed() >= IDLE && !voice.contains_key(*id) && !video.contains_key(*id))
+                .filter(|(id, at)| {
+                    at.elapsed() >= IDLE && !voice.contains_key(*id) && !video.contains_key(*id) && !pinned.contains(*id)
+                })
                 .map(|(id, _)| *id)
                 .collect()
         };
@@ -566,6 +644,18 @@ impl Talk {
         let mut conns = self.inner.conns.lock().await;
         if conns.get(&id).is_some_and(|c| c.stable_id() == conn.stable_id()) {
             conns.remove(&id);
+        }
+        // Puede quedar otra (los dos lados conectaron a la vez): entonces no se perdió nada.
+        if conns.get(&id).is_some_and(|c| c.close_reason().is_none()) {
+            return;
+        }
+        drop(conns);
+        tracing::debug!("conexión con {} cerrada: {:?}", id.fmt_short(), conn.close_reason());
+        // La voz y el vídeo iban por esta conexión: sus canales se cierran.
+        let voice = self.inner.voice.lock().unwrap().remove(&id).is_some();
+        let video = self.inner.video.lock().unwrap().remove(&id).is_some();
+        if voice || video {
+            let _ = self.inner.events.send(Event::TalkLost { peer: id.to_string() });
         }
     }
 

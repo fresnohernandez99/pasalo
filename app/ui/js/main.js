@@ -5,7 +5,7 @@ import { applyIcons } from './lib/icons.js';
 import { call, listen } from './lib/tauri.js';
 import { toast } from './lib/toast.js';
 import { app } from './state.js';
-import { onSignal } from './features/call.js';
+import { onSignal, onTalkLost } from './features/call.js';
 import { onChatEvent } from './features/chat.js';
 import { initNet, onLobbyEvent, renderHeader } from './features/lobby.js';
 import { showTab } from './features/nav.js';
@@ -34,12 +34,16 @@ listen('pasalo', ({ payload: e }) => {
     case 'signal':
       onSignal(e);
       break;
+    case 'talk_lost':
+      onTalkLost(e);
+      break;
     case 'lobby_users':
     case 'lobby_request':
     case 'lobby_request_gone':
     case 'lobby_answer':
     case 'lobby_paired':
     case 'lobby_error':
+    case 'partner_lost':
       onLobbyEvent(e);
       break;
     default:

@@ -145,6 +145,10 @@ async fn talk_for(
                     },
                     _ => {}
                 },
+                Some(Event::TalkLost { peer: lost }) if pasalo_core::parse_code(&lost) == pasalo_core::parse_code(peer) => {
+                    ended = Some("se perdió la conexión");
+                    break;
+                }
                 Some(_) => {}
                 None => break,
             },

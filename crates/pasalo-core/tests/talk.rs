@@ -212,3 +212,47 @@ async fn switching_modes_keeps_code_and_port() {
     let (got, _) = next_chat(&mut a.events).await;
     assert_eq!(got.text.as_deref(), Some("sigo aquí"));
 }
+
+/// Si el otro equipo desaparece en plena llamada, sale `TalkLost` y el canal
+/// de voz se cierra: la llamada no se queda corriendo sola.
+#[tokio::test]
+async fn call_ends_when_peer_vanishes() {
+    let (a, mut b) = pair().await;
+    let _link_a = a.talk.voice(&b.code).await.unwrap();
+    let mut link_b = b.talk.voice(&a.code).await.unwrap();
+    a.remote.shutdown().await;
+    let lost = tokio::time::timeout(Duration::from_secs(40), async {
+        loop {
+            if let Some(Event::TalkLost { peer }) = b.events.recv().await {
+                break peer;
+            }
+        }
+    })
+    .await
+    .expect("TalkLost");
+    assert_eq!(lost, a.code);
+    assert!(link_b.rx.recv().await.is_none());
+}
+
+/// `hold` mantiene la conexión con la pareja: termina en `true` al soltarla y
+/// en `false` si la pareja no vuelve.
+#[tokio::test]
+async fn hold_reports_release_and_loss() {
+    let (a, b) = pair().await;
+    let holding = tokio::spawn({
+        let (talk, code) = (a.talk.clone(), b.code.clone());
+        async move { talk.hold(&code, Duration::from_secs(10), Duration::from_secs(3)).await }
+    });
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    a.talk.release(&b.code);
+    assert!(tokio::time::timeout(Duration::from_secs(10), holding).await.unwrap().unwrap());
+
+    // Ahora la pareja se va y no vuelve.
+    let holding = tokio::spawn({
+        let (talk, code) = (a.talk.clone(), b.code.clone());
+        async move { talk.hold(&code, Duration::from_secs(10), Duration::from_secs(3)).await }
+    });
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    b.remote.shutdown().await;
+    assert!(!tokio::time::timeout(Duration::from_secs(60), holding).await.unwrap().unwrap());
+}

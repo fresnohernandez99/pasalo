@@ -509,6 +509,8 @@ fn print_event(event: Event) {
             Event::LobbyRequestGone { .. } => println!("Retiraron una solicitud."),
             Event::LobbyAnswer { reason, .. } => println!("Solicitud no aceptada ({reason})."),
             Event::LobbyPaired { partner } => println!("Conectado con {}.", partner.name),
+            Event::TalkLost { .. } => println!("Se perdió la conexión de la llamada."),
+            Event::PartnerLost { name, .. } => println!("Se perdió la conexión con {name}."),
             Event::LobbyError { detail } if detail.is_empty() => println!("Server de nuevo accesible."),
             Event::LobbyError { detail } => println!("Server inaccesible: {detail}"),
         }
