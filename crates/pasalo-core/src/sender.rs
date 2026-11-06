@@ -10,6 +10,7 @@ use tokio::io::{AsyncRead, AsyncReadExt, AsyncSeekExt, AsyncWrite, AsyncWriteExt
 use tokio::net::TcpStream;
 use walkdir::WalkDir;
 
+use crate::compress::{self, Packer};
 use crate::events::Progress;
 use crate::paths::numbered;
 use crate::protocol::{
@@ -55,11 +56,12 @@ pub async fn send_paths(
     let mut attempt = 0;
     loop {
         match send_once(target, local, &entries, id, events).await {
-            Ok(()) => {
+            Ok(wire_bytes) => {
                 let _ = events.send(Event::TransferFinished {
                     id,
                     direction: Direction::Outgoing,
                     saved: Vec::new(),
+                    wire_bytes,
                 });
                 return Ok(());
             }
@@ -101,6 +103,9 @@ pub async fn send_text(target: &Target, local: &LocalInfo, text: &str) -> Result
 pub struct Greeting {
     pub name: String,
     pub platform: String,
+    /// Lo que entiende del protocolo (p. ej. `zstd`).
+    #[serde(skip)]
+    pub features: Vec<String>,
 }
 
 /// Se presenta al otro equipo sin enviar nada y devuelve cómo se llama.
@@ -141,7 +146,7 @@ async fn connect(target: &Target) -> Result<(Reader, Writer, Option<Connection>)
 async fn handshake(rd: &mut Reader, wr: &mut Writer, local: &LocalInfo) -> Result<Greeting, Error> {
     write_msg(wr, &local.hello()).await?;
     match read_msg(rd, SHORT).await? {
-        Message::Hello { name, platform, .. } => Ok(Greeting { name, platform }),
+        Message::Hello { name, platform, features, .. } => Ok(Greeting { name, platform, features }),
         Message::Reject { reason } => Err(Error::Rejected(reason)),
         _ => Err(unexpected("hello")),
     }
@@ -156,19 +161,32 @@ async fn read_result<R: AsyncRead + Unpin>(rd: &mut R) -> Result<(), Error> {
     }
 }
 
+/// Un intento de envío. Devuelve los bytes de contenido que pasaron por la red.
 async fn send_once(
     target: &Target,
     local: &LocalInfo,
     entries: &[Entry],
     id: TransferId,
     events: &EventSender,
-) -> Result<(), Error> {
+) -> Result<u64, Error> {
     let (mut rd, mut wr, _conn) = connect(target).await?;
-    let peer = handshake(&mut rd, &mut wr, local).await?.name;
+    let greeting = handshake(&mut rd, &mut wr, local).await?;
+    let peer = greeting.name;
+    // En la LAN la red sobra y se prima la velocidad; entre redes, el ahorro.
+    let level = match target {
+        Target::Lan(_) => 1,
+        Target::Remote(..) => 3,
+    };
+    let mut packer = match greeting.features.iter().any(|f| f == compress::FEATURE) {
+        true => Some(Packer::new(level).map_err(Error::Local)?),
+        false => None,
+    };
 
     let items = entries.iter().map(|e| e.item.clone()).collect();
     write_msg(&mut wr, &Message::Offer { items, text: None }).await?;
-    // El receptor puede tardar en contestar si está hasheando lo que ya tenía.
+    let _ = events.send(Event::TransferWaiting { id, peer: peer.clone() });
+    // El receptor puede tardar en contestar: lo tiene que aceptar el usuario,
+    // o está hasheando lo que ya tenía.
     let states = match read_msg(&mut rd, LONG).await? {
         Message::Accept { items } => items,
         Message::Reject { reason } => return Err(Error::Rejected(reason)),
@@ -202,27 +220,32 @@ async fn send_once(
     });
 
     let mut progress = Progress::new(events, id, resumed, total);
+    let mut raw = 0;
     for (i, (entry, state)) in entries.iter().zip(&states).enumerate() {
         let (ItemState::From { offset }, Some(source)) = (state, &entry.source) else { continue };
         if *offset > entry.item.size {
             return Err(Error::Protocol(format!("desplazamiento no válido para {}", entry.item.path)));
         }
-        let hash = send_file(&mut wr, source, *offset, entry.item.size, &mut progress).await?;
+        let hash = send_file(&mut wr, source, *offset, entry.item.size, &mut progress, packer.as_mut()).await?;
+        raw += entry.item.size - offset;
         write_msg(&mut wr, &Message::FileEnd { index: i as u32, hash }).await?;
     }
     progress.finish();
 
     write_msg(&mut wr, &Message::Done).await?;
-    read_result(&mut rd).await
+    read_result(&mut rd).await?;
+    Ok(packer.map_or(raw, |p| p.wire))
 }
 
 /// Envía `source` desde `offset` y devuelve el hash del archivo completo.
+/// Con `packer` va en bloques comprimidos cuando compensa.
 async fn send_file<W: AsyncWrite + Unpin>(
     wr: &mut W,
     source: &Path,
     offset: u64,
     size: u64,
     progress: &mut Progress<'_>,
+    mut packer: Option<&mut Packer>,
 ) -> Result<String, Error> {
     let mut file = File::open(source).await.map_err(Error::Local)?;
     let len = file.metadata().await.map_err(Error::Local)?.len();
@@ -235,6 +258,9 @@ async fn send_file<W: AsyncWrite + Unpin>(
         _ => hash_prefix(source, offset).await.map_err(Error::Local)?,
     };
     file.seek(SeekFrom::Start(offset)).await.map_err(Error::Local)?;
+    if let Some(packer) = packer.as_deref_mut() {
+        packer.start_file(source);
+    }
 
     let mut buf = vec![0u8; CHUNK];
     let mut left = size - offset;
@@ -244,7 +270,10 @@ async fn send_file<W: AsyncWrite + Unpin>(
         if n == 0 {
             return Err(Error::Local(io::ErrorKind::UnexpectedEof.into()));
         }
-        timed(SHORT, wr.write_all(&buf[..n])).await?;
+        match packer.as_deref_mut() {
+            Some(packer) => packer.write(wr, &buf[..n]).await?,
+            None => timed(SHORT, wr.write_all(&buf[..n])).await?,
+        }
         hasher.update(&buf[..n]);
         left -= n as u64;
         progress.add(n as u64);

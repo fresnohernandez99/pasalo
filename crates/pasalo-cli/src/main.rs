@@ -6,7 +6,8 @@ use std::time::Duration;
 use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand};
 use pasalo_core::protocol::{DISCOVERY_PORT, TRANSFER_PORT};
-use pasalo_core::{Direction, Discovery, Event, LocalInfo, Receiver, Remote, SendOptions, Talk, Target};
+use pasalo_core::{Direction, Discovery, Event, Lobby, LobbyUser, LocalInfo, Receiver, Remote, SendOptions, Talk, Target};
+use tokio::io::AsyncBufReadExt;
 use tokio::sync::mpsc;
 
 mod talk;
@@ -23,7 +24,8 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
-    /// Recibe archivos y textos
+    /// Recibe archivos y textos. Pregunta antes de aceptar archivos (contesta
+    /// con s/n e Intro) salvo con --yes
     Listen {
         /// Carpeta de destino (por defecto, Descargas/Pasalo)
         #[arg(long)]
@@ -42,6 +44,18 @@ enum Command {
         /// Dónde grabar el audio que llega en las llamadas
         #[arg(long)]
         voice_out: Option<PathBuf>,
+        /// Acepta envíos y solicitudes de conexión sin preguntar
+        #[arg(long)]
+        yes: bool,
+        /// Sin internet: solo equipos de la red local
+        #[arg(long)]
+        offline: bool,
+        /// Entra en este server de conexión (p. ej. https://pasalo.vercel.app)
+        #[arg(long)]
+        server: Option<String>,
+        /// Con --server: pide conectarse con el equipo de este nombre
+        #[arg(long, requires = "server")]
+        connect: Option<String>,
     },
     /// Lista los equipos visibles en la red
     Peers {
@@ -108,7 +122,7 @@ async fn main() -> Result<()> {
     let (tx, mut rx) = mpsc::unbounded_channel();
 
     match cli.command {
-        Command::Listen { dir, port, answer, mode, voice_in, voice_out } => {
+        Command::Listen { dir, port, answer, mode, voice_in, voice_out, yes, offline, server, connect } => {
             let mode = talk::parse_mode(&mode)?;
             let dir = match dir {
                 Some(dir) => dir,
@@ -121,7 +135,7 @@ async fn main() -> Result<()> {
                 .await
                 .with_context(|| format!("no se pudo abrir el puerto {port}"))?;
             local.transfer_port = listener.local_addr()?.port();
-            let remote = Remote::start(Some(&config_dir.join("remote_key")))
+            let remote = Remote::start(Some(&config_dir.join("remote_key")), !offline)
                 .await
                 .inspect_err(|e| eprintln!("Sin conexiones remotas: {e}"))
                 .ok();
@@ -139,17 +153,112 @@ async fn main() -> Result<()> {
                 local.name,
                 local.transfer_port
             );
-            if let Some(remote) = &remote {
+            if let Some(remote) = &remote
+                && !offline
+            {
                 println!("Código para recibir desde otras redes: {}", remote.code());
             }
-            let receiver = Receiver::new(dir, local, tx);
-            if let Some(remote) = remote {
+            let receiver = Receiver::new(dir, local.clone(), tx.clone());
+            receiver.set_ask(!yes);
+            if let Some(remote) = remote.clone() {
                 let (receiver, talk) = (receiver.clone(), talk.clone());
                 tokio::spawn(async move { receiver.run_remote(remote, talk).await });
             }
-            tokio::spawn(async move { receiver.run(listener).await });
+            {
+                let receiver = receiver.clone();
+                tokio::spawn(async move { receiver.run(listener).await });
+            }
+            let lobby = match (&server, &remote) {
+                (Some(server), Some(remote)) => {
+                    let me = LobbyUser { id: local.device_id.clone(), name: local.name.clone(), platform: local.platform.clone() };
+                    let lobby = Lobby::join(server, remote, me, tx.clone()).await.context("no se pudo entrar en el server")?;
+                    println!("En el server {server}. Esperando solicitudes…");
+                    Some(lobby)
+                }
+                (Some(_), None) => bail!("el server necesita las conexiones remotas"),
+                _ => None,
+            };
+            // Lo que espera un sí o un no por la terminal, en orden de llegada.
+            let mut questions: std::collections::VecDeque<Question> = Default::default();
+            let mut stdin = tokio::io::BufReader::new(tokio::io::stdin()).lines();
             let files = talk::VoiceFiles { input: voice_in, output: voice_out };
-            while let Some(event) = rx.recv().await {
+            loop {
+                let event = tokio::select! {
+                    event = rx.recv() => match event {
+                        Some(event) => event,
+                        None => break,
+                    },
+                    line = stdin.next_line() => {
+                        let Ok(Some(line)) = line else { continue };
+                        let yes = matches!(line.trim().to_lowercase().as_str(), "s" | "si" | "sí" | "y" | "yes");
+                        match questions.pop_front() {
+                            Some(Question::Transfer(id)) => { receiver.decide(id, yes); }
+                            Some(Question::Lobby(request)) => if let Some(lobby) = &lobby {
+                                match lobby.answer(&request, yes).await {
+                                    Ok(_) => {}
+                                    Err(e) => println!("No se pudo contestar: {e}"),
+                                }
+                            },
+                            None => {}
+                        }
+                        if let Some(next) = questions.front() { next.ask(); }
+                        continue;
+                    }
+                };
+                match &event {
+                    Event::TransferRequest { id, .. } => {
+                        print_event(event.clone());
+                        match yes {
+                            true => { receiver.decide(*id, true); }
+                            false => {
+                                questions.push_back(Question::Transfer(*id));
+                                if questions.len() == 1 { questions[0].ask(); }
+                            }
+                        }
+                        continue;
+                    }
+                    Event::LobbyUsers { users } => {
+                        print_event(event.clone());
+                        if let (Some(lobby), Some(name)) = (&lobby, &connect)
+                            && let Some(user) = users.iter().find(|u| u.name.eq_ignore_ascii_case(name))
+                        {
+                            match lobby.request(user).await {
+                                Ok(_) => println!("Solicitud enviada a {}.", user.name),
+                                Err(e) => println!("No se pudo pedir: {e}"),
+                            }
+                        }
+                        continue;
+                    }
+                    Event::LobbyRequest { request, from } => {
+                        println!("{} ({}) quiere conectarse.", from.name, from.platform);
+                        match (&lobby, yes) {
+                            (Some(lobby), true) => { let _ = lobby.answer(request, true).await; }
+                            _ => {
+                                questions.push_back(Question::Lobby(request.clone()));
+                                if questions.len() == 1 { questions[0].ask(); }
+                            }
+                        }
+                        continue;
+                    }
+                    Event::LobbyPaired { partner } => {
+                        // Desde aquí, solo la pareja.
+                        if let Some(remote) = &remote {
+                            remote.set_only(pasalo_core::parse_code(&partner.code));
+                        }
+                        receiver.set_only(Some(partner.id.clone()));
+                        println!("Conectado con {} ({}). Código: {}", partner.name, partner.platform, partner.code);
+                        continue;
+                    }
+                    Event::Signal { name, signal, .. } if signal.kind == "unpair" => {
+                        if let Some(remote) = &remote {
+                            remote.set_only(None);
+                        }
+                        receiver.set_only(None);
+                        println!("{name} se desconectó.");
+                        continue;
+                    }
+                    _ => {}
+                }
                 if let (Some(talk), Event::PeerFound(peer)) = (&talk, &event)
                     && let (Some(code), Some(addr)) = (&peer.code, peer.remote_addr)
                 {
@@ -241,6 +350,21 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
+/// Algo que espera un sí o un no por la terminal.
+enum Question {
+    Transfer(pasalo_core::TransferId),
+    Lobby(String),
+}
+
+impl Question {
+    fn ask(&self) {
+        match self {
+            Question::Transfer(_) => println!("¿Aceptar el envío? [s/n]"),
+            Question::Lobby(_) => println!("¿Aceptar la conexión? [s/n]"),
+        }
+    }
+}
+
 /// Arranca iroh y el chat con la identidad de este equipo, y devuelve el
 /// código de `target`: el propio código, o el de un equipo de la LAN por su
 /// nombre (y entonces se le habla directo, sin internet).
@@ -250,7 +374,7 @@ async fn talk_session(
     target: &str,
     tx: pasalo_core::EventSender,
 ) -> Result<(Remote, Talk, String)> {
-    let remote = Remote::start(Some(&config_dir.join("remote_key"))).await?;
+    let remote = Remote::start(Some(&config_dir.join("remote_key")), true).await?;
     let talk = Talk::new(remote.clone(), local.name.clone(), config_dir.join("chat"), tx.clone());
     tokio::spawn({
         let (remote, talk) = (remote.clone(), talk.clone());
@@ -291,7 +415,7 @@ async fn resolve(target: &str, local: &LocalInfo) -> Result<Target> {
     }
     if let Some(code) = pasalo_core::parse_code(target) {
         // Para enviar basta un código de usar y tirar.
-        let remote = Remote::start(None).await.context("no se pudo iniciar la conexión remota")?;
+        let remote = Remote::start(None, true).await.context("no se pudo iniciar la conexión remota")?;
         return Ok(Target::Remote(remote, code));
     }
     let (tx, mut rx) = mpsc::unbounded_channel();
@@ -352,8 +476,13 @@ fn print_event(event: Event) {
                 print!("\r  {pct:5.1}%  {} / {}      ", human(done_bytes), human(total_bytes));
                 let _ = std::io::stdout().flush();
             }
-            Event::TransferFinished { saved, .. } => {
-                println!("\n✓ Completado");
+            Event::TransferRequest { peer, roots, files, total_bytes, .. } => {
+                println!("{peer} quiere enviarte {} ({files} archivo(s), {}).", roots.join(", "), human(total_bytes));
+            }
+            Event::RequestClosed { reason, .. } => println!("La solicitud ya no espera respuesta ({reason})."),
+            Event::TransferWaiting { peer, .. } => println!("Esperando a que {peer} acepte…"),
+            Event::TransferFinished { saved, wire_bytes, .. } => {
+                println!("\n✓ Completado ({} por la red)", human(wire_bytes));
                 for path in saved {
                     println!("  → {}", path.display());
                 }
@@ -372,6 +501,16 @@ fn print_event(event: Event) {
             }
             Event::Chat { .. } => {}
             Event::Signal { name, signal, .. } => println!("📞 {name}: {}", signal.kind),
+            Event::LobbyUsers { users } => {
+                let names: Vec<&str> = users.iter().map(|u| u.name.as_str()).collect();
+                println!("Conectados: {}", if names.is_empty() { "nadie".into() } else { names.join(", ") });
+            }
+            Event::LobbyRequest { from, .. } => println!("{} quiere conectarse.", from.name),
+            Event::LobbyRequestGone { .. } => println!("Retiraron una solicitud."),
+            Event::LobbyAnswer { reason, .. } => println!("Solicitud no aceptada ({reason})."),
+            Event::LobbyPaired { partner } => println!("Conectado con {}.", partner.name),
+            Event::LobbyError { detail } if detail.is_empty() => println!("Server de nuevo accesible."),
+            Event::LobbyError { detail } => println!("Server inaccesible: {detail}"),
         }
     }
 }

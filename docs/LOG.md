@@ -187,3 +187,111 @@ Rama `chat-llamadas`. Cada entrada: qué se hizo, cómo se probó y qué queda.
   en `~/.android/avd`); se pueden borrar.
 - Pendiente de probar con personas: voz real en el Pixel (eco, auricular /
   altavoz), la app de escritorio con micrófono y cámara, y TURN.
+
+## Sesión 2026-11-05 — Solicitudes, compresión, offline primero y server de conexión
+
+Lo pedido: aceptar o rechazar los envíos en el receptor; sin cifrado propio y
+con el menor consumo posible (compresión cuando sirva); llamadas y mediciones
+lo más optimizadas posible; un server para Vercel con MongoDB Atlas que
+muestre a los conectados y lleve las solicitudes de conexión, con la conexión
+voluntaria, exclusiva entre los dos que se emparejan y la app arrancando
+siempre desconectada.
+
+Decidido con el usuario: iroh se queda para todo lo que va entre redes (QUIC
+cifra siempre y no se puede quitar; es lo único cifrado y no se añade nada
+más) y WebRTC se queda para el vídeo. El server es solo señalización.
+
+### Solicitudes de envío
+- El receptor no contesta a la `Offer` hasta que el usuario decide
+  (`Event::TransferRequest`, `Receiver::decide`). Rechazo: `Reject { reason:
+  "declined" }`; sin respuesta en 2 min, `"timeout"`. El emisor avisa de que
+  espera (`TransferWaiting`). Lo que ya tiene registro en disco (una
+  reanudación de algo aceptado) no vuelve a preguntar. Si el emisor se va
+  mientras se pregunta, la petición se cierra (`RequestClosed`).
+- Compatible con versiones viejas: el emisor solo espera más la respuesta.
+- CLI: `listen` pregunta por la terminal (s/n); `--yes` acepta todo.
+
+### Compresión
+- El `Hello` lleva `features` (opcional). Si los dos dicen `zstd`, los datos
+  van en bloques `[u32: bit alto = comprimido | longitud]`. Nivel 1 en la LAN y
+  3 entre redes. Fotos, vídeos y comprimidos ni se intentan; con el resto, si
+  un bloque no baja un 3 %, los 16 siguientes van en crudo.
+- Medido en el Pixel 6 por la LAN: registro de texto de 9,9 MB → 2,2 MB por la
+  red, MD5 idéntico. Datos aleatorios: 286,1 MB → 286,1 MB (sin crecer).
+- `TransferFinished` lleva `wire_bytes` y la app muestra lo que pasó por la red.
+
+### Offline primero
+- iroh arranca sin relays (lista vacía), sin DNS y sin sondear el router.
+  «Conectarse» añade en marcha los relays y el DNS de n0 en el mismo endpoint
+  (mismo código y puerto); «Desconectar» los quita. Primero se probó cerrar y
+  reabrir el endpoint, pero no recupera el puerto (el socket viejo sigue vivo
+  mientras quedan clones), y el puerto se anuncia en la LAN.
+- **Medido con tcpdump** durante 60 s: en solo red local, 0 paquetes UDP a
+  internet y ninguna conexión TCP; conectado, 66 paquetes a los relays y una
+  conexión TCP al relay.
+
+### Server de conexión (`server/`)
+- Una función de Vercel (`api/[action].js`) con MongoDB: `join`, `sync`
+  (espera hasta 20 s a que cambie algo; sin cambios solo devuelve la versión),
+  `request`, `cancel`, `answer`, `leave`. Al aceptar, cada lado recibe el
+  código de iroh del otro, el server los olvida a los dos y cancela lo demás.
+  Índices TTL para lo abandonado. 11 pruebas contra un MongoDB real en memoria
+  (`mongodb-memory-server`), con reloj de mentira.
+- Cliente en Rust (`pasalo-core/src/lobby.rs`) con el reqwest y los
+  certificados que ya trae iroh: no añade dependencias.
+- Emparejados, `Remote::set_only` hace que iroh rechace a cualquier otro. Al
+  desconectar se avisa a la pareja con la señal `unpair`.
+- **Probado**: dos CLI se encuentran, se emparejan y el server deja de
+  listarlos; un tercer equipo no llega a la pareja aunque tenga su código, y
+  la pareja sí (entre redes, por los relays).
+- El server por defecto (`DEFAULT_SERVER` en la app) queda vacío: no se debe
+  apuntar a un dominio que no sea nuestro. Hay que poner la URL del despliegue.
+
+### Consumo de las llamadas
+- **Fallo encontrado**: Opus llevaba la FEC activada pero el receptor no la
+  usaba (gastaba bitrate en una copia inútil). Al intentar usarla, la FEC de
+  `unsafe-libopus` satura igual que su PLC (picos de 32767). Se quita la FEC.
+- Paquetes más largos: alta de 20 a 40 ms, normal de 40 a 60 ms (menos
+  cabeceras y menos ACKs por segundo).
+- ACK frequency de QUIC: se pide al otro lado que confirme cada 10 paquetes o
+  cada 250 ms. noq lo limita a max(RTT, 25 ms), así que en la LAN apenas se nota
+  y en datos móviles (RTT de 100-300 ms) sí.
+- Medido con los dos CLI hablando a la vez (contadores UDP):
+
+  | Modo | Antes | Ahora |
+  |---|---|---|
+  | alta | ~57 kbps | ~42 kbps |
+  | normal | ~35 kbps | ~26 kbps |
+  | baja | ~19 kbps | ~19 kbps |
+  | mínima | ~9 kbps | ~9 kbps |
+
+- Pixel 6 ⇄ CLI por la wifi, emparejados por el server: la voz que llega al
+  móvil, ~19 kbps medidos frente a ~18,6 estimados; quien solo escucha manda
+  ~6-7 kbps de ACKs. El micrófono real del Pixel funciona (~18 kbps de voz).
+- La cabecera QUIC lleva un connection ID de 8 bytes que iroh no deja acortar.
+- Transferencias por iroh sin pérdida: 300 MB en 13-14 s (21-22 MB/s) frente a
+  16-17 s (17-18 MB/s) con la versión anterior.
+- Conexiones del chat sin uso: se cierran a los 90 s (iroh manda un
+  keep-alive cada 5 s por ruta). Los pendientes se reintentan al momento cuando
+  el otro conecta o aparece en la LAN, y si no, con espera creciente (20 s →
+  10 min) en vez de cada 20 s para siempre.
+- Vídeo: 100/300/900 kbps (240p10, 360p15, 540p24) y audio a 16 kbps con DTX
+  (se pide en el `fmtp` de Opus). No probado con cámara en esta sesión.
+
+### App
+- Quitado «añadir por código»: a otras redes se llega con «Conectarse».
+- Probado en el Pixel 6 (Android 17): arranca desconectado; solicitud de envío
+  con Aceptar/Rechazar; conectarse, ver al otro, pedir y aceptar en los dos
+  sentidos; chat y llamada con la pareja; Desconectar avisa al otro.
+- Arreglado al probar: la pareja salía dos veces (LAN y pareja) y decía
+  «Remoto»; botones de la actividad que tapaban el nombre en el móvil; el ⚙
+  cortado en pantallas estrechas.
+- Para compilar Android aquí hace falta el Rust de rustup delante en el PATH
+  (el de Homebrew no tiene los targets) y `JAVA_HOME` al OpenJDK 17.
+
+### Qué no se ha probado
+- El server desplegado en Vercel con Atlas (probado con el mismo código en
+  local con MongoDB en memoria).
+- Videollamadas con los presets nuevos; la app de escritorio con la interfaz
+  nueva (compila).
+- Consumo de voz con RTT de datos móviles.

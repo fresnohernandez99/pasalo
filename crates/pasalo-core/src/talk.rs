@@ -1,22 +1,24 @@
 //! Canal "talk": chat de texto e imágenes y señalización de llamadas entre dos
-//! equipos, por iroh. La conexión va cifrada con QUIC/TLS y autenticada con
-//! la clave de cada equipo (el código que se comparten), así que es de punto
-//! a punto: un relay, si lo hay, solo ve bytes cifrados.
+//! equipos, por iroh (QUIC, que va cifrado de por sí y autenticado con la
+//! clave de cada equipo).
 //!
 //! Hay una conexión por pareja de equipos y se reutiliza. Cada mensaje viaja
 //! en su propio stream bidireccional (JSON con la longitud delante, más los
 //! bytes de la imagen si la hay) y el otro lado contesta con un `Ack`. La voz
 //! de las llamadas va en datagramas de esa misma conexión (ver [`VoiceLink`]).
+//! Una conexión sin uso se cierra a los [`IDLE`]: abierta, iroh manda un
+//! keep-alive cada 5 s por cada ruta.
 //!
-//! Los mensajes que no se pueden entregar quedan pendientes y se reintentan
-//! solos; el receptor descarta los repetidos por su id.
+//! Los mensajes que no se pueden entregar quedan pendientes. Se reintentan en
+//! cuanto el otro equipo aparece (se conecta o se le ve en la LAN) y, por si
+//! acaso, cada vez más espaciados; el receptor descarta los repetidos por id.
 
 use std::collections::HashMap;
 use std::io;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, RwLock};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use bytes::Bytes;
 use iroh::EndpointId;
@@ -33,7 +35,11 @@ pub const TALK_ALPN: &[u8] = b"pasalo/talk/1";
 /// Tamaño máximo de una imagen del chat.
 pub const MAX_IMAGE: u64 = 25 * 1024 * 1024;
 const MAX_FRAME: usize = 256 * 1024;
-const RETRY_EVERY: Duration = Duration::from_secs(20);
+/// Primer reintento de un mensaje pendiente; cada fallo dobla la espera.
+const RETRY_FIRST: Duration = Duration::from_secs(20);
+const RETRY_MAX: Duration = Duration::from_secs(600);
+/// Tiempo sin mensajes ni voz tras el que se cierra una conexión.
+pub const IDLE: Duration = Duration::from_secs(90);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -125,6 +131,11 @@ struct Inner {
     events: EventSender,
     store: Store,
     conns: tokio::sync::Mutex<HashMap<EndpointId, Connection>>,
+    /// Último uso de cada conexión.
+    used: Mutex<HashMap<EndpointId, Instant>>,
+    /// Cuándo toca el siguiente reintento automático a cada equipo y cuántos
+    /// fallos lleva.
+    backoff: Mutex<HashMap<String, (Instant, u32)>>,
     /// IP:puerto de iroh de los equipos de la LAN, sacado del descubrimiento.
     lan: Mutex<HashMap<EndpointId, SocketAddr>>,
     voice: Mutex<HashMap<EndpointId, mpsc::UnboundedSender<Bytes>>>,
@@ -147,6 +158,8 @@ impl Talk {
                 events,
                 store,
                 conns: Default::default(),
+                used: Default::default(),
+                backoff: Default::default(),
                 lan: Default::default(),
                 voice: Default::default(),
                 pending: Mutex::new(pending),
@@ -154,12 +167,13 @@ impl Talk {
                 attempts: Default::default(),
             }),
         };
-        let retrying = talk.clone();
+        let ticking = talk.clone();
         tokio::spawn(async move {
-            let mut tick = tokio::time::interval(RETRY_EVERY);
+            let mut tick = tokio::time::interval(Duration::from_secs(10));
             loop {
                 tick.tick().await;
-                retrying.retry(None);
+                ticking.retry_due();
+                ticking.close_idle().await;
             }
         });
         talk
@@ -258,9 +272,16 @@ impl Talk {
         Ok(message)
     }
 
-    /// Reintenta los mensajes pendientes (de un equipo o de todos).
+    /// Reintenta ya los mensajes pendientes (de un equipo o de todos), sin
+    /// esperar a su turno.
     pub fn retry(&self, peer: Option<&str>) {
         let peer = peer.map(normalize);
+        match &peer {
+            Some(peer) => {
+                self.inner.backoff.lock().unwrap().remove(peer);
+            }
+            None => self.inner.backoff.lock().unwrap().clear(),
+        }
         let pending: Vec<ChatMessage> = self
             .inner
             .pending
@@ -275,6 +296,59 @@ impl Talk {
         }
     }
 
+    /// Reintenta los pendientes de los equipos a los que ya les toca.
+    fn retry_due(&self) {
+        let now = Instant::now();
+        let due: Vec<ChatMessage> = {
+            let backoff = self.inner.backoff.lock().unwrap();
+            let delivering = self.inner.delivering.lock().unwrap();
+            self.inner
+                .pending
+                .lock()
+                .unwrap()
+                .values()
+                .filter(|m| !delivering.contains_key(&m.id))
+                .filter(|m| backoff.get(&m.peer).is_none_or(|(next, _)| *next <= now))
+                .cloned()
+                .collect()
+        };
+        for message in due {
+            self.spawn_delivery(message);
+        }
+    }
+
+    /// Un intento a `peer` falló: el siguiente automático, más tarde.
+    fn failed(&self, peer: &str) {
+        let mut backoff = self.inner.backoff.lock().unwrap();
+        let fails = backoff.get(peer).map_or(0, |(_, n)| *n);
+        let wait = RETRY_FIRST.saturating_mul(1 << fails.min(10)).min(RETRY_MAX);
+        backoff.insert(peer.to_string(), (Instant::now() + wait, fails + 1));
+    }
+
+    fn touch(&self, id: EndpointId) {
+        self.inner.used.lock().unwrap().insert(id, Instant::now());
+    }
+
+    /// Cierra las conexiones que llevan [`IDLE`] sin uso y sin llamada.
+    async fn close_idle(&self) {
+        let idle: Vec<EndpointId> = {
+            let used = self.inner.used.lock().unwrap();
+            let voice = self.inner.voice.lock().unwrap();
+            used.iter().filter(|(id, at)| at.elapsed() >= IDLE && !voice.contains_key(*id)).map(|(id, _)| *id).collect()
+        };
+        if idle.is_empty() {
+            return;
+        }
+        let mut conns = self.inner.conns.lock().await;
+        let mut used = self.inner.used.lock().unwrap();
+        for id in idle {
+            used.remove(&id);
+            if let Some(conn) = conns.remove(&id) {
+                conn.close(0u32.into(), b"inactiva");
+            }
+        }
+    }
+
     /// Lanza la entrega de `message`. Si ya había un intento en curso se
     /// cancela: quien pide otro es porque algo cambió (p. ej. la dirección del
     /// equipo) y esperar a que el viejo se rinda tardaría hasta 30 s. Si se
@@ -285,9 +359,11 @@ impl Talk {
         let this = self.clone();
         let key = message.id.clone();
         let id = key.clone();
+        let peer = message.peer.clone();
         let task = tokio::spawn(async move {
             if let Err(e) = this.deliver(message).await {
                 tracing::debug!("mensaje {id} sin entregar: {e}");
+                this.failed(&peer);
             }
             let mut delivering = this.inner.delivering.lock().unwrap();
             if delivering.get(&id).is_some_and(|(a, _)| *a == attempt) {
@@ -332,6 +408,7 @@ impl Talk {
 
     /// Conexión con `id`: la que ya hubiera abierta o una nueva.
     async fn connection(&self, id: EndpointId) -> Result<Connection, Error> {
+        self.touch(id);
         if let Some(conn) = self.inner.conns.lock().await.get(&id)
             && conn.close_reason().is_none()
         {
@@ -351,6 +428,11 @@ impl Talk {
     async fn serve(&self, conn: Connection) {
         let id = conn.remote_id();
         self.inner.conns.lock().await.entry(id).or_insert_with(|| conn.clone());
+        self.touch(id);
+        // Si nos busca es que se le puede llegar: lo pendiente para él, ya.
+        if conn.side().is_server() {
+            self.retry(Some(&id.to_string()));
+        }
         let datagrams = {
             let this = self.clone();
             let conn = conn.clone();
@@ -364,6 +446,7 @@ impl Talk {
         };
         let streams = async {
             while let Ok((send, recv)) = conn.accept_bi().await {
+                self.touch(id);
                 let this = self.clone();
                 tokio::spawn(async move {
                     if let Err(e) = this.handle(id, send, recv).await {

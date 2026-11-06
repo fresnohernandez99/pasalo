@@ -28,8 +28,8 @@ pub(crate) enum Codec2Mode {
 impl Codec {
     pub fn for_mode(mode: Mode) -> Self {
         match mode {
-            Mode::High => Codec::Opus { rate: 16_000, bitrate: 24_000, frame_ms: 20, narrowband: false },
-            Mode::Normal => Codec::Opus { rate: 16_000, bitrate: 12_000, frame_ms: 40, narrowband: false },
+            Mode::High => Codec::Opus { rate: 16_000, bitrate: 24_000, frame_ms: 40, narrowband: false },
+            Mode::Normal => Codec::Opus { rate: 16_000, bitrate: 12_000, frame_ms: 60, narrowband: false },
             Mode::Low => Codec::Opus { rate: 8_000, bitrate: 6_000, frame_ms: 60, narrowband: true },
             Mode::Minimum => Codec::Codec2 { mode: Codec2Mode::M1300 },
         }
@@ -101,9 +101,11 @@ impl OpusEncoder {
             unsafe_opus::opus_encoder_ctl!(st, unsafe_opus::OPUS_SET_BITRATE_REQUEST, bitrate);
             unsafe_opus::opus_encoder_ctl!(st, unsafe_opus::OPUS_SET_SIGNAL_REQUEST, unsafe_opus::OPUS_SIGNAL_VOICE);
             unsafe_opus::opus_encoder_ctl!(st, unsafe_opus::OPUS_SET_COMPLEXITY_REQUEST, 10);
-            // Con pérdidas, la FEC mete en cada paquete una copia barata del anterior.
-            unsafe_opus::opus_encoder_ctl!(st, unsafe_opus::OPUS_SET_INBAND_FEC_REQUEST, 1);
-            unsafe_opus::opus_encoder_ctl!(st, unsafe_opus::OPUS_SET_PACKET_LOSS_PERC_REQUEST, 10);
+            // Sin FEC: su copia reducida del frame anterior gasta parte del
+            // bitrate y en esta versión de libopus no se puede usar, porque
+            // reconstruir con ella satura igual que el PLC (probado). Las
+            // pérdidas se cubren con el relleno propio y, en los modos de
+            // poco consumo, con la copia del paquete anterior.
             if narrowband {
                 unsafe_opus::opus_encoder_ctl!(st, unsafe_opus::OPUS_SET_MAX_BANDWIDTH_REQUEST, unsafe_opus::OPUS_BANDWIDTH_NARROWBAND);
             }

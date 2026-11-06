@@ -8,9 +8,11 @@
 //!   Hello  ───────────────────────────────▶
 //!          ◀─────────────────────────────── Hello
 //!   Offer { items }  ─────────────────────▶
+//!                                           (pregunta al usuario si es nuevo)
 //!          ◀─────────────────────────────── Accept { items: [Skip | From{offset}] }
+//!                                           o Reject { reason: "declined" }
 //!   por cada From{offset}:
-//!     size - offset bytes en crudo ───────▶
+//!     size - offset bytes ────────────────▶  (en crudo o en bloques zstd)
 //!     FileEnd { index, hash } ────────────▶  (BLAKE3 del archivo completo)
 //!   Done  ────────────────────────────────▶
 //!          ◀─────────────────────────────── Result { error }
@@ -18,7 +20,13 @@
 //!
 //! La reanudación sale sola: si la conexión se corta, el emisor vuelve a
 //! mandar la misma oferta y el receptor contesta desde qué byte seguir cada
-//! archivo según lo que ya tiene en disco.
+//! archivo según lo que ya tiene en disco. Lo que ya se aceptó una vez no se
+//! vuelve a preguntar.
+//!
+//! Cada `Hello` lista lo que entiende ese equipo (`features`). Si los dos
+//! dicen `zstd`, el contenido de los archivos va en bloques que se comprimen
+//! cuando ahorran algo (ver `compress.rs`). Un equipo que no manda la lista
+//! recibe los bytes en crudo, como siempre.
 //!
 //! Un `Done` justo después del `Hello` es solo una presentación (para conocer
 //! el nombre del otro equipo) y el receptor contesta con `Result`.
@@ -42,6 +50,8 @@ pub const TRANSFER_PORT: u16 = 4646;
 pub(crate) const CHUNK: usize = 256 * 1024;
 /// Tiempo máximo para un paso que debería ser inmediato (un bloque de datos, un mensaje corto).
 pub(crate) const SHORT: Duration = Duration::from_secs(30);
+/// Lo que se espera a que el usuario acepte o rechace un envío.
+pub(crate) const ASK: Duration = Duration::from_secs(120);
 /// Para esperas en las que el otro lado puede estar calculando hashes de archivos grandes.
 /// Las conexiones muertas se detectan antes por TCP keepalive.
 pub(crate) const LONG: Duration = Duration::from_secs(600);
@@ -68,7 +78,14 @@ pub enum ItemState {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum Message {
-    Hello { version: u32, device_id: String, name: String, platform: String },
+    Hello {
+        version: u32,
+        device_id: String,
+        name: String,
+        platform: String,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        features: Vec<String>,
+    },
     Offer { items: Vec<Item>, text: Option<String> },
     Accept { items: Vec<ItemState> },
     Reject { reason: String },

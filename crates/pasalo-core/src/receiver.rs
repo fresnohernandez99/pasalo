@@ -2,25 +2,28 @@ use std::collections::{HashMap, HashSet};
 use std::io::{self, SeekFrom};
 use std::net::Ipv4Addr;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::{Duration, Instant, UNIX_EPOCH};
 
 use tokio::fs::{self, OpenOptions};
-use tokio::io::{AsyncRead, AsyncReadExt, AsyncSeekExt, AsyncWrite, AsyncWriteExt, BufReader, BufWriter};
+use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncReadExt, AsyncSeekExt, AsyncWrite, AsyncWriteExt, BufReader, BufWriter};
 use tokio::net::TcpListener;
-use tokio::sync::watch;
+use tokio::sync::{oneshot, watch};
 
+use crate::compress::{self, Unpacker};
 use crate::events::Progress;
 use crate::ledger::{LEDGER_DIR, Ledger, transfer_key};
 use crate::paths::{part_path, split_safe, unique_name};
 use crate::protocol::{
-    CHUNK, ItemState, LONG, Message, PROTOCOL_VERSION, SHORT, configure_stream, hash_prefix, read_msg,
+    ASK, CHUNK, ItemState, LONG, Message, PROTOCOL_VERSION, SHORT, configure_stream, hash_prefix, read_msg,
     timed, unexpected, write_msg,
 };
 use crate::{Direction, Error, Event, EventSender, LocalInfo, Remote, TALK_ALPN, Talk, TransferId};
 
-/// Acepta conexiones y guarda lo recibido en `dest`. Acepta todo lo que llega,
-/// como Dukto.
+/// Acepta conexiones y guarda lo recibido en `dest`. Cada envío nuevo de
+/// archivos se le pregunta al usuario ([`Event::TransferRequest`]) salvo que
+/// se desactive con [`Receiver::set_ask`]; los textos llegan sin preguntar.
 #[derive(Clone)]
 pub struct Receiver {
     inner: Arc<Inner>,
@@ -31,6 +34,21 @@ struct Inner {
     local: RwLock<LocalInfo>,
     events: EventSender,
     slots: Mutex<HashMap<String, Arc<Slot>>>,
+    ask: AtomicBool,
+    /// Con pareja, el `device_id` del único equipo del que se recibe.
+    only: RwLock<Option<String>>,
+    /// Peticiones esperando respuesta del usuario.
+    decisions: Mutex<HashMap<TransferId, oneshot::Sender<bool>>>,
+}
+
+/// Qué pasó con una petición.
+enum Answer {
+    Accepted,
+    Declined,
+    /// Nadie contestó a tiempo.
+    Timeout,
+    /// El emisor cerró la conexión mientras se esperaba.
+    Gone,
 }
 
 /// Garantiza una sola sesión activa por transferencia. Si el emisor reconecta
@@ -61,6 +79,9 @@ impl Receiver {
                 local: RwLock::new(local),
                 events,
                 slots: Mutex::default(),
+                ask: AtomicBool::new(true),
+                only: RwLock::new(None),
+                decisions: Mutex::default(),
             }),
         }
     }
@@ -76,6 +97,26 @@ impl Receiver {
 
     pub fn set_local(&self, local: LocalInfo) {
         *self.inner.local.write().unwrap() = local;
+    }
+
+    /// Con `false` se acepta todo sin preguntar, como Dukto.
+    pub fn set_ask(&self, ask: bool) {
+        self.inner.ask.store(ask, Ordering::Relaxed);
+    }
+
+    /// Solo recibe (archivos y textos, por la LAN o por iroh) del equipo con
+    /// este `device_id`; a los demás les contesta `busy`. `None`, de todos.
+    pub fn set_only(&self, device_id: Option<String>) {
+        *self.inner.only.write().unwrap() = device_id;
+    }
+
+    /// Contesta una [`Event::TransferRequest`]. Devuelve `false` si ya no
+    /// esperaba respuesta.
+    pub fn decide(&self, id: TransferId, accept: bool) -> bool {
+        match self.inner.decisions.lock().unwrap().remove(&id) {
+            Some(tx) => tx.send(accept).is_ok(),
+            None => false,
+        }
     }
 
     pub async fn bind(port: u16) -> io::Result<TcpListener> {
@@ -103,16 +144,19 @@ impl Receiver {
 
     /// Acepta conexiones de equipos remotos que llegan por iroh: las de
     /// archivos las atiende aquí y las del chat y las llamadas se las pasa a
-    /// `talk` (si no hay, se rechazan). Termina al cerrar `remote`.
+    /// `talk` (si no hay, se rechazan). Con pareja (ver [`Remote::set_only`])
+    /// rechaza a los demás. Termina al cerrar `remote`.
     pub async fn run_remote(&self, remote: Remote, talk: Option<Talk>) {
-        while let Some(incoming) = remote.endpoint.accept().await {
-            let this = self.clone();
-            let talk = talk.clone();
+        while let Some(incoming) = remote.endpoint().accept().await {
+            let (this, talk, remote) = (self.clone(), talk.clone(), remote.clone());
             tokio::spawn(async move {
                 let conn = match incoming.await {
                     Ok(conn) => conn,
                     Err(e) => return tracing::debug!("conexión remota fallida: {e}"),
                 };
+                if !remote.allows(conn.remote_id()) {
+                    return conn.close(1u32.into(), b"ocupado");
+                }
                 if conn.alpn() == TALK_ALPN {
                     match talk {
                         Some(talk) => talk.accept(conn),
@@ -174,10 +218,16 @@ impl Receiver {
         let mut rd = BufReader::with_capacity(CHUNK, rd);
         let mut wr = BufWriter::new(wr);
 
-        let Message::Hello { version, device_id, name: peer, .. } = read_msg(&mut rd, SHORT).await? else {
+        let Message::Hello { version, device_id, name: peer, features, .. } = read_msg(&mut rd, SHORT).await? else {
             return Err(unexpected("hello"));
         };
+        let packed = features.iter().any(|f| f == compress::FEATURE);
         write_msg(&mut wr, &local.hello()).await?;
+        let busy = inner.only.read().unwrap().as_ref().is_some_and(|only| *only != device_id);
+        if busy {
+            write_msg(&mut wr, &Message::Reject { reason: "busy".into() }).await?;
+            return Err(Error::Rejected("busy".into()));
+        }
         if version != PROTOCOL_VERSION {
             let reason = format!("versión de protocolo {version} no soportada");
             write_msg(&mut wr, &Message::Reject { reason: reason.clone() }).await?;
@@ -219,9 +269,40 @@ impl Receiver {
             return Err(Error::Superseded);
         }
 
+        // Mismo id en todos los intentos de la misma transferencia (cabe en un
+        // número de JavaScript).
+        let id = u64::from_str_radix(&key[..12], 16).expect("la clave es hexadecimal");
         let ledger_path = dest.join(LEDGER_DIR).join(format!("{key}.json"));
         let previous = Ledger::load(&ledger_path);
         let resuming = previous.is_some();
+        // Lo que ya se aceptó (hay registro en disco) sigue sin preguntar.
+        if !resuming && inner.ask.load(Ordering::Relaxed) {
+            let mut roots: Vec<String> = Vec::new();
+            for comps in &rel {
+                if !roots.contains(&comps[0]) {
+                    roots.push(comps[0].clone());
+                }
+            }
+            let files = items.iter().filter(|item| !item.is_dir).count();
+            let total = items.iter().map(|item| item.size).sum();
+            let request = Event::TransferRequest { id, peer: peer.clone(), roots, files, total_bytes: total };
+            let reason = match self.ask(id, request, &mut rd, &mut cancel).await? {
+                Answer::Accepted => None,
+                Answer::Declined => Some("declined"),
+                Answer::Timeout => {
+                    let _ = inner.events.send(Event::RequestClosed { id, reason: "timeout" });
+                    Some("timeout")
+                }
+                Answer::Gone => {
+                    let _ = inner.events.send(Event::RequestClosed { id, reason: "cancelled" });
+                    return Err(Error::Io(io::ErrorKind::UnexpectedEof.into()));
+                }
+            };
+            if let Some(reason) = reason {
+                write_msg(&mut wr, &Message::Reject { reason: reason.into() }).await?;
+                return Err(Error::Rejected(reason.into()));
+            }
+        }
         let mut ledger = previous.unwrap_or_default();
         for (comps, item) in rel.iter().zip(&items) {
             if !ledger.roots.contains_key(&comps[0]) {
@@ -284,9 +365,6 @@ impl Receiver {
         }
 
         write_msg(&mut wr, &Message::Accept { items: states.clone() }).await?;
-        // Mismo id en todos los intentos de la misma transferencia (cabe en un
-        // número de JavaScript).
-        let id = u64::from_str_radix(&key[..12], 16).expect("la clave es hexadecimal");
         *started = Some(id);
         let roots: Vec<String> = ledger.roots.values().cloned().collect();
         let _ = inner.events.send(Event::TransferStarted {
@@ -300,6 +378,11 @@ impl Receiver {
         });
 
         let mut progress = Progress::new(&inner.events, id, resumed, total);
+        let mut unpacker = match packed {
+            true => Some(Unpacker::new().map_err(Error::Local)?),
+            false => None,
+        };
+        let mut wire = 0;
         let mut errors = Vec::new();
         // Guardar el registro tras cada archivo es O(n²) con miles de archivos
         // pequeños. Si se pierde lo del último segundo, esos archivos se
@@ -313,7 +396,8 @@ impl Receiver {
             }
             let part = part_path(path);
             let hasher = prefixes[i].take().unwrap_or_default();
-            let hash = receive_file(&mut rd, &mut cancel, &part, offset, item.size, hasher, &mut progress).await?;
+            let hash = receive_file(&mut rd, &mut cancel, &part, offset, item.size, hasher, &mut progress, unpacker.as_mut(), &mut wire)
+                .await?;
 
             let msg = tokio::select! {
                 msg = read_msg(&mut rd, LONG) => msg?,
@@ -358,15 +442,50 @@ impl Receiver {
             id,
             direction: Direction::Incoming,
             saved: ledger.roots.values().map(|name| dest.join(name)).collect(),
+            wire_bytes: unpacker.map_or(wire, |u| u.wire),
         });
         Ok(())
+    }
+
+    /// Pregunta al usuario y espera su respuesta, atento a que el emisor se
+    /// vaya o a que otra conexión del mismo envío tome el relevo.
+    async fn ask<R: AsyncRead + Unpin>(
+        &self,
+        id: TransferId,
+        request: Event,
+        rd: &mut BufReader<R>,
+        cancel: &mut Cancel,
+    ) -> Result<Answer, Error> {
+        let (tx, rx) = oneshot::channel();
+        self.inner.decisions.lock().unwrap().insert(id, tx);
+        let _ = self.inner.events.send(request);
+        let answer = tokio::select! {
+            answer = rx => match answer {
+                Ok(true) => Answer::Accepted,
+                Ok(false) => Answer::Declined,
+                // Lo sustituyó la petición de un reintento del mismo envío.
+                Err(_) => return Err(Error::Superseded),
+            },
+            // El emisor no manda nada hasta la respuesta: si llega algo es
+            // que cerró (o que no sigue el protocolo).
+            _ = rd.fill_buf() => Answer::Gone,
+            _ = tokio::time::sleep(ASK) => Answer::Timeout,
+            _ = cancel.cancelled() => return Err(Error::Superseded),
+        };
+        let mut decisions = self.inner.decisions.lock().unwrap();
+        if decisions.get(&id).is_some_and(|tx| tx.is_closed()) {
+            decisions.remove(&id);
+        }
+        Ok(answer)
     }
 }
 
 const LEDGER_EVERY: Duration = Duration::from_secs(1);
 const SYNC_FROM: u64 = 8 * 1024 * 1024;
 
-/// Recibe el resto de un archivo en `part` y devuelve el hash del archivo completo.
+/// Recibe el resto de un archivo en `part` y devuelve el hash del archivo
+/// completo. Con `unpacker` los datos llegan en bloques (ver `compress.rs`).
+#[allow(clippy::too_many_arguments)]
 async fn receive_file<R: AsyncRead + Unpin>(
     rd: &mut R,
     cancel: &mut Cancel,
@@ -375,12 +494,15 @@ async fn receive_file<R: AsyncRead + Unpin>(
     size: u64,
     mut hasher: blake3::Hasher,
     progress: &mut Progress<'_>,
+    mut unpacker: Option<&mut Unpacker>,
+    wire: &mut u64,
 ) -> Result<String, Error> {
     let mut file = OpenOptions::new().write(true).create(true).truncate(false).open(part).await?;
     file.set_len(offset).await?;
     file.seek(SeekFrom::Start(offset)).await?;
 
     let mut buf = vec![0u8; CHUNK];
+    let mut block = Vec::new();
     let mut left = size - offset;
     // El emisor puede tardar en mandar el primer byte si está hasheando su prefijo.
     let mut limit = LONG;
@@ -389,21 +511,37 @@ async fn receive_file<R: AsyncRead + Unpin>(
             break Ok(());
         }
         let want = left.min(CHUNK as u64) as usize;
-        let n = tokio::select! {
-            read = timed(limit, rd.read(&mut buf[..want])) => match read {
-                Ok(0) => break Err(Error::Io(io::ErrorKind::UnexpectedEof.into())),
-                Ok(n) => n,
-                Err(e) => break Err(e),
-            },
-            _ = cancel.cancelled() => break Err(Error::Superseded),
+        let data: &[u8] = match unpacker.as_deref_mut() {
+            Some(unpacker) => {
+                let read = tokio::select! {
+                    read = unpacker.read(rd, limit, want, &mut block) => read,
+                    _ = cancel.cancelled() => Err(Error::Superseded),
+                };
+                if let Err(e) = read {
+                    break Err(e);
+                }
+                &block
+            }
+            None => {
+                let n = tokio::select! {
+                    read = timed(limit, rd.read(&mut buf[..want])) => match read {
+                        Ok(0) => break Err(Error::Io(io::ErrorKind::UnexpectedEof.into())),
+                        Ok(n) => n,
+                        Err(e) => break Err(e),
+                    },
+                    _ = cancel.cancelled() => break Err(Error::Superseded),
+                };
+                *wire += n as u64;
+                &buf[..n]
+            }
         };
         limit = SHORT;
-        if let Err(e) = file.write_all(&buf[..n]).await {
+        if let Err(e) = file.write_all(data).await {
             break Err(e.into());
         }
-        hasher.update(&buf[..n]);
-        left -= n as u64;
-        progress.add(n as u64);
+        hasher.update(data);
+        left -= data.len() as u64;
+        progress.add(data.len() as u64);
     };
     // Vaciar siempre, también si falló: lo escrito es lo que se reanuda luego.
     let flushed = file.flush().await;

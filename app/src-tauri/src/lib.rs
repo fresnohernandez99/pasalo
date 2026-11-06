@@ -9,7 +9,8 @@ use std::sync::Mutex;
 
 use pasalo_core::protocol::{DISCOVERY_PORT, TRANSFER_PORT};
 use pasalo_core::{
-    Discovery, Event, EventSender, Greeting, LocalInfo, Peer, Receiver, Remote, SendOptions, Talk, Target, TransferId,
+    Discovery, Event, EventSender, Greeting, Lobby, LobbyUser, LocalInfo, Partner, Peer, Receiver, Remote, SendOptions,
+    Signal, Talk, Target, TransferId,
 };
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager, State};
@@ -45,10 +46,20 @@ impl CmdError {
     }
 }
 
+/// Server de conexión por defecto (ver `server/README.md`): pon aquí la URL
+/// de tu despliegue en Vercel. Vacío, cada usuario la pone en Ajustes.
+const DEFAULT_SERVER: &str = "";
+
 #[derive(Clone, Serialize, Deserialize)]
 struct Settings {
     name: String,
     dir: PathBuf,
+    #[serde(default = "default_server")]
+    server: String,
+}
+
+fn default_server() -> String {
+    DEFAULT_SERVER.to_string()
 }
 
 /// Un envío que se puede pausar (abortando la tarea) y reanudar (volviendo a
@@ -65,10 +76,15 @@ struct AppState {
     local: Mutex<LocalInfo>,
     receiver: Receiver,
     discovery: tokio::sync::Mutex<Option<Discovery>>,
-    /// `None` si no se pudo arrancar (p. ej. sin red al abrir la app).
+    /// iroh. Arranca en modo solo red local; pasa a internet al conectarse.
+    /// `None` si no se pudo arrancar.
     remote: Option<Remote>,
     /// Chat y llamadas; existe si hay `remote`.
     talk: Option<Talk>,
+    /// Sesión en el server mientras se está conectado y sin pareja.
+    lobby: tokio::sync::Mutex<Option<Lobby>>,
+    /// El otro equipo, tras aceptar una conexión.
+    partner: Mutex<Option<Partner>>,
     chat_dir: PathBuf,
     voice: Mutex<Option<talk::VoiceCall>>,
     events: EventSender,
@@ -134,11 +150,15 @@ struct Snapshot {
     dir: PathBuf,
     port: u16,
     ips: Vec<String>,
-    /// Código para que te envíen desde otras redes.
+    /// Código de iroh de este equipo.
     code: Option<String>,
     /// En el móvil no hay carpetas que elegir ni arrastrar y soltar.
     mobile: bool,
     peers: Vec<Peer>,
+    server: String,
+    /// En el server (buscando con quién conectarse).
+    online: bool,
+    partner: Option<Partner>,
 }
 
 #[tauri::command]
@@ -151,7 +171,20 @@ async fn snapshot(state: State<'_, AppState>) -> CmdResult<Snapshot> {
     };
     let code = state.remote.as_ref().map(Remote::code);
     let mobile = cfg!(mobile);
-    Ok(Snapshot { name: settings.name, dir: settings.dir, port, ips: local_ips(), code, mobile, peers })
+    let online = state.lobby.lock().await.is_some();
+    let partner = state.partner.lock().unwrap().clone();
+    Ok(Snapshot {
+        name: settings.name,
+        dir: settings.dir,
+        port,
+        ips: local_ips(),
+        code,
+        mobile,
+        peers,
+        server: settings.server,
+        online,
+        partner,
+    })
 }
 
 #[tauri::command]
@@ -265,6 +298,92 @@ async fn probe(state: State<'_, AppState>, target: String) -> CmdResult<Greeting
     pasalo_core::probe(&target, &local).await.map_err(|e| CmdError::new("connect_failed", e.detail()))
 }
 
+/// Acepta o rechaza un envío que pide permiso.
+#[tauri::command]
+fn transfer_decide(state: State<'_, AppState>, id: TransferId, accept: bool) -> bool {
+    state.receiver.decide(id, accept)
+}
+
+#[tauri::command]
+async fn set_server(state: State<'_, AppState>, server: String) -> CmdResult<()> {
+    let server = server.trim().trim_end_matches('/').to_string();
+    if !server.starts_with("https://") && !server.starts_with("http://") {
+        return Err(CmdError::new("invalid_server", server));
+    }
+    state.settings.lock().unwrap().server = server;
+    state.save_settings()
+}
+
+/// Sale a internet y entra en el server. Hasta aquí la app no intenta nada fuera de la LAN.
+#[tauri::command]
+async fn net_connect(state: State<'_, AppState>) -> CmdResult<()> {
+    let remote = state.remote.as_ref().ok_or_else(|| CmdError::new("remote_unavailable", ""))?;
+    let mut lobby = state.lobby.lock().await;
+    if lobby.is_some() || state.partner.lock().unwrap().is_some() {
+        return Ok(());
+    }
+    let (server, me) = {
+        let settings = state.settings.lock().unwrap();
+        let local = state.local.lock().unwrap();
+        let me = LobbyUser { id: local.device_id.clone(), name: local.name.clone(), platform: local.platform.clone() };
+        (settings.server.clone(), me)
+    };
+    if server.is_empty() {
+        return Err(CmdError::new("no_server", ""));
+    }
+    remote.set_internet(true).await.map_err(CmdError::other)?;
+    match Lobby::join(&server, remote, me, state.events.clone()).await {
+        Ok(joined) => {
+            *lobby = Some(joined);
+            Ok(())
+        }
+        Err(e) => {
+            let _ = remote.set_internet(false).await;
+            Err(CmdError::new("server", e.detail()))
+        }
+    }
+}
+
+/// Sale del server y de la conexión con la pareja (avisándola), y vuelve a
+/// solo red local.
+#[tauri::command]
+async fn net_disconnect(state: State<'_, AppState>) -> CmdResult<()> {
+    if let Some(lobby) = state.lobby.lock().await.take() {
+        lobby.leave().await;
+    }
+    let partner = state.partner.lock().unwrap().take();
+    if let (Some(partner), Some(talk)) = (partner, &state.talk) {
+        let bye = Signal { call: String::new(), kind: "unpair".into(), data: serde_json::Value::Null };
+        let _ = tokio::time::timeout(std::time::Duration::from_secs(5), talk.signal(&partner.code, bye)).await;
+    }
+    state.receiver.set_only(None);
+    if let Some(remote) = &state.remote {
+        remote.set_only(None);
+        remote.set_internet(false).await.map_err(CmdError::other)?;
+    }
+    Ok(())
+}
+
+async fn lobby(state: &AppState) -> CmdResult<Lobby> {
+    state.lobby.lock().await.clone().ok_or_else(|| CmdError::new("not_online", ""))
+}
+
+#[tauri::command]
+async fn lobby_request(state: State<'_, AppState>, to: LobbyUser) -> CmdResult<String> {
+    lobby(&state).await?.request(&to).await.map_err(CmdError::core)
+}
+
+#[tauri::command]
+async fn lobby_cancel(state: State<'_, AppState>, request: String) -> CmdResult<()> {
+    lobby(&state).await?.cancel(&request).await.map_err(CmdError::core)
+}
+
+/// Contesta una solicitud. Al aceptar llega también `Event::LobbyPaired`.
+#[tauri::command]
+async fn lobby_answer(state: State<'_, AppState>, request: String, accept: bool) -> CmdResult<Option<Partner>> {
+    lobby(&state).await?.answer(&request, accept).await.map_err(CmdError::core)
+}
+
 #[tauri::command]
 async fn pause(state: State<'_, AppState>, id: TransferId) -> CmdResult<()> {
     if let Some(task) = state.outgoing.lock().unwrap().get_mut(&id).and_then(|job| job.task.take()) {
@@ -306,6 +425,7 @@ fn load_settings(path: &Path, app: &AppHandle) -> Settings {
     if let Some(settings) = std::fs::read(path).ok().and_then(|bytes| serde_json::from_slice(&bytes).ok()) {
         return settings;
     }
+    let server = default_server();
     let downloads = app.path().download_dir().or_else(|_| app.path().home_dir()).unwrap_or_default();
     let dir = downloads.join("Pasalo");
     #[cfg(target_os = "android")]
@@ -316,7 +436,7 @@ fn load_settings(path: &Path, app: &AppHandle) -> Settings {
     };
     #[cfg(not(target_os = "android"))]
     let name = pasalo_core::default_device_name();
-    Settings { name, dir }
+    Settings { name, dir, server }
 }
 
 fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
@@ -340,7 +460,8 @@ fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
         let mut local = LocalInfo::new(device_id, settings.name.clone());
         local.transfer_port = listener.local_addr()?.port();
 
-        let remote = Remote::start(Some(&config_dir.join("remote_key")))
+        // Offline primero: iroh solo habla con la LAN hasta que el usuario se conecte.
+        let remote = Remote::start(Some(&config_dir.join("remote_key")), false)
             .await
             .inspect_err(|e| eprintln!("no se pudieron iniciar las conexiones remotas: {e}"))
             .ok();
@@ -366,6 +487,8 @@ fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
             discovery: tokio::sync::Mutex::new(None),
             remote,
             talk,
+            lobby: Default::default(),
+            partner: Default::default(),
             chat_dir,
             voice: Mutex::new(None),
             events,
@@ -377,6 +500,7 @@ fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
 
     // Los eventos esperan en el canal hasta aquí, así que no se pierde ninguno.
     let (emitter, talk) = (handle.clone(), state.talk.clone());
+    app.manage(state);
     tauri::async_runtime::spawn(async move {
         while let Some(event) = rx.recv().await {
             // Un equipo de la LAN con chat: se le puede hablar directo y sin internet.
@@ -385,10 +509,34 @@ fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
             {
                 talk.set_lan_addr(code, addr);
             }
+            let state = emitter.state::<AppState>();
+            match &event {
+                // Emparejados: fuera del server y solo la pareja puede llegar.
+                Event::LobbyPaired { partner } => {
+                    state.lobby.lock().await.take();
+                    *state.partner.lock().unwrap() = Some(partner.clone());
+                    state.receiver.set_only(Some(partner.id.clone()));
+                    if let Some(remote) = &state.remote {
+                        remote.set_only(pasalo_core::parse_code(&partner.code));
+                    }
+                }
+                // La pareja se despidió: se vuelve a solo red local.
+                Event::Signal { peer, signal, .. } if signal.kind == "unpair" => {
+                    let ours = state.partner.lock().unwrap().as_ref().is_some_and(|p| p.code == *peer);
+                    if ours {
+                        state.partner.lock().unwrap().take();
+                        state.receiver.set_only(None);
+                        if let Some(remote) = &state.remote {
+                            remote.set_only(None);
+                            let _ = remote.set_internet(false).await;
+                        }
+                    }
+                }
+                _ => {}
+            }
             let _ = emitter.emit("pasalo", &event);
         }
     });
-    app.manage(state);
     Ok(())
 }
 
@@ -403,7 +551,8 @@ pub fn run() {
         .setup(setup)
         .invoke_handler(tauri::generate_handler![
             snapshot, refresh, set_name, choose_dir, open_dir, reveal, pick_files, pick_folder, send,
-            send_text, probe, pause, resume, forget,
+            send_text, probe, pause, resume, forget, transfer_decide, set_server, net_connect, net_disconnect,
+            lobby_request, lobby_cancel, lobby_answer,
             talk::chat_history, talk::chat_send, talk::chat_send_image, talk::chat_image, talk::call_signal,
             talk::voice_start, talk::voice_mode, talk::voice_mute, talk::voice_speaker, talk::voice_stop,
             talk::voice_stats

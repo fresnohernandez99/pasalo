@@ -1,4 +1,4 @@
-# Tests and lints the core, the CLI and the voice crate on every push and pull request.
+# Tests and lints the core, the CLI, the voice crate and the signaling server on every push and pull request.
 
 name: CI
 
@@ -25,3 +25,20 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo clippy -p pasalo-core -p pasalo-cli -p pasalo-call --all-targets -- -D warnings
       - run: cargo test -p pasalo-core -p pasalo-cli -p pasalo-call
+
+  # El server de señalización (server/), contra un MongoDB de verdad que
+  # arranca mongodb-memory-server.
+  server:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: server
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: server/package-lock.json
+      - run: npm ci
+      - run: npm test

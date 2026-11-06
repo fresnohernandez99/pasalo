@@ -1,0 +1,24 @@
+{
+  "name": "pasalo-server",
+  "private": true,
+  "type": "module",
+  "description": "Server de señalización de Pasalo para Vercel con MongoDB",
+  "scripts": {
+    "dev": "node dev.js",
+    "test": "node --test test/"
+  },
+  "engines": {
+    "node": ">=20.19"
+  },
+  "dependencies": {
+    "mongodb": "^7.8.0"
+  },
+  "devDependencies": {
+    "mongodb-memory-server": "^11.3.0"
+  },
+  "config": {
+    "mongodbMemoryServer": {
+      "disablePostinstall": "1"
+    }
+  }
+}

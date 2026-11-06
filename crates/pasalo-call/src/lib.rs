@@ -20,9 +20,9 @@ pub use pipeline::{OVERHEAD, Receiver, Sender, Stats};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Mode {
-    /// Opus 24 kbps, banda ancha, paquetes de 20 ms.
+    /// Opus 24 kbps, banda ancha, paquetes de 40 ms.
     High,
-    /// Opus 12 kbps, banda ancha, paquetes de 40 ms.
+    /// Opus 12 kbps, banda ancha, paquetes de 60 ms.
     Normal,
     /// Opus 6 kbps, banda estrecha, 2 frames de 60 ms por paquete.
     Low,

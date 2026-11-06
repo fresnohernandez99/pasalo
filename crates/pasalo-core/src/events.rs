@@ -5,6 +5,7 @@ use std::time::{Duration, Instant};
 use serde::Serialize;
 use tokio::sync::mpsc::UnboundedSender;
 
+use crate::lobby::{LobbyUser, Partner};
 use crate::Peer;
 use crate::talk::{ChatMessage, Signal};
 
@@ -24,6 +25,27 @@ pub enum Event {
     PeerFound(Peer),
     PeerLost {
         device_id: String,
+    },
+    /// Alguien quiere enviarnos archivos: hay que contestar con
+    /// [`crate::Receiver::decide`]. Lo que ya se aceptó antes (reanudaciones)
+    /// no pregunta.
+    TransferRequest {
+        id: TransferId,
+        peer: String,
+        roots: Vec<String>,
+        files: usize,
+        total_bytes: u64,
+    },
+    /// La petición ya no espera respuesta: el emisor se fue (`cancelled`) o
+    /// nadie contestó a tiempo (`timeout`).
+    RequestClosed {
+        id: TransferId,
+        reason: &'static str,
+    },
+    /// La oferta salió y se espera a que el otro lado la acepte.
+    TransferWaiting {
+        id: TransferId,
+        peer: String,
     },
     /// Se emite en cada intento; `resumed_bytes` indica lo que ya no hace falta enviar.
     TransferStarted {
@@ -45,6 +67,9 @@ pub enum Event {
         id: TransferId,
         direction: Direction,
         saved: Vec<PathBuf>,
+        /// Bytes de contenido que pasaron por la red en el último intento
+        /// (menos que el total si se comprimió o se reanudó).
+        wire_bytes: u64,
     },
     TransferFailed {
         id: TransferId,
@@ -72,6 +97,34 @@ pub enum Event {
         peer: String,
         name: String,
         signal: Signal,
+    },
+    /// Quién está ahora en el server de conexión (sin contarnos).
+    LobbyUsers {
+        users: Vec<LobbyUser>,
+    },
+    /// Alguien pide conectarse: se contesta con [`crate::Lobby::answer`].
+    LobbyRequest {
+        request: String,
+        from: LobbyUser,
+    },
+    /// Una solicitud recibida ya no espera respuesta (la retiraron o caducó).
+    LobbyRequestGone {
+        request: String,
+    },
+    /// Respuesta a una solicitud enviada que no acabó en conexión
+    /// (`reason`: `declined`, `cancelled` o `expired`).
+    LobbyAnswer {
+        request: String,
+        accepted: bool,
+        reason: String,
+    },
+    /// Conexión aceptada por los dos lados: ya se dejó el server.
+    LobbyPaired {
+        partner: Partner,
+    },
+    /// No se llega al server (se sigue intentando). Vacío cuando se recupera.
+    LobbyError {
+        detail: String,
     },
 }
 

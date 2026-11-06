@@ -14,6 +14,8 @@ pub enum Error {
     Remote(String),
     #[error("sustituida por una conexión más reciente")]
     Superseded,
+    #[error("error del server de conexión: {0}")]
+    Server(String),
 }
 
 impl Error {
@@ -27,6 +29,7 @@ impl Error {
             Error::Rejected(_) => "rejected",
             Error::Remote(_) => "remote",
             Error::Superseded => "superseded",
+            Error::Server(_) => "server",
         }
     }
 
@@ -34,7 +37,7 @@ impl Error {
     pub fn detail(&self) -> String {
         match self {
             Error::Io(e) | Error::Local(e) => e.to_string(),
-            Error::Protocol(s) | Error::Rejected(s) | Error::Remote(s) => s.clone(),
+            Error::Protocol(s) | Error::Rejected(s) | Error::Remote(s) | Error::Server(s) => s.clone(),
             Error::Timeout | Error::Superseded => String::new(),
         }
     }

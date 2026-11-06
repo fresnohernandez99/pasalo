@@ -21,13 +21,32 @@ fn data(len: usize, mut seed: u64) -> Vec<u8> {
         .collect()
 }
 
+/// Receptor que acepta todo sin preguntar.
 async fn start_receiver(dest: &Path) -> (SocketAddr, mpsc::UnboundedReceiver<Event>) {
+    let (addr, rx, receiver) = start_asking_receiver(dest).await;
+    receiver.set_ask(false);
+    (addr, rx)
+}
+
+/// Receptor que pregunta cada envío nuevo, como la app.
+async fn start_asking_receiver(dest: &Path) -> (SocketAddr, mpsc::UnboundedReceiver<Event>, Receiver) {
     let (tx, rx) = mpsc::unbounded_channel();
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     let receiver = Receiver::new(dest, LocalInfo::new("receptor-id", "receptor"), tx);
-    tokio::spawn(async move { receiver.run(listener).await });
-    (addr, rx)
+    let running = receiver.clone();
+    tokio::spawn(async move { running.run(listener).await });
+    (addr, rx, receiver)
+}
+
+/// Espera la siguiente petición de envío y devuelve su id.
+async fn next_request(rx: &mut mpsc::UnboundedReceiver<Event>) -> (u64, Vec<String>, u64) {
+    loop {
+        let event = tokio::time::timeout(std::time::Duration::from_secs(10), rx.recv()).await.expect("petición").unwrap();
+        if let Event::TransferRequest { id, roots, total_bytes, .. } = event {
+            return (id, roots, total_bytes);
+        }
+    }
 }
 
 /// Proxy que corta la conexión después de reenviar `limit` bytes hacia el receptor.
@@ -257,8 +276,9 @@ async fn sends_to_remote_by_code() {
     std::fs::write(&file, &content).unwrap();
 
     let (tx, _rx) = mpsc::unbounded_channel();
-    let listening = pasalo_core::Remote::start(None).await.unwrap();
+    let listening = pasalo_core::Remote::start(None, true).await.unwrap();
     let receiver = Receiver::new(dst.path(), LocalInfo::new("receptor-id", "receptor"), tx.clone());
+    receiver.set_ask(false);
     tokio::spawn({
         let listening = listening.clone();
         async move { receiver.run_remote(listening, None).await }
@@ -266,7 +286,7 @@ async fn sends_to_remote_by_code() {
     listening.online().await;
 
     let code = pasalo_core::parse_code(&listening.code()).unwrap();
-    let dialing = pasalo_core::Remote::start(None).await.unwrap();
+    let dialing = pasalo_core::Remote::start(None, true).await.unwrap();
     let target = Target::Remote(dialing.clone(), code);
     let sender = LocalInfo::new("emisor-id", "emisor");
     assert_eq!(pasalo_core::probe(&target, &sender).await.unwrap().name, "receptor");
@@ -275,4 +295,137 @@ async fn sends_to_remote_by_code() {
 
     dialing.shutdown().await;
     listening.shutdown().await;
+}
+
+/// Con pareja, los demás equipos de la LAN reciben `busy`.
+#[tokio::test]
+async fn paired_receiver_only_takes_its_partner() {
+    let src = tempfile::tempdir().unwrap();
+    let dst = tempfile::tempdir().unwrap();
+    let file = src.path().join("a.txt");
+    std::fs::write(&file, b"hola").unwrap();
+    let (addr, _events, receiver) = start_asking_receiver(dst.path()).await;
+    receiver.set_ask(false);
+    receiver.set_only(Some("pareja-id".into()));
+    let (tx, _rx) = mpsc::unbounded_channel();
+    let opts = SendOptions::default();
+
+    let other = send_paths(new_transfer_id(), &Target::Lan(addr), &LocalInfo::new("otro-id", "otro"), std::slice::from_ref(&file), &opts, &tx).await;
+    assert!(matches!(&other, Err(Error::Rejected(r)) if r == "busy"), "{other:?}");
+    assert!(send_text(&Target::Lan(addr), &LocalInfo::new("otro-id", "otro"), "hola").await.is_err());
+
+    send_paths(new_transfer_id(), &Target::Lan(addr), &LocalInfo::new("pareja-id", "pareja"), &[file], &opts, &tx).await.unwrap();
+    assert!(dst.path().join("a.txt").exists());
+}
+
+#[tokio::test]
+async fn declined_request_sends_nothing() {
+    let src = tempfile::tempdir().unwrap();
+    let dst = tempfile::tempdir().unwrap();
+    let file = src.path().join("informe.pdf");
+    std::fs::write(&file, data(MIB, 5)).unwrap();
+    let (addr, mut events, receiver) = start_asking_receiver(dst.path()).await;
+
+    let (tx, mut out) = mpsc::unbounded_channel();
+    let sending = tokio::spawn(async move {
+        let sender = LocalInfo::new("emisor-id", "emisor");
+        send_paths(new_transfer_id(), &Target::Lan(addr), &sender, &[file], &SendOptions::default(), &tx).await
+    });
+    let (id, roots, total) = next_request(&mut events).await;
+    assert_eq!((roots, total), (vec!["informe.pdf".to_string()], MIB as u64));
+    // Mientras se pregunta, el emisor sabe que espera.
+    assert!(matches!(out.recv().await, Some(Event::TransferWaiting { .. })));
+    assert!(receiver.decide(id, false));
+
+    let result = sending.await.unwrap();
+    assert!(matches!(&result, Err(Error::Rejected(r)) if r == "declined"), "{result:?}");
+    assert_eq!(std::fs::read_dir(dst.path()).unwrap().count(), 0, "no debía quedar nada");
+}
+
+#[tokio::test]
+async fn accepted_once_resumes_without_asking() {
+    let src = tempfile::tempdir().unwrap();
+    let dst = tempfile::tempdir().unwrap();
+    let file = src.path().join("disco.iso");
+    let content = data(6 * MIB, 6);
+    std::fs::write(&file, &content).unwrap();
+    let (addr, mut events, receiver) = start_asking_receiver(dst.path()).await;
+    let sender = LocalInfo::new("emisor-id", "emisor");
+    let no_retry = SendOptions { max_retries: 0 };
+
+    // Primer intento: se acepta y se corta a mitad.
+    let proxy = cutting_proxy(addr, 2 * MIB).await;
+    let first = {
+        let (file, sender, no_retry) = (file.clone(), sender.clone(), no_retry.clone());
+        tokio::spawn(async move {
+            let (tx, _rx) = mpsc::unbounded_channel();
+            send_paths(new_transfer_id(), &Target::Lan(proxy), &sender, &[file], &no_retry, &tx).await
+        })
+    };
+    let (id, _, _) = next_request(&mut events).await;
+    receiver.decide(id, true);
+    assert!(first.await.unwrap().is_err());
+
+    // Segundo intento: sigue sin volver a preguntar.
+    let (tx, _rx) = mpsc::unbounded_channel();
+    send_paths(new_transfer_id(), &Target::Lan(addr), &sender, &[file], &no_retry, &tx).await.unwrap();
+    assert_eq!(std::fs::read(dst.path().join("disco.iso")).unwrap(), content);
+    let mut asked = 0;
+    while let Ok(event) = events.try_recv() {
+        asked += matches!(event, Event::TransferRequest { .. }) as usize;
+    }
+    assert_eq!(asked, 0, "la reanudación no debía preguntar");
+}
+
+#[tokio::test]
+async fn request_closes_when_sender_leaves() {
+    let src = tempfile::tempdir().unwrap();
+    let dst = tempfile::tempdir().unwrap();
+    let file = src.path().join("x.bin");
+    std::fs::write(&file, b"x").unwrap();
+    let (addr, mut events, receiver) = start_asking_receiver(dst.path()).await;
+    let sending = tokio::spawn(async move {
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let sender = LocalInfo::new("emisor-id", "emisor");
+        send_paths(new_transfer_id(), &Target::Lan(addr), &sender, &[file], &SendOptions::default(), &tx).await
+    });
+    let (id, _, _) = next_request(&mut events).await;
+    sending.abort();
+    loop {
+        let event = tokio::time::timeout(std::time::Duration::from_secs(10), events.recv()).await.unwrap().unwrap();
+        if let Event::RequestClosed { id: closed, reason } = event {
+            assert_eq!((closed, reason), (id, "cancelled"));
+            break;
+        }
+    }
+    assert!(!receiver.decide(id, true), "ya no debía esperar respuesta");
+}
+
+/// Texto se comprime; lo que no se deja comprimir va casi igual.
+#[tokio::test]
+async fn compresses_only_what_pays_off() {
+    let src = tempfile::tempdir().unwrap();
+    let dst = tempfile::tempdir().unwrap();
+    let text: Vec<u8> = (0..200_000).flat_map(|i| format!("línea {i}: el veloz murciélago hindú comía feliz\n").into_bytes()).collect();
+    let noise = data(3 * MIB, 7);
+    std::fs::write(src.path().join("registro.log"), &text).unwrap();
+    std::fs::write(src.path().join("ruido.bin"), &noise).unwrap();
+    let (addr, _events) = start_receiver(dst.path()).await;
+    let sender = LocalInfo::new("emisor-id", "emisor");
+
+    let mut wire = Vec::new();
+    for name in ["registro.log", "ruido.bin"] {
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let path = src.path().join(name);
+        send_paths(new_transfer_id(), &Target::Lan(addr), &sender, &[path], &SendOptions::default(), &tx).await.unwrap();
+        while let Ok(event) = rx.try_recv() {
+            if let Event::TransferFinished { wire_bytes, .. } = event {
+                wire.push(wire_bytes);
+            }
+        }
+    }
+    assert_eq!(std::fs::read(dst.path().join("registro.log")).unwrap(), text);
+    assert_eq!(std::fs::read(dst.path().join("ruido.bin")).unwrap(), noise);
+    assert!(wire[0] < text.len() as u64 / 5, "el texto debía comprimirse: {} de {}", wire[0], text.len());
+    assert!(wire[1] < noise.len() as u64 + 1024, "el ruido no debía crecer: {} de {}", wire[1], noise.len());
 }

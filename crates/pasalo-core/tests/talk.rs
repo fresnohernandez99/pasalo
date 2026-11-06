@@ -9,6 +9,7 @@ use pasalo_core::{ChatMessage, Event, LocalInfo, Receiver, Remote, Signal, Statu
 use tokio::sync::mpsc::{UnboundedReceiver, unbounded_channel};
 
 struct Side {
+    remote: Remote,
     talk: Talk,
     code: String,
     addr: SocketAddr,
@@ -18,7 +19,8 @@ struct Side {
 
 async fn side(name: &str) -> Side {
     let dir = tempfile::tempdir().unwrap();
-    let remote = Remote::start(None).await.unwrap();
+    // Solo red local: nada de internet, como la app al abrirse.
+    let remote = Remote::start(None, false).await.unwrap();
     let (tx, events) = unbounded_channel();
     let talk = Talk::new(remote.clone(), name, dir.path().join("chat"), tx.clone());
     let receiver = Receiver::new(dir.path().join("in"), LocalInfo::new(name, name), tx);
@@ -27,7 +29,7 @@ async fn side(name: &str) -> Side {
         async move { receiver.run_remote(remote, Some(talk)).await }
     });
     let addr = SocketAddr::from(([127, 0, 0, 1], remote.port().unwrap()));
-    Side { talk, code: remote.code(), addr, events, _dir: dir }
+    Side { code: remote.code(), remote, talk, addr, events, _dir: dir }
 }
 
 /// Dos equipos que se conocen por la LAN.
@@ -78,7 +80,7 @@ async fn pending_message_is_delivered_when_peer_comes_back() {
     let key = dir.path().join("remote_key");
 
     // Beto existe pero está apagado: el mensaje se queda pendiente.
-    let first = Remote::start(Some(&key)).await.unwrap();
+    let first = Remote::start(Some(&key), false).await.unwrap();
     let code = first.code();
     a.talk.set_lan_addr(&code, SocketAddr::from(([127, 0, 0, 1], first.port().unwrap())));
     first.shutdown().await;
@@ -89,7 +91,7 @@ async fn pending_message_is_delivered_when_peer_comes_back() {
 
     // Vuelve con la misma clave (mismo código) y otro puerto. El
     // descubrimiento avisaría de la dirección nueva; aquí se hace a mano.
-    let remote = Remote::start(Some(&key)).await.unwrap();
+    let remote = Remote::start(Some(&key), false).await.unwrap();
     assert_eq!(remote.code(), code);
     let addr = SocketAddr::from(([127, 0, 0, 1], remote.port().unwrap()));
     let (tx, mut events) = unbounded_channel();
@@ -151,4 +153,36 @@ async fn burst_of_signals_all_arrive() {
             _ => panic!("solo llegaron {got} de 12 señales"),
         }
     }
+}
+
+/// Emparejado con alguien, no se acepta a nadie más.
+#[tokio::test]
+async fn paired_peer_only_accepts_its_partner() {
+    let (a, b) = pair().await;
+    let c = side("carla").await;
+    c.talk.set_lan_addr(&a.code, a.addr);
+    a.remote.set_only(Some(pasalo_core::parse_code(&b.code).unwrap()));
+
+    let signal = || Signal { call: "c".into(), kind: "invite".into(), data: serde_json::Value::Null };
+    assert!(c.talk.signal(&a.code, signal()).await.is_err(), "carla no debía llegar");
+    b.talk.signal(&a.code, signal()).await.expect("beto sí");
+
+    a.remote.set_only(None);
+    c.talk.signal(&a.code, signal()).await.expect("sin pareja, carla sí");
+}
+
+/// Pasar a internet y volver mantiene el código y el puerto, y el chat sigue.
+#[tokio::test]
+async fn switching_modes_keeps_code_and_port() {
+    let (a, mut b) = pair().await;
+    let (code, port) = (a.remote.code(), a.remote.port());
+    a.remote.set_internet(true).await.unwrap();
+    a.remote.set_internet(false).await.unwrap();
+    assert_eq!((a.remote.code(), a.remote.port()), (code, port));
+
+    b.talk.send_text(&a.code, "sigo aquí".into()).await.unwrap();
+    let _ = next_chat(&mut b.events).await; // entregado
+    let mut a = a;
+    let (got, _) = next_chat(&mut a.events).await;
+    assert_eq!(got.text.as_deref(), Some("sigo aquí"));
 }

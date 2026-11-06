@@ -14,20 +14,16 @@
         <input id="me-name" class="name-input" spellcheck="false" autocomplete="off" data-i18n-title="me.name_title">
         <div class="sub" id="me-sub"></div>
         <div class="sub code-line" id="code-line" hidden>
-          <span data-i18n="me.remote_code"></span> <span id="me-code" data-i18n-title="me.code_title"></span>
+          <span data-i18n="me.code"></span> <span id="me-code" data-i18n-title="me.code_title"></span>
           <button id="copy-code" class="ghost small" data-i18n="btn.copy"></button>
+        </div>
+        <div class="sub net-line">
+          <span id="net-dot" class="dot"></span><span id="net-state"></span>
+          <button id="net-toggle" class="small"></button>
         </div>
       </div>
     </div>
-    <div class="dir">
-      <button id="open-dir" class="ghost">
-        <span class="dir-caption" data-i18n="dir.caption"></span>
-        <span id="dir-label">…</span>
-      </button>
-      <button id="change-dir" class="ghost small" data-i18n="dir.change"></button>
-      <select id="lang" class="lang" aria-label="Language"></select>
-      <button id="open-settings" class="ghost small" data-i18n-title="settings.title">⚙</button>
-    </div>
+    <button id="open-settings" class="ghost icon gear" data-i18n-title="settings.title"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg></button>
   </header>
 
   <main>
@@ -36,12 +32,15 @@
         <h2 data-i18n="peers.title"></h2>
         <button id="refresh" class="ghost small" data-i18n="peers.search"></button>
       </div>
+      <div id="lobby" class="lobby" hidden>
+        <div class="panel-head">
+          <h2 data-i18n="lobby.title"></h2>
+          <span id="lobby-status" class="sub"></span>
+        </div>
+        <div id="lobby-list" class="lobby-list"></div>
+      </div>
       <div id="peers" class="peers"></div>
-      <form id="manual" class="manual">
-        <input id="manual-ip" data-i18n-placeholder="peers.add_placeholder" autocomplete="off" spellcheck="false">
-        <button class="small" type="submit" data-i18n="peers.add"></button>
-      </form>
-      <p class="hint" data-i18n="peers.hint"></p>
+      <p class="hint drag-hint" data-i18n="peers.hint"></p>
     </section>
 
     <section class="panel activity-panel">
@@ -54,6 +53,19 @@
       </div>
     </section>
   </main>
+
+  <!-- En pantallas estrechas (el móvil), una pestaña cada vez. -->
+  <nav class="tabbar">
+    <button class="tab on" data-tab="peers">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="13" height="10" rx="1.5"/><path d="M5.5 18h6"/><rect x="17" y="7" width="5" height="12" rx="1"/></svg>
+      <span data-i18n="peers.title"></span>
+    </button>
+    <button class="tab" data-tab="activity">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 18V5M3 9l4-4 4 4M17 6v13M13 15l4 4 4-4"/></svg>
+      <span data-i18n="activity.title"></span>
+      <span class="badge" id="activity-badge" hidden></span>
+    </button>
+  </nav>
 
   <dialog id="text-dialog">
     <form method="dialog" id="text-form">
@@ -89,40 +101,66 @@
     <video id="call-remote" autoplay playsinline></video>
     <video id="call-local" autoplay playsinline muted></video>
     <div class="call-info">
-      <div class="avatar big">☎</div>
+      <div class="avatar big" id="call-avatar"></div>
       <div id="call-name" class="call-name"></div>
       <div id="call-state" class="call-state"></div>
       <div id="call-stats" class="sub"></div>
     </div>
     <div class="call-bar">
-      <div id="call-controls-live" class="call-row">
-        <select id="call-mode" class="lang"></select>
-        <button id="call-mute" class="ghost" data-i18n="call.mute"></button>
-        <button id="call-speaker" class="ghost" data-i18n="call.speaker"></button>
-        <button id="call-cam" class="ghost" data-i18n="call.camera"></button>
+      <!-- Como en el teléfono de Google: botones redondos con su nombre debajo. -->
+      <div id="call-controls-live" class="call-grid">
+        <button id="call-mute" class="cbtn"><span class="ring"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10a7 7 0 0 0 14 0M12 17v4M8 21h8"/></svg></span><span data-i18n="call.mute"></span></button>
+        <button id="call-speaker" class="cbtn"><span class="ring"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 5 6 9H2v6h4l5 4V5z"/><path d="M15.5 8.5a5 5 0 0 1 0 7M19 5a10 10 0 0 1 0 14"/></svg></span><span data-i18n="call.speaker"></span></button>
+        <button id="call-cam" class="cbtn"><span class="ring"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="6" width="14" height="12" rx="2"/><path d="m16 10 6-4v12l-6-4"/></svg></span><span data-i18n="call.camera"></span></button>
+        <div class="cbtn">
+          <span class="ring"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20v-4M9 20v-8M14 20V8M19 20V4"/></svg></span>
+          <span id="call-mode-label"></span>
+          <select id="call-mode" aria-label="Calidad"></select>
+        </div>
       </div>
-      <div class="call-row">
-        <button id="call-decline" class="danger" data-i18n="call.decline"></button>
-        <button id="call-accept" class="ok" data-i18n="call.accept"></button>
-        <button id="call-hangup" class="danger" data-i18n="call.hangup"></button>
+      <div class="call-actions">
+        <button id="call-decline" class="round danger"><span class="disc hang"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M20 15.5c-1.2 0-2.5-.2-3.6-.6a1 1 0 0 0-1 .2l-2.2 2.2a15 15 0 0 1-6.6-6.6l2.2-2.2a1 1 0 0 0 .3-1A11.4 11.4 0 0 1 8.5 4a1 1 0 0 0-1-1H4a1 1 0 0 0-1 1 17 17 0 0 0 17 17 1 1 0 0 0 1-1v-3.5a1 1 0 0 0-1-1z"/></svg></span><span data-i18n="call.decline"></span></button>
+        <button id="call-accept" class="round ok"><span class="disc"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M20 15.5c-1.2 0-2.5-.2-3.6-.6a1 1 0 0 0-1 .2l-2.2 2.2a15 15 0 0 1-6.6-6.6l2.2-2.2a1 1 0 0 0 .3-1A11.4 11.4 0 0 1 8.5 4a1 1 0 0 0-1-1H4a1 1 0 0 0-1 1 17 17 0 0 0 17 17 1 1 0 0 0 1-1v-3.5a1 1 0 0 0-1-1z"/></svg></span><span data-i18n="call.accept"></span></button>
+        <button id="call-hangup" class="round danger"><span class="disc hang"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M20 15.5c-1.2 0-2.5-.2-3.6-.6a1 1 0 0 0-1 .2l-2.2 2.2a15 15 0 0 1-6.6-6.6l2.2-2.2a1 1 0 0 0 .3-1A11.4 11.4 0 0 1 8.5 4a1 1 0 0 0-1-1H4a1 1 0 0 0-1 1 17 17 0 0 0 17 17 1 1 0 0 0 1-1v-3.5a1 1 0 0 0-1-1z"/></svg></span></button>
       </div>
     </div>
   </section>
 
-  <dialog id="settings-dialog">
-    <form id="settings-form">
+  <button id="add-fab" class="fab" data-i18n-title="peers.add_title">+</button>
+  <dialog id="add-dialog">
+    <form id="manual">
+      <h3 data-i18n="peers.add_title"></h3>
+      <input id="manual-ip" data-i18n-placeholder="peers.add_placeholder" autocomplete="off" spellcheck="false">
+      <div class="row">
+        <button type="button" class="ghost" id="add-cancel" data-i18n="btn.cancel"></button>
+        <button type="submit" data-i18n="btn.accept"></button>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- Ajustes: cada cambio se guarda al momento. -->
+  <section id="settings" class="screen" hidden>
+    <header class="screen-head">
+      <button id="settings-close" class="ghost icon" data-i18n-title="btn.back">←</button>
       <h3 data-i18n="settings.title"></h3>
+    </header>
+    <div class="screen-body">
+      <div class="field">
+        <span data-i18n="dir.caption"></span>
+        <div class="dir-row">
+          <button id="open-dir" class="ghost"><span id="dir-label">…</span></button>
+          <button id="change-dir" class="ghost small" data-i18n="dir.change"></button>
+        </div>
+      </div>
+      <label class="field"><span data-i18n="settings.language"></span><select id="lang" aria-label="Language"></select></label>
+      <label class="field"><span data-i18n="settings.server"></span><input id="set-server" placeholder="https://…vercel.app" autocomplete="off" spellcheck="false"></label>
       <label class="field"><span data-i18n="settings.voice_mode"></span><select id="set-voice-mode"></select></label>
       <p class="hint" data-i18n="settings.turn_hint"></p>
       <label class="field"><span>TURN</span><input id="set-turn" placeholder="turn:turn.example.com:3478" autocomplete="off" spellcheck="false"></label>
       <label class="field"><span data-i18n="settings.turn_user"></span><input id="set-turn-user" autocomplete="off" spellcheck="false"></label>
       <label class="field"><span data-i18n="settings.turn_pass"></span><input id="set-turn-pass" type="password" autocomplete="off"></label>
-      <div class="row">
-        <button type="button" class="ghost" id="settings-cancel" data-i18n="btn.cancel"></button>
-        <button type="submit" data-i18n="btn.save"></button>
-      </div>
-    </form>
-  </dialog>
+    </div>
+  </section>
 
   <dialog id="viewer" class="viewer"><img id="viewer-img" alt=""></dialog>
 
@@ -130,5 +168,6 @@
   <script src="i18n.js"></script>
   <script src="main.js"></script>
   <script src="talk.js"></script>
+  <script src="net.js"></script>
 </body>
 </html>

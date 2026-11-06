@@ -1,6 +1,6 @@
 // Chat, llamadas de voz (las hace Rust) y videollamadas (WebRTC aquí).
-// Todo va por el canal cifrado de iroh con el código de cada equipo; WebRTC
-// solo usa STUN/TURN para que el vídeo llegue directo.
+// Todo va por el canal de iroh con el código de cada equipo; WebRTC solo usa
+// STUN/TURN para que el vídeo llegue directo.
 
 const chat = {
   peer: null, // { code, name }
@@ -9,17 +9,23 @@ const chat = {
 };
 const imageCache = new Map(); // ruta → data URL
 
+// Consumo medido con los dos lados hablando a la vez (el peor caso), con
+// todo lo que pasa por la red. Si solo habla uno, el otro gasta mucho menos.
 const VOICE_MODES = [
-  ['high', 45],
-  ['normal', 23],
-  ['low', 15],
-  ['minimum', 6],
+  ['high', 42],
+  ['normal', 26],
+  ['low', 19],
+  ['minimum', 9],
 ];
+// Lo justo para verse con poca red: la resolución y los fps bajos dejan que
+// el bitrate alcance para una imagen nítida.
 const VIDEO_PRESETS = {
-  low: { width: 320, height: 240, fps: 12, kbps: 150 },
-  normal: { width: 640, height: 480, fps: 20, kbps: 500 },
-  high: { width: 1280, height: 720, fps: 30, kbps: 1500 },
+  low: { width: 320, height: 240, fps: 10, kbps: 100 },
+  normal: { width: 480, height: 360, fps: 15, kbps: 300 },
+  high: { width: 960, height: 540, fps: 24, kbps: 900 },
 };
+// Audio de las videollamadas: Opus a 16 kbps y sin enviar nada en silencio (DTX).
+const VIDEO_AUDIO_KBPS = 16;
 const RING_TIMEOUT = 45_000;
 
 let live = null;
@@ -47,45 +53,44 @@ function iceServers() {
   return servers;
 }
 
-function openSettings() {
+// Lo suyo en la pantalla de Ajustes (main.js la abre y la cierra).
+function fillTalkSettings() {
   const s = talkSettings();
   $('#set-turn').value = s.turn;
   $('#set-turn-user').value = s.turnUser;
   $('#set-turn-pass').value = s.turnPass;
   fillVoiceModes($('#set-voice-mode'), s.voiceMode);
-  $('#settings-dialog').showModal();
 }
 
-$('#open-settings').addEventListener('click', openSettings);
-$('#settings-cancel').addEventListener('click', () => $('#settings-dialog').close());
-$('#settings-form').addEventListener('submit', (ev) => {
-  ev.preventDefault();
-  saveTalkSettings({
-    turn: $('#set-turn').value,
-    turnUser: $('#set-turn-user').value,
-    turnPass: $('#set-turn-pass').value,
-    voiceMode: $('#set-voice-mode').value,
-  });
-  $('#settings-dialog').close();
-  toast(t('toast.saved'));
-});
+for (const [id, key] of [['#set-turn', 'turn'], ['#set-turn-user', 'turnUser'], ['#set-turn-pass', 'turnPass'], ['#set-voice-mode', 'voiceMode']]) {
+  $(id).addEventListener('change', (ev) => saveTalkSettings({ [key]: ev.target.value }));
+}
 
 function fillVoiceModes(select, current) {
   select.innerHTML = VOICE_MODES.map(
     ([mode, kbps]) => `<option value="${mode}" ${mode === current ? 'selected' : ''}>${esc(t(`voice.${mode}`, { kbps }))}</option>`,
   ).join('');
+  showModeLabel();
+}
+
+// Debajo del botón de calidad, el nombre corto del modo («Normal»).
+function showModeLabel() {
+  const select = $('#call-mode');
+  const text = select.selectedOptions[0]?.textContent || '';
+  $('#call-mode-label').textContent = text.split(' · ')[0];
 }
 
 function fillVideoQualities(select, current) {
   select.innerHTML = Object.entries(VIDEO_PRESETS)
     .map(([q, p]) => `<option value="${q}" ${q === current ? 'selected' : ''}>${esc(t(`video.${q}`, { kbps: p.kbps }))}</option>`)
     .join('');
+  showModeLabel();
 }
 
 // ---------- chat ----------
 
 function peerCode(p) {
-  return p.platform === 'remote' ? p.addr : p.code || null;
+  return p.platform === 'remote' || p.platform === 'partner' ? p.addr : p.code || null;
 }
 
 async function openChat(peer) {
@@ -128,20 +133,40 @@ function renderChat() {
   const atBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 60;
   if (!list.length) {
     box.innerHTML = `<div class="empty">${esc(t('chat.empty'))}<br><span>${esc(t('chat.private'))}</span></div>`;
+    box.dataset.peer = '';
     return;
   }
-  box.innerHTML = list
-    .map((m) => {
-      const time = new Date(m.ts).toLocaleTimeString(lang, { hour: '2-digit', minute: '2-digit' });
-      const tick = m.outgoing ? (m.status === 'pending' ? ' ⏳' : ' ✓') : '';
-      const title = m.outgoing ? t(m.status === 'pending' ? 'chat.pending' : 'chat.delivered') : '';
-      const img = m.image ? `<img class="chat-img" data-path="${esc(m.image)}" alt="">` : '';
-      const text = m.text ? `<div class="chat-text">${esc(m.text)}</div>` : '';
-      return `<div class="bubble ${m.outgoing ? 'out' : 'in'}">${img}${text}<div class="chat-meta" title="${esc(title)}">${time}${tick}</div></div>`;
-    })
-    .join('');
-  for (const img of box.querySelectorAll('img[data-path]')) loadImage(img);
+  // Solo se toca la burbuja que cambia (un mensaje nuevo, un ✓): rehacerlo
+  // todo volvía a decodificar las imágenes y hacía saltar el scroll.
+  if (box.dataset.peer !== chat.peer.code) {
+    box.innerHTML = '';
+    box.dataset.peer = chat.peer.code;
+  }
+  const shown = new Map([...box.children].map((el) => [el.dataset.id, el]));
+  for (const m of list) {
+    let el = shown.get(m.id);
+    if (!el) {
+      el = document.createElement('div');
+      el.dataset.id = m.id;
+      box.append(el);
+    }
+    const html = bubbleHtml(m);
+    if (el.dataset.html === html) continue;
+    el.dataset.html = html;
+    el.className = `bubble ${m.outgoing ? 'out' : 'in'}`;
+    el.innerHTML = html;
+    for (const img of el.querySelectorAll('img[data-path]')) loadImage(img);
+  }
   if (atBottom || list.at(-1)?.outgoing) box.scrollTop = box.scrollHeight;
+}
+
+function bubbleHtml(m) {
+  const time = new Date(m.ts).toLocaleTimeString(lang, { hour: '2-digit', minute: '2-digit' });
+  const tick = m.outgoing ? (m.status === 'pending' ? ' ⏳' : ' ✓') : '';
+  const title = m.outgoing ? t(m.status === 'pending' ? 'chat.pending' : 'chat.delivered') : '';
+  const img = m.image ? `<img class="chat-img" data-path="${esc(m.image)}" alt="">` : '';
+  const text = m.text ? `<div class="chat-text">${esc(m.text)}</div>` : '';
+  return `${img}${text}<div class="chat-meta" title="${esc(title)}">${time}${tick}</div>`;
 }
 
 async function loadImage(img) {
@@ -286,6 +311,10 @@ async function startCall(to, media) {
 }
 
 function onSignal({ peer, name, signal: s }) {
+  if (s.kind === 'unpair') {
+    onUnpair(peer, name);
+    return;
+  }
   if (s.kind === 'invite') {
     if (live) {
       invoke('call_signal', { peer, call: s.call, kind: 'busy', data: null }).catch(() => {});
@@ -387,6 +416,7 @@ function showCall() {
   $('#call').hidden = false;
   $('#call').className = `call ${c.media} ${c.state}`;
   $('#call-name').textContent = c.peer.name;
+  $('#call-avatar').textContent = initials(c.peer.name);
   if (c.state !== 'active') $('#call-stats').textContent = '';
   $('#call-accept').hidden = c.state !== 'incoming';
   $('#call-decline').hidden = c.state !== 'incoming';
@@ -452,6 +482,7 @@ $('#call-cam').addEventListener('click', () => {
 });
 
 $('#call-mode').addEventListener('change', (ev) => {
+  showModeLabel();
   if (!live) return;
   live.mode = ev.target.value;
   if (live.media === 'voice') {
@@ -515,7 +546,7 @@ async function startVideo() {
   await applyVideoQuality();
   // Quien llama hace la oferta; quien contesta espera a recibirla.
   if (live.role === 'caller') {
-    await pc.setLocalDescription(await pc.createOffer());
+    await pc.setLocalDescription(lighterAudio(await pc.createOffer()));
     await signal('sdp', { type: pc.localDescription.type, sdp: pc.localDescription.sdp });
   } else if (live.pendingOffer) {
     await onRemoteSdp(live.pendingOffer);
@@ -533,7 +564,7 @@ async function onRemoteSdp(desc) {
   await pc.setRemoteDescription(desc);
   for (const c of live.pendingIce.splice(0)) await pc.addIceCandidate(c).catch(() => {});
   if (desc.type === 'offer') {
-    await pc.setLocalDescription(await pc.createAnswer());
+    await pc.setLocalDescription(lighterAudio(await pc.createAnswer()));
     await applyVideoQuality();
     await signal('sdp', { type: pc.localDescription.type, sdp: pc.localDescription.sdp });
   }
@@ -586,10 +617,23 @@ async function applyVideoQuality() {
         .applyConstraints({ width: { ideal: preset.width }, height: { ideal: preset.height }, frameRate: { ideal: preset.fps } })
         .catch(() => {});
     } else {
-      params.encodings[0].maxBitrate = 24_000;
+      params.encodings[0].maxBitrate = VIDEO_AUDIO_KBPS * 1000;
     }
     await sender.setParameters(params).catch(() => {});
   }
+}
+
+// Pide al otro lado Opus con DTX (nada durante los silencios) y como mucho
+// VIDEO_AUDIO_KBPS: los parámetros `fmtp` de cada lado dicen cómo quiere recibir.
+function lighterAudio(desc) {
+  const opus = desc.sdp.match(/a=rtpmap:(\d+) opus\/48000/i);
+  if (!opus) return desc;
+  const pt = opus[1];
+  const extra = `usedtx=1;maxaveragebitrate=${VIDEO_AUDIO_KBPS * 1000}`;
+  const sdp = desc.sdp.replace(new RegExp(`a=fmtp:${pt} ([^\r\n]*)`), (line, params) =>
+    params.includes('usedtx') ? line : `a=fmtp:${pt} ${params};${extra}`,
+  );
+  return { type: desc.type, sdp };
 }
 
 function stopVideo(c) {

@@ -11,7 +11,7 @@ window.addEventListener('unhandledrejection', (ev) => {
   toast(`JS: ${reason?.message || reason}`, true);
 });
 
-const peers = new Map(); // device_id → { device_id, name, platform, addr }
+const peers = new Map(); // device_id → { device_id, name, platform, addr, code }
 const items = new Map(); // clave → transferencia o texto
 let selected = null;
 let textPeer = null;
@@ -28,7 +28,7 @@ const PLATFORMS = {
 };
 
 function platformName(platform) {
-  if (platform === 'manual' || platform === 'remote') return t(`platform.${platform}`);
+  if (['manual', 'remote', 'partner'].includes(platform)) return t(`platform.${platform}`);
   return PLATFORMS[platform] || platform;
 }
 
@@ -53,6 +53,23 @@ function duration(seconds) {
   if (seconds < 60) return t('dur.s', { n: Math.ceil(seconds) });
   if (seconds < 3600) return t('dur.min', { m: Math.floor(seconds / 60), s: Math.ceil(seconds % 60) });
   return t('dur.h', { h: Math.floor(seconds / 3600), m: Math.floor((seconds % 3600) / 60) });
+}
+
+// Iconos del tipo de equipo (trazo de 24×24, toman el color del texto).
+const DEVICE_ICONS = {
+  phone: '<rect x="7" y="2.5" width="10" height="19" rx="2"/><path d="M11 18h2"/>',
+  laptop: '<rect x="5" y="4.5" width="14" height="10" rx="1.5"/><path d="M2.5 18.5h19"/>',
+  desktop: '<rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/>',
+};
+const DEVICE_KIND = { android: 'phone', ios: 'phone', macos: 'laptop', windows: 'desktop', linux: 'desktop' };
+
+/** Avatar con las iniciales y, en la esquina, el icono del tipo de equipo. */
+function avatar(name, os) {
+  const kind = DEVICE_KIND[os];
+  const badge = kind
+    ? `<span class="device" title="${esc(platformName(os))}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${DEVICE_ICONS[kind]}</svg></span>`
+    : '';
+  return `<div class="avatar">${esc(initials(name))}${badge}</div>`;
 }
 
 function initials(name) {
@@ -101,25 +118,12 @@ function saveManualPeers() {
   } catch {}
 }
 
-// Los remotos se guardan con nombre: al añadirlos se pregunta al otro equipo.
-function loadRemotePeers() {
-  try {
-    for (const p of JSON.parse(localStorage.getItem('remotePeers') || '[]')) addRemotePeer(p, false);
-  } catch {}
-}
-
-function saveRemotePeers() {
-  const list = [...peers.values()]
-    .filter((p) => p.platform === 'remote')
-    .map(({ addr, name, os }) => ({ code: addr, name, os }));
-  try {
-    localStorage.setItem('remotePeers', JSON.stringify(list));
-  } catch {}
-}
-
-function addRemotePeer({ code, name, os }, save = true) {
-  peers.set(`remote:${code}`, { device_id: `remote:${code}`, name, platform: 'remote', os, addr: code });
-  if (save) saveRemotePeers();
+// Equipo de otra red: la pareja del server, o alguien que escribió por el
+// chat sin estar en la lista. No se guardan: al abrir la app se empieza
+// desconectado.
+function addRemotePeer({ code, name, os, partner = false }) {
+  const key = partner ? 'partner' : `remote:${code}`;
+  peers.set(key, { device_id: key, name, platform: partner ? 'partner' : 'remote', os, addr: code });
   renderPeers();
 }
 
@@ -129,18 +133,6 @@ function isCode(value) {
 
 function shortCode(code) {
   return `${code.slice(0, 6)}…${code.slice(-4)}`;
-}
-
-async function addByCode(input) {
-  const code = input.replace(/\s/g, '').toLowerCase();
-  if (code === myCode) {
-    toast(t('toast.own_code'), true);
-    return;
-  }
-  toast(t('toast.connecting_remote'));
-  const hello = await call('probe', { target: code });
-  addRemotePeer({ code, name: hello.name, os: hello.platform });
-  toast(t('toast.added', { name: hello.name }));
 }
 
 function addManualPeer(input, save = true) {
@@ -153,31 +145,36 @@ function addManualPeer(input, save = true) {
 }
 
 function renderPeers() {
-  const list = [...peers.values()].sort((a, b) => a.name.localeCompare(b.name));
-  const container = $('#peers');
-  if (!list.length) {
-    container.innerHTML = `<div class="empty">${esc(t('peers.empty'))}<br>
-      <span>${esc(t('peers.empty_hint'))}</span></div>`;
-    return;
-  }
-  container.innerHTML = list
-    .map(
-      (p) => `
-    <div class="peer ${p.device_id === selected ? 'selected' : ''}" data-id="${esc(p.device_id)}">
-      <div class="avatar">${esc(initials(p.name))}</div>
-      <div class="info">
-        <div class="pname">${esc(p.name)}</div>
-        <div class="sub">${peerSub(p)}</div>
-      </div>
+  // La pareja, si además está en la LAN, sale una sola vez (como pareja).
+  const partner = peers.get('partner')?.addr;
+  const list = [...peers.values()]
+    .filter((p) => p.platform === 'partner' || !partner || p.code !== partner)
+    .sort((a, b) => (b.platform === 'partner') - (a.platform === 'partner') || a.name.localeCompare(b.name));
+  const html = list.length
+    ? list.map(peerCard).join('')
+    : `<div class="empty">${esc(t('peers.empty'))}<br><span>${esc(t('peers.empty_hint'))}</span></div>`;
+  setHtml($('#peers'), html);
+}
+
+/** Cambia el contenido solo si cambió: los eventos llegan a menudo sin novedades. */
+function setHtml(el, html) {
+  if (el.dataset.html === html) return;
+  el.dataset.html = html;
+  el.innerHTML = html;
+}
+
+function peerCard(p) {
+  return `
+    <div class="peer ${p.device_id === selected ? 'selected' : ''}" data-id="${esc(p.device_id)}" title="${esc(peerTitle(p))}">
+      ${avatar(p.name, p.os || p.platform)}
+      <div class="info"><div class="pname">${esc(p.name)}</div></div>
       <div class="peer-actions">
         <button class="ghost" data-act="files">${esc(t('btn.files'))}</button>
         <button class="ghost" data-act="folder">${esc(t('btn.folder'))}</button>
         ${chatButton(p)}
         ${['manual', 'remote'].includes(p.platform) ? `<button class="ghost remove" data-act="remove" title="${esc(t('btn.remove'))}">✕</button>` : ''}
       </div>
-    </div>`,
-    )
-    .join('');
+    </div>`;
 }
 
 // Con código se chatea (cifrado, con historial y llamadas); sin él (equipos
@@ -190,12 +187,9 @@ function chatButton(p) {
   return `<button class="ghost" data-act="chat">${esc(t('btn.chat'))}${badge}</button>`;
 }
 
-function peerSub(p) {
-  if (p.platform === 'remote') {
-    const os = p.os ? platformName(p.os) : '';
-    return `${esc(platformName('remote'))}${os ? ` (${esc(os)})` : ''} · <span title="${esc(p.addr)}">${esc(shortCode(p.addr))}</span>`;
-  }
-  return `${esc(platformName(p.platform))} · ${esc(p.addr)}`;
+// La tarjeta solo enseña nombre y tipo de equipo; el detalle, al pasar el ratón.
+function peerTitle(p) {
+  return `${platformName(p.platform)} · ${p.addr}`;
 }
 
 $('#peers').addEventListener('click', async (ev) => {
@@ -217,22 +211,37 @@ $('#peers').addEventListener('click', async (ev) => {
   } else if (act === 'remove') {
     peers.delete(peer.device_id);
     saveManualPeers();
-    saveRemotePeers();
   }
   renderPeers();
 });
 
-$('#manual').addEventListener('submit', async (ev) => {
+// Añadir por IP: botón flotante → campo con Aceptar y Cancelar.
+$('#add-fab').addEventListener('click', () => {
+  $('#manual-ip').value = '';
+  $('#add-dialog').showModal();
+  $('#manual-ip').focus();
+});
+$('#add-cancel').addEventListener('click', () => $('#add-dialog').close());
+$('#manual').addEventListener('submit', (ev) => {
   ev.preventDefault();
   const value = $('#manual-ip').value.trim();
   if (!value) return;
+  // A otras redes se llega con «Conectarse», no pegando códigos.
   if (isCode(value)) {
-    await addByCode(value);
-  } else {
-    addManualPeer(value);
+    toast(t('toast.use_connect'), true);
+    return;
   }
-  $('#manual-ip').value = '';
+  addManualPeer(value);
+  $('#add-dialog').close();
 });
+
+// Pantalla de Ajustes.
+$('#open-settings').addEventListener('click', () => {
+  $('#set-server').value = settings?.server || '';
+  fillTalkSettings();
+  $('#settings').hidden = false;
+});
+$('#settings-close').addEventListener('click', () => ($('#settings').hidden = true));
 
 $('#refresh').addEventListener('click', () => {
   call('refresh');
@@ -309,7 +318,7 @@ function transfer(id, direction) {
   if (!t) {
     t = {
       key, kind: 'transfer', id, direction, peer: '', roots: [], status: 'connecting',
-      total: 0, done: 0, resumed: 0, speed: 0, error: null, saved: [],
+      total: 0, done: 0, resumed: 0, speed: 0, error: null, saved: [], wire: null,
     };
     items.set(key, t);
   }
@@ -333,9 +342,66 @@ function itemElement(item) {
       <div class="buttons"></div>`;
     $('#activity').prepend(el);
     $('#activity-empty').hidden = true;
+    noteActivity();
   }
   return el;
 }
+
+// ---------- pestañas (solo en pantallas estrechas) ----------
+
+let unseenActivity = 0;
+
+function activityVisible() {
+  return getComputedStyle($('.activity-panel')).display !== 'none';
+}
+
+/** Algo nuevo en la actividad: si no se está viendo, se cuenta en su pestaña. */
+function noteActivity() {
+  if (activityVisible()) return;
+  unseenActivity++;
+  $('#activity-badge').textContent = unseenActivity;
+  $('#activity-badge').hidden = false;
+}
+
+function showTab(tab) {
+  document.body.dataset.tab = tab;
+  for (const el of document.querySelectorAll('.tab')) el.classList.toggle('on', el.dataset.tab === tab);
+  if (tab === 'activity') {
+    unseenActivity = 0;
+    $('#activity-badge').hidden = true;
+  }
+}
+
+// Botón Atrás de Android (lo llama PasaloPlugin.kt): cierra lo de más arriba
+// y dice si había algo. Si no, la app pasa al fondo sin perder nada.
+window.pasaloBack = () => {
+  const dialog = document.querySelector('dialog[open]');
+  if (dialog) {
+    dialog.close();
+    return true;
+  }
+  // En una llamada, Atrás no cuelga: hay que pulsar Colgar.
+  if (!$('#call').hidden) return true;
+  if (!$('#settings').hidden) {
+    $('#settings').hidden = true;
+    return true;
+  }
+  if (!$('#chat').hidden) {
+    closeChat();
+    return true;
+  }
+  if (document.body.dataset.tab === 'activity' && getComputedStyle($('.tabbar')).display !== 'none') {
+    showTab('peers');
+    return true;
+  }
+  return false;
+};
+
+$('.tabbar').addEventListener('click', (ev) => {
+  const tab = ev.target.closest('.tab');
+  if (tab) showTab(tab.dataset.tab);
+});
+showTab('peers');
 
 function setButtons(el, buttons) {
   const html = buttons.map(([act, text]) => `<button class="ghost small" data-act="${act}">${text}</button>`).join('');
@@ -373,11 +439,20 @@ function update(item) {
   const pct = tr.total ? Math.min(100, (tr.done / tr.total) * 100) : tr.status === 'done' ? 100 : 0;
   q('.status').textContent = tr.status === 'active' ? `${pct.toFixed(pct < 10 ? 1 : 0)} %` : t(`status.${tr.status}`);
   q('.fill').style.width = `${pct}%`;
+  q('.bar').hidden = ['request', 'waiting', 'declined', 'expired'].includes(tr.status);
 
   const parts = [];
   if (tr.peer) parts.push(t(incoming ? 'meta.from' : 'meta.to', { peer: tr.peer }));
-  if (tr.total) {
+  if (tr.status === 'request') {
+    parts.push(t('meta.request', { size: bytes(tr.total), n: tr.files }));
+  } else if (['declined', 'expired'].includes(tr.status)) {
+    if (tr.total) parts.push(bytes(tr.total));
+  } else if (tr.total) {
     parts.push(tr.status === 'done' ? bytes(tr.total) : t('meta.progress', { done: bytes(tr.done), total: bytes(tr.total) }));
+  }
+  // Lo que ahorró la compresión (o la reanudación) en la red.
+  if (tr.status === 'done' && tr.wire !== null && tr.total && tr.wire < tr.total * 0.95) {
+    parts.push(t('meta.wire', { size: bytes(tr.wire) }));
   }
   if (tr.status === 'active' && tr.speed > 0) {
     parts.push(`${bytes(tr.speed)}/s`);
@@ -396,10 +471,13 @@ function update(item) {
     : '';
 
   const buttons = [];
+  if (incoming && tr.status === 'request') buttons.push(['decline', t('btn.decline')], ['accept', t('btn.accept')]);
   if (!incoming) {
-    if (['connecting', 'active', 'retrying'].includes(tr.status)) buttons.push(['pause', t('btn.pause')]);
+    if (['connecting', 'active', 'retrying', 'waiting'].includes(tr.status)) buttons.push(['pause', t('btn.pause')]);
     if (['paused', 'error'].includes(tr.status)) buttons.push(['resume', t('btn.resume')], ['remove', t('btn.remove')]);
+    if (tr.status === 'declined') buttons.push(['remove', '✕']);
   }
+  if (incoming && ['declined', 'expired'].includes(tr.status)) buttons.push(['remove', '✕']);
   if (incoming && tr.status === 'done' && tr.saved.length) buttons.push(['reveal', t('btn.reveal')]);
   if (tr.status === 'done') buttons.push(['remove', '✕']);
   setButtons(el, buttons);
@@ -435,6 +513,14 @@ $('#activity').addEventListener('click', async (ev) => {
     case 'reveal':
       call('reveal', { path: item.saved[0] });
       break;
+    case 'accept':
+    case 'decline': {
+      const accept = button.dataset.act === 'accept';
+      const waiting = await call('transfer_decide', { id: item.id, accept });
+      item.status = !waiting ? 'expired' : accept ? 'connecting' : 'declined';
+      update(item);
+      break;
+    }
     case 'copy':
       await navigator.clipboard.writeText(item.text);
       toast(t('toast.copied'));
@@ -444,7 +530,7 @@ $('#activity').addEventListener('click', async (ev) => {
 
 $('#clear').addEventListener('click', () => {
   for (const item of [...items.values()]) {
-    if (item.kind === 'text' || ['done', 'error', 'interrupted'].includes(item.status)) removeItem(item);
+    if (item.kind === 'text' || ['done', 'error', 'interrupted', 'declined', 'expired'].includes(item.status)) removeItem(item);
   }
 });
 
@@ -461,6 +547,30 @@ listen('pasalo', ({ payload: e }) => {
       peers.delete(e.device_id);
       renderPeers();
       break;
+
+    case 'transfer_request': {
+      const tr = transfer(e.id, 'incoming');
+      Object.assign(tr, { peer: e.peer, roots: e.roots, total: e.total_bytes, files: e.files, status: 'request', error: null });
+      update(tr);
+      toast(t('toast.request', { peer: e.peer, name: label(e.roots) }));
+      break;
+    }
+
+    case 'request_closed': {
+      const tr = items.get(`t${e.id}`);
+      if (!tr || tr.status !== 'request') break;
+      tr.status = 'expired';
+      update(tr);
+      break;
+    }
+
+    case 'transfer_waiting': {
+      const tr = transfer(e.id, 'outgoing');
+      if (tr.status === 'paused') break;
+      Object.assign(tr, { peer: e.peer, status: 'waiting', error: null });
+      update(tr);
+      break;
+    }
 
     case 'transfer_started': {
       const tr = transfer(e.id, e.direction);
@@ -501,7 +611,7 @@ listen('pasalo', ({ payload: e }) => {
 
     case 'transfer_finished': {
       const tr = transfer(e.id, e.direction);
-      Object.assign(tr, { status: 'done', done: tr.total, saved: e.saved, error: null });
+      Object.assign(tr, { status: 'done', done: tr.total, saved: e.saved, error: null, wire: e.wire_bytes });
       update(tr);
       if (e.direction === 'incoming') toast(t('toast.received', { name: label(tr.roots), peer: tr.peer }));
       break;
@@ -513,6 +623,13 @@ listen('pasalo', ({ payload: e }) => {
       tr.error = { code: e.code, detail: e.detail };
       tr.speed = 0;
       tr.status = e.will_retry ? 'retrying' : e.direction === 'incoming' ? 'interrupted' : 'error';
+      // Un «no» del otro lado no es un error.
+      if (e.code === 'rejected' && ['declined', 'timeout', 'busy'].includes(e.detail)) {
+        tr.status = 'declined';
+        tr.error = null;
+        const key = { declined: 'toast.declined', timeout: 'toast.no_answer', busy: 'toast.busy' }[e.detail];
+        toast(t(key, { peer: tr.peer }));
+      }
       update(tr);
       break;
     }
@@ -523,6 +640,15 @@ listen('pasalo', ({ payload: e }) => {
 
     case 'signal':
       onSignal(e);
+      break;
+
+    case 'lobby_users':
+    case 'lobby_request':
+    case 'lobby_request_gone':
+    case 'lobby_answer':
+    case 'lobby_paired':
+    case 'lobby_error':
+      onLobbyEvent(e);
       break;
 
     case 'text_received': {
@@ -612,7 +738,7 @@ async function init() {
   $('#me-name').dataset.saved = s.name;
   for (const p of s.peers) peers.set(p.device_id, p);
   loadManualPeers();
-  loadRemotePeers();
+  initNet(s);
   renderPeers();
 }
 

@@ -10,6 +10,8 @@ import android.net.wifi.WifiManager
 import android.os.Build
 import android.provider.OpenableColumns
 import android.webkit.WebView
+import androidx.activity.ComponentActivity
+import androidx.activity.OnBackPressedCallback
 import androidx.activity.result.ActivityResult
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
@@ -50,6 +52,24 @@ class PasaloPlugin(private val activity: Activity) : Plugin(activity) {
     requestLocalNetwork()
     cleanOldCopies()
     passInsetsToPage(webView)
+    handleBack(webView)
+  }
+
+  /**
+   * Atrás cierra lo que haya abierto en la página (diálogo, ajustes, chat…) y,
+   * si no hay nada, manda la app al fondo. Sin esto Android destruye la
+   * actividad y el WebView se recarga entero: se perdía lo que había en
+   * pantalla y la conexión con la pareja.
+   */
+  private fun handleBack(webView: WebView) {
+    val owner = activity as? ComponentActivity ?: return
+    owner.onBackPressedDispatcher.addCallback(owner, object : OnBackPressedCallback(true) {
+      override fun handleOnBackPressed() {
+        webView.evaluateJavascript("typeof pasaloBack === 'function' && pasaloBack()") { handled ->
+          if (handled != "true") activity.moveTaskToBack(true)
+        }
+      }
+    })
   }
 
   /**

@@ -2,10 +2,12 @@
 //! redes distintas con iroh y transferencias de archivos que se pueden
 //! reanudar si se interrumpen.
 
+mod compress;
 mod discovery;
 mod error;
 mod events;
 mod ledger;
+mod lobby;
 mod paths;
 pub mod protocol;
 mod receiver;
@@ -20,10 +22,11 @@ pub use discovery::{Discovery, Peer};
 pub use error::Error;
 pub use events::{Direction, Event, EventSender, TransferId, new_transfer_id};
 pub use iroh::EndpointId;
+pub use lobby::{Lobby, LobbyUser, Partner};
 pub use receiver::Receiver;
 pub use remote::{ALPN, Remote, parse_code};
 pub use sender::{Greeting, SendOptions, probe, send_paths, send_text};
-pub use talk::{ChatMessage, MAX_IMAGE, Signal, Status, TALK_ALPN, Talk, VoiceLink, VoiceSender};
+pub use talk::{ChatMessage, IDLE, MAX_IMAGE, Signal, Status, TALK_ALPN, Talk, VoiceLink, VoiceSender};
 
 /// A dónde se envía: un equipo de la LAN por TCP o uno remoto por su código.
 #[derive(Debug, Clone)]
@@ -40,9 +43,8 @@ pub struct LocalInfo {
     pub name: String,
     pub platform: String,
     pub transfer_port: u16,
-    /// Código de iroh y puerto UDP donde escucha, si las conexiones remotas
-    /// están activas. Se anuncian en la LAN para poder abrir el canal cifrado
-    /// (chat y llamadas) directo y sin internet.
+    /// Código de iroh y puerto UDP donde escucha. Se anuncian en la LAN para
+    /// abrir el canal del chat y las llamadas directo y sin internet.
     pub code: Option<String>,
     pub remote_port: Option<u16>,
 }
@@ -65,6 +67,7 @@ impl LocalInfo {
             device_id: self.device_id.clone(),
             name: self.name.clone(),
             platform: self.platform.clone(),
+            features: vec![compress::FEATURE.to_string()],
         }
     }
 }
