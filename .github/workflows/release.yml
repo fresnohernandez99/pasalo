@@ -121,15 +121,15 @@ jobs:
         with:
           key: android
 
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
+      # Gradle builds the Rust side with `cargo tauri android android-studio-script`
+      # (the project was generated with the cargo CLI), so the npm CLI is not enough.
+      - uses: cargo-bins/cargo-binstall@main
+      - name: Tauri CLI
+        run: cargo binstall -y --locked tauri-cli@2.12.4
 
       - name: Build the APK
-        working-directory: app
-        run: |
-          npm ci
-          npx tauri android build --apk --target aarch64 armv7 x86_64
+        working-directory: app/src-tauri
+        run: cargo tauri android build --apk --target aarch64 armv7 x86_64
 
       - name: Sign and publish
         env:
