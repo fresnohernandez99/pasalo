@@ -429,3 +429,64 @@ async fn compresses_only_what_pays_off() {
     assert!(wire[0] < text.len() as u64 / 5, "el texto debía comprimirse: {} de {}", wire[0], text.len());
     assert!(wire[1] < noise.len() as u64 + 1024, "el ruido no debía crecer: {} de {}", wire[1], noise.len());
 }
+
+/// Proxy que reenvía hacia el receptor a unos 4 MB/s, para poder hacer cosas
+/// a mitad de un envío.
+async fn slow_proxy(target: SocketAddr) -> SocketAddr {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        while let Ok((mut client, _)) = listener.accept().await {
+            tokio::spawn(async move {
+                let mut server = TcpStream::connect(target).await.unwrap();
+                let (mut client_rd, mut client_wr) = client.split();
+                let (mut server_rd, mut server_wr) = server.split();
+                let up = async {
+                    let mut buf = vec![0; 32 * 1024];
+                    while let Ok(n) = client_rd.read(&mut buf).await {
+                        if n == 0 || server_wr.write_all(&buf[..n]).await.is_err() {
+                            break;
+                        }
+                        tokio::time::sleep(std::time::Duration::from_millis(8)).await;
+                    }
+                    let _ = server_wr.shutdown().await;
+                };
+                let down = tokio::io::copy(&mut server_rd, &mut client_wr);
+                let _ = tokio::join!(up, down);
+            });
+        }
+    });
+    addr
+}
+
+#[tokio::test]
+async fn cancelled_receive_stops_the_sender_and_leaves_nothing() {
+    let src = tempfile::tempdir().unwrap();
+    let dst = tempfile::tempdir().unwrap();
+    let file = src.path().join("pelicula.mkv");
+    std::fs::write(&file, data(16 * MIB, 8)).unwrap();
+    let (addr, mut events, receiver) = start_asking_receiver(dst.path()).await;
+    receiver.set_ask(false);
+    let proxy = slow_proxy(addr).await;
+
+    let sending = tokio::spawn(async move {
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let sender = LocalInfo::new("emisor-id", "emisor");
+        send_paths(new_transfer_id(), &Target::Lan(proxy), &sender, &[file], &SendOptions::default(), &tx).await
+    });
+    let id = loop {
+        let event = tokio::time::timeout(std::time::Duration::from_secs(10), events.recv()).await.unwrap().unwrap();
+        if let Event::Progress { id, done_bytes, .. } = event
+            && done_bytes > MIB as u64
+        {
+            break id;
+        }
+    };
+    assert!(receiver.cancel(id));
+
+    let result = tokio::time::timeout(std::time::Duration::from_secs(30), sending).await.expect("el emisor debía parar").unwrap();
+    assert!(matches!(&result, Err(Error::Rejected(r)) if r == "cancelled"), "{result:?}");
+    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    let left: Vec<_> = std::fs::read_dir(dst.path()).unwrap().map(|e| e.unwrap().file_name()).collect();
+    assert!(left.is_empty(), "quedó algo: {left:?}");
+}

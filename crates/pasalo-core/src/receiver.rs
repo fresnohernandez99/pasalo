@@ -39,6 +39,11 @@ struct Inner {
     only: RwLock<Option<String>>,
     /// Peticiones esperando respuesta del usuario.
     decisions: Mutex<HashMap<TransferId, oneshot::Sender<bool>>>,
+    /// Clave de cada transferencia que ha empezado, para poder cancelarla.
+    keys: Mutex<HashMap<TransferId, String>>,
+    /// Transferencias canceladas aquí: si el emisor vuelve a intentarlo, se
+    /// le rechaza para que no siga reintentando.
+    cancelled: Mutex<HashSet<String>>,
 }
 
 /// Qué pasó con una petición.
@@ -82,6 +87,8 @@ impl Receiver {
                 ask: AtomicBool::new(true),
                 only: RwLock::new(None),
                 decisions: Mutex::default(),
+                keys: Mutex::default(),
+                cancelled: Mutex::default(),
             }),
         }
     }
@@ -117,6 +124,30 @@ impl Receiver {
             Some(tx) => tx.send(accept).is_ok(),
             None => false,
         }
+    }
+
+    /// Cancela una recepción en curso: corta la sesión, borra lo recibido y
+    /// rechaza los reintentos del emisor. Devuelve `false` si no la conoce.
+    pub fn cancel(&self, id: TransferId) -> bool {
+        let Some(key) = self.inner.keys.lock().unwrap().remove(&id) else { return false };
+        self.inner.cancelled.lock().unwrap().insert(key.clone());
+        let slot = self.slot(&key);
+        slot.generation.send_modify(|g| *g += 1);
+        let dest = self.dest();
+        tokio::spawn(async move {
+            // Cuando la sesión suelta el candado ya no escribe nada.
+            let _lock = slot.lock.lock().await;
+            let ledger_path = dest.join(LEDGER_DIR).join(format!("{key}.json"));
+            for name in Ledger::load(&ledger_path).map(|l| l.roots.into_values().collect::<Vec<_>>()).unwrap_or_default() {
+                let path = dest.join(&name);
+                let _ = fs::remove_dir_all(&path).await;
+                let _ = fs::remove_file(&path).await;
+                let _ = fs::remove_file(part_path(&path)).await;
+            }
+            let _ = fs::remove_file(&ledger_path).await;
+            let _ = fs::remove_dir(dest.join(LEDGER_DIR)).await;
+        });
+        true
     }
 
     pub async fn bind(port: u16) -> io::Result<TcpListener> {
@@ -257,6 +288,10 @@ impl Receiver {
         };
 
         let key = transfer_key(&device_id, &items);
+        if inner.cancelled.lock().unwrap().contains(&key) {
+            write_msg(&mut wr, &Message::Reject { reason: "cancelled".into() }).await?;
+            return Err(Error::Rejected("cancelled".into()));
+        }
         let slot = self.slot(&key);
         let mut generation = 0;
         slot.generation.send_modify(|g| {
@@ -366,6 +401,7 @@ impl Receiver {
 
         write_msg(&mut wr, &Message::Accept { items: states.clone() }).await?;
         *started = Some(id);
+        inner.keys.lock().unwrap().insert(id, key.clone());
         let roots: Vec<String> = ledger.roots.values().cloned().collect();
         let _ = inner.events.send(Event::TransferStarted {
             id,
@@ -437,6 +473,7 @@ impl Receiver {
 
         let _ = fs::remove_file(&ledger_path).await;
         let _ = fs::remove_dir(dest.join(LEDGER_DIR)).await;
+        inner.keys.lock().unwrap().remove(&id);
         write_msg(&mut wr, &Message::Result { error: None }).await?;
         let _ = inner.events.send(Event::TransferFinished {
             id,

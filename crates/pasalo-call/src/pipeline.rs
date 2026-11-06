@@ -122,8 +122,19 @@ pub struct Sender {
     seq: u16,
     muted: Arc<AtomicBool>,
     echo_gate: bool,
+    /// Cuánto de lo que suena vuelve por el micrófono (nivel del micrófono
+    /// entre nivel de lo que suena) mientras solo habla la otra persona.
+    echo: f32,
     stats: Arc<Stats>,
 }
+
+/// Por debajo de este nivel no está sonando nada que pueda hacer eco.
+const FAR_ACTIVE: f32 = 0.01;
+/// Eco supuesto antes de medirlo: altavoz cerca del micrófono.
+const ECHO_START: f32 = 0.5;
+/// Para contar como voz, el micrófono tiene que superar al eco esperado por
+/// este factor (12 dB).
+const ECHO_MARGIN: f32 = 4.0;
 
 impl Sender {
     pub fn new(mode: Mode, input_rate: u32, stats: Arc<Stats>, muted: Arc<AtomicBool>) -> Self {
@@ -141,24 +152,28 @@ impl Sender {
             seq: 0,
             muted,
             echo_gate: true,
+            echo: ECHO_START,
             stats,
         }
     }
 
-    /// Con altavoz y sin cancelación de eco, mientras suena la otra persona
-    /// solo cuenta como voz lo que sea claramente más fuerte que su eco (se
-    /// comporta casi como un walkie). Con auriculares, o sin camino acústico
-    /// (archivos), sobra y corta a quien interrumpe.
+    /// Sin cancelación de eco, mientras suena la otra persona solo cuenta
+    /// como voz lo que sea claramente más fuerte que su eco. Cuánto eco
+    /// vuelve se aprende durante la llamada: con auriculares es casi nada y
+    /// la puerta deja hablar a la vez; con altavoces se comporta casi como
+    /// un walkie. Donde el sistema ya quita el eco (Android en modo llamada)
+    /// o no hay camino acústico (archivos), sobra.
     pub fn set_echo_gate(&mut self, on: bool) {
         self.echo_gate = on;
     }
 
     pub fn set_mode(&mut self, mode: Mode) {
         if mode != self.mode {
-            let (seq, echo_gate) = (self.seq, self.echo_gate);
+            let (seq, echo_gate, echo) = (self.seq, self.echo_gate, self.echo);
             *self = Self::new(mode, self.input_rate, self.stats.clone(), self.muted.clone());
             self.seq = seq;
             self.echo_gate = echo_gate;
+            self.echo = echo;
         }
     }
 
@@ -169,10 +184,12 @@ impl Sender {
         let size = self.codec.frame_samples();
         while self.pcm.len() >= size {
             let frame: Vec<f32> = self.pcm.drain(..size).collect();
-            let far = self.stats.far_level();
-            // Si está sonando la otra persona, solo cuenta como voz algo
-            // claramente más fuerte que su eco.
-            let voice = self.vad.is_voice(&frame) && (!self.echo_gate || far < 0.01 || rms(&frame) > far * 1.5);
+            let echo = self.is_echo(&frame);
+            let voice = self.vad.is_voice(&frame) && !echo;
+            if echo {
+                // El eco no es voz: no alarga la cola de una frase.
+                self.vad.end_hangover();
+            }
             if voice && !self.muted.load(Ordering::Relaxed) {
                 self.frames.push(self.encoder.encode(&to_i16(&frame)));
                 if self.frames.len() >= frames_per_packet(self.mode) {
@@ -184,6 +201,28 @@ impl Sender {
             }
         }
         packets
+    }
+
+    /// Si `frame` es solo el eco de lo que está sonando. De paso, afina cuánto
+    /// eco vuelve: se acerca a lo que miden los frames que parecen eco, baja
+    /// despacio en los huecos (el nivel de lo que suena tarda en caer) y casi
+    /// no sube cuando se habla encima.
+    fn is_echo(&mut self, frame: &[f32]) -> bool {
+        let far = self.stats.far_level();
+        if !self.echo_gate || far < FAR_ACTIVE {
+            return false;
+        }
+        let ratio = rms(frame) / far;
+        let echo = ratio < self.echo * ECHO_MARGIN;
+        self.echo = if ratio < self.echo {
+            self.echo * 0.9 + ratio * 0.1
+        } else if echo {
+            self.echo * 0.8 + ratio * 0.2
+        } else {
+            self.echo * 1.002
+        };
+        self.echo = self.echo.clamp(0.005, 1.0);
+        echo
     }
 
     fn packet(&mut self) -> Vec<u8> {
@@ -417,6 +456,44 @@ mod tests {
             assert!(lost > 0);
             assert_eq!(rx.recovered_packets.load(Ordering::Relaxed), lost, "{mode:?}");
         }
+    }
+
+    /// Habla la otra persona todo el rato (nivel 0.2) y el micrófono capta
+    /// `echo` de eso; a mitad, la persona de aquí habla encima. Devuelve los
+    /// paquetes enviados con solo eco y con voz encima.
+    fn talk_over(echo: f32, near: f32) -> (usize, usize) {
+        let stats = Arc::new(Stats::default());
+        let mut sender = Sender::new(Mode::Normal, 48_000, stats.clone(), Arc::new(AtomicBool::new(false)));
+        let far = speech(48_000, 6.0);
+        let mine: Vec<f32> = speech(48_000, 6.0).iter().rev().copied().collect();
+        let (mut only_echo, mut over) = (0, 0);
+        let mut level = 0.0f32;
+        for (i, chunk) in far.chunks(480).enumerate() {
+            // Como el receptor: el nivel de lo que suena decae despacio.
+            level = rms(chunk).max(level * 0.9);
+            stats.far_level.store(level.to_bits(), Ordering::Relaxed);
+            let talking = i >= 300;
+            let mic: Vec<f32> = chunk
+                .iter()
+                .zip(&mine[i * 480..])
+                .map(|(f, m)| f * echo + if talking { m * near } else { 0.0 })
+                .collect();
+            let sent = sender.push(&mic).len();
+            if talking { over += sent } else { only_echo += sent }
+        }
+        (only_echo, over)
+    }
+
+    #[test]
+    fn echo_gate_learns_how_much_echo_comes_back() {
+        // Auriculares: casi nada de eco. Hablar encima tiene que pasar, aunque
+        // se hable más bajo de lo que suena la otra persona.
+        let (only_echo, over) = talk_over(0.02, 0.1);
+        assert!(only_echo <= 3, "con auriculares reenvía eco ({only_echo})");
+        assert!(over > 20, "con auriculares no deja hablar encima ({over})");
+        // Altavoz: mucho eco. No se reenvía.
+        let (only_echo, _) = talk_over(0.4, 0.0);
+        assert!(only_echo <= 2, "el eco del altavoz se reenvía ({only_echo})");
     }
 
     #[test]

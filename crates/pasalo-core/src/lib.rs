@@ -26,7 +26,7 @@ pub use lobby::{Lobby, LobbyUser, Partner};
 pub use receiver::Receiver;
 pub use remote::{ALPN, Remote, parse_code};
 pub use sender::{Greeting, SendOptions, probe, send_paths, send_text};
-pub use talk::{ChatMessage, IDLE, MAX_IMAGE, Signal, Status, TALK_ALPN, Talk, VoiceLink, VoiceSender};
+pub use talk::{ChatMessage, IDLE, MAX_IMAGE, Signal, Status, TALK_ALPN, Talk, VideoLink, VideoSender, VoiceLink, VoiceSender};
 
 /// A dónde se envía: un equipo de la LAN por TCP o uno remoto por su código.
 #[derive(Debug, Clone)]

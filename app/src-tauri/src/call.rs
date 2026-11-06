@@ -1,75 +1,34 @@
-//! Comandos del chat y de las llamadas de voz. Las videollamadas van con
-//! WebRTC en la interfaz; de aquí solo usan `call_signal`.
+//! Comandos de las llamadas. La voz se graba, comprime y suena aquí
+//! (`pasalo-call`); el vídeo lo comprime la interfaz con WebCodecs y aquí solo
+//! se lleva y se trae por la conexión de iroh, como la voz. Las señales
+//! (invitar, contestar, colgar…) van por `call_signal`.
 
-use std::path::PathBuf;
 use std::sync::Arc;
 
-use base64::Engine;
-use base64::engine::general_purpose::STANDARD as BASE64;
 use pasalo_call::Mode;
-use pasalo_core::{ChatMessage, Signal, Talk};
+use pasalo_core::Signal;
 use serde::Serialize;
+use tauri::ipc::{Channel, InvokeBody, InvokeResponseBody, Request};
 use tauri::{AppHandle, State};
 use tokio::task::JoinHandle;
 
-use crate::{AppState, CmdError, CmdResult};
+use crate::error::{CmdError, CmdResult};
+use crate::state::AppState;
 
 /// Llamada de voz en marcha.
 pub struct VoiceCall {
-    peer: String,
+    pub peer: String,
     call: Arc<pasalo_call::Call>,
     /// Para medir lo que pasa de verdad por la conexión.
     link: pasalo_core::VoiceSender,
     pump: JoinHandle<()>,
 }
 
-impl AppState {
-    fn talk(&self) -> CmdResult<&Talk> {
-        self.talk.as_ref().ok_or_else(|| CmdError::new("remote_unavailable", ""))
-    }
-}
-
-#[tauri::command]
-pub async fn chat_history(state: State<'_, AppState>, peer: String) -> CmdResult<Vec<ChatMessage>> {
-    Ok(state.talk()?.history(&peer))
-}
-
-#[tauri::command]
-pub async fn chat_send(state: State<'_, AppState>, peer: String, text: String) -> CmdResult<ChatMessage> {
-    if text.trim().is_empty() {
-        return Err(CmdError::new("nothing_to_send", ""));
-    }
-    state.talk()?.send_text(&peer, text).await.map_err(CmdError::core)
-}
-
-/// `data` es la imagen en base64 (la interfaz ya la ha reducido).
-#[tauri::command]
-pub async fn chat_send_image(
-    state: State<'_, AppState>,
+/// Vídeo de una videollamada en marcha.
+pub struct VideoCall {
     peer: String,
-    data: String,
-    ext: String,
-) -> CmdResult<ChatMessage> {
-    let bytes = BASE64.decode(data).map_err(CmdError::other)?;
-    state.talk()?.send_image(&peer, &bytes, &ext).await.map_err(CmdError::core)
-}
-
-/// Imagen del chat como `data:` URL. Solo sirve archivos de la carpeta del chat.
-#[tauri::command]
-pub async fn chat_image(state: State<'_, AppState>, path: PathBuf) -> CmdResult<String> {
-    let path = path.canonicalize().map_err(CmdError::other)?;
-    let dir = state.chat_dir.canonicalize().map_err(CmdError::other)?;
-    if !path.starts_with(&dir) {
-        return Err(CmdError::other("ruta fuera del chat"));
-    }
-    let mime = match path.extension().and_then(|e| e.to_str()).unwrap_or("") {
-        "png" => "image/png",
-        "gif" => "image/gif",
-        "webp" => "image/webp",
-        _ => "image/jpeg",
-    };
-    let bytes = tokio::fs::read(&path).await.map_err(CmdError::other)?;
-    Ok(format!("data:{mime};base64,{}", BASE64.encode(bytes)))
+    sender: pasalo_core::VideoSender,
+    pump: JoinHandle<()>,
 }
 
 #[tauri::command]
@@ -190,4 +149,63 @@ pub fn voice_stats(state: State<'_, AppState>) -> Option<VoiceStats> {
         lost: stats.lost_packets.load(Relaxed),
         recovered: stats.recovered_packets.load(Relaxed),
     })
+}
+
+/// Empieza a llevar vídeo con `peer`: lo que llegue sale por `frames`, una
+/// imagen comprimida por mensaje, tal cual la mandó el otro lado.
+#[tauri::command]
+pub async fn video_start(
+    state: State<'_, AppState>,
+    peer: String,
+    frames: Channel<InvokeResponseBody>,
+) -> CmdResult<()> {
+    stop_video(&state);
+    let mut link = state.talk()?.video(&peer).await.map_err(CmdError::core)?;
+    let pump = tokio::spawn(async move {
+        while let Some(frame) = link.rx.recv().await {
+            if frames.send(InvokeResponseBody::Raw(frame.to_vec())).is_err() {
+                break;
+            }
+        }
+    });
+    *state.video.lock().unwrap() = Some(VideoCall { peer, sender: link.sender, pump });
+    Ok(())
+}
+
+/// Manda una imagen (el cuerpo de la petición, en binario). `false` si se
+/// descartó porque la red va atrasada: la siguiente tiene que ser clave.
+#[tauri::command]
+pub async fn video_send(state: State<'_, AppState>, request: Request<'_>) -> CmdResult<bool> {
+    let frame = match request.body() {
+        InvokeBody::Raw(frame) => bytes::Bytes::copy_from_slice(frame),
+        // En Android la IPC va por postMessage y el binario llega como JSON.
+        InvokeBody::Json(json) => json_bytes(json).ok_or_else(|| CmdError::other("imagen no válida"))?.into(),
+    };
+    let video = state.video.lock().unwrap();
+    let Some(video) = video.as_ref() else { return Ok(false) };
+    Ok(video.sender.send(frame))
+}
+
+/// Un `Uint8Array` pasado a JSON: `[1, 2, …]` o `{"0": 1, "1": 2, …}`.
+fn json_bytes(json: &serde_json::Value) -> Option<Vec<u8>> {
+    let byte = |v: &serde_json::Value| v.as_u64().and_then(|n| u8::try_from(n).ok());
+    match json {
+        serde_json::Value::Array(items) => items.iter().map(byte).collect(),
+        serde_json::Value::Object(map) => (0..map.len()).map(|i| map.get(&i.to_string()).and_then(byte)).collect(),
+        _ => None,
+    }
+}
+
+#[tauri::command]
+pub fn video_stop(state: State<'_, AppState>) {
+    stop_video(&state);
+}
+
+fn stop_video(state: &AppState) {
+    if let Some(video) = state.video.lock().unwrap().take() {
+        video.pump.abort();
+        if let Some(talk) = &state.talk {
+            talk.end_video(&video.peer);
+        }
+    }
 }

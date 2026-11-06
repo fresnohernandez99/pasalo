@@ -9,6 +9,7 @@ import android.net.Uri
 import android.net.wifi.WifiManager
 import android.os.Build
 import android.provider.OpenableColumns
+import android.provider.Settings
 import android.webkit.WebView
 import androidx.activity.ComponentActivity
 import androidx.activity.OnBackPressedCallback
@@ -36,6 +37,11 @@ import java.io.File
 class CallAudioArgs {
   var on: Boolean = false
   var speaker: Boolean = false
+}
+
+@InvokeArg
+class LocalNetworkArgs {
+  var ask: Boolean = false
 }
 
 @TauriPlugin(permissions = [Permission(strings = [android.Manifest.permission.RECORD_AUDIO], alias = "microphone")])
@@ -129,11 +135,40 @@ class PasaloPlugin(private val activity: Activity) : Plugin(activity) {
 
   /** Desde Android 17, sin este permiso no se ve ni se llega a ningún equipo de la LAN. */
   private fun requestLocalNetwork() {
-    if (Build.VERSION.SDK_INT < 37) return
-    val permission = "android.permission.ACCESS_LOCAL_NETWORK"
-    if (ContextCompat.checkSelfPermission(activity, permission) != PackageManager.PERMISSION_GRANTED) {
-      ActivityCompat.requestPermissions(activity, arrayOf(permission), 4645)
+    if (hasLocalNetwork()) return
+    ActivityCompat.requestPermissions(activity, arrayOf(LOCAL_NETWORK), 4645)
+    prefs().edit().putBoolean("asked_local_network", true).apply()
+  }
+
+  private fun hasLocalNetwork() =
+    Build.VERSION.SDK_INT < 37 || ContextCompat.checkSelfPermission(activity, LOCAL_NETWORK) == PackageManager.PERMISSION_GRANTED
+
+  private fun prefs() = activity.getSharedPreferences("pasalo", Context.MODE_PRIVATE)
+
+  /**
+   * Dice si hay permiso de red local y, con `ask`, lo pide. Si ya se negó
+   * para siempre, Android no vuelve a preguntar: entonces se abren los
+   * ajustes de la app para concederlo a mano.
+   */
+  @Command
+  fun localNetwork(invoke: Invoke) {
+    val args = invoke.parseArgs(LocalNetworkArgs::class.java)
+    if (hasLocalNetwork() || !args.ask) {
+      invoke.resolve(JSObject().put("granted", hasLocalNetwork()))
+      return
     }
+    val asked = prefs().getBoolean("asked_local_network", false)
+    if (asked && !ActivityCompat.shouldShowRequestPermissionRationale(activity, LOCAL_NETWORK)) {
+      val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.fromParts("package", activity.packageName, null))
+      activity.startActivity(intent)
+    } else {
+      requestLocalNetwork()
+    }
+    invoke.resolve(JSObject().put("granted", false))
+  }
+
+  companion object {
+    private const val LOCAL_NETWORK = "android.permission.ACCESS_LOCAL_NETWORK"
   }
 
   @Command

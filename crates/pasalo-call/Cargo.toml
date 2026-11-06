@@ -5,14 +5,18 @@ edition.workspace = true
 license.workspace = true
 
 [features]
-# Micrófono y altavoz con cpal. Sin esto queda solo el códec y los paquetes
-# (lo que usa el CLI, que trabaja con archivos de audio).
+# Micrófono y altavoz: con cpal, y en Android con AAudio directamente (para
+# pedir el modo de llamada, que trae la cancelación de eco del sistema). Sin
+# esto queda solo el códec y los paquetes (lo que usa el CLI, que trabaja con
+# archivos de audio).
 default = ["devices"]
 devices = ["dep:cpal"]
 
 [dependencies]
 codec2 = "0.3"
-cpal = { version = "0.18", optional = true }
 serde = { version = "1", features = ["derive"] }
 tracing = "0.1"
 unsafe-libopus = "0.2"
+
+[target.'cfg(not(target_os = "android"))'.dependencies]
+cpal = { version = "0.18", optional = true }

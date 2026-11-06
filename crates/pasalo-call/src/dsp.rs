@@ -67,6 +67,11 @@ impl Vad {
         Self { noise: 1e-4, hangover: 0, hold: 400 / frame_ms.max(1) }
     }
 
+    /// Corta ya el "sigue siendo voz" de después de hablar.
+    pub fn end_hangover(&mut self) {
+        self.hangover = 0;
+    }
+
     pub fn is_voice(&mut self, frame: &[f32]) -> bool {
         let energy = frame.iter().map(|s| s * s).sum::<f32>() / frame.len().max(1) as f32;
         let loud = energy > (self.noise * 4.0).max(2e-6);

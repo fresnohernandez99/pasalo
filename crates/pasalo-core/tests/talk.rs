@@ -127,6 +127,32 @@ async fn signals_and_voice_datagrams() {
     assert_eq!(first.len(), 40);
 }
 
+/// Las imágenes de vídeo llegan enteras, también las grandes (una imagen
+/// clave), y solo al canal abierto para ese equipo.
+#[tokio::test]
+async fn video_frames_arrive_whole() {
+    let (a, b) = pair().await;
+    let link_a = a.talk.video(&b.code).await.unwrap();
+    let mut link_b = b.talk.video(&a.code).await.unwrap();
+    let key: Vec<u8> = (0..40_000u32).map(|i| (i * 13) as u8).collect();
+    assert!(link_a.sender.send(bytes::Bytes::from(key.clone())));
+    for i in 0..10u8 {
+        assert!(link_a.sender.send(bytes::Bytes::from(vec![i; 900])));
+    }
+    let mut got = Vec::new();
+    while got.len() < 11 {
+        got.push(tokio::time::timeout(Duration::from_secs(5), link_b.rx.recv()).await.unwrap().unwrap());
+    }
+    assert!(got.iter().any(|f| f[..] == key[..]));
+    assert_eq!(got.iter().filter(|f| f.len() == 900).count(), 10);
+
+    // Sin canal abierto, lo que llegue se descarta.
+    b.talk.end_video(&a.code);
+    link_a.sender.send(bytes::Bytes::from(vec![1; 10]));
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert!(link_b.rx.try_recv().is_err());
+}
+
 /// WebRTC manda de golpe la oferta SDP (varios KB) y una ráfaga de candidatos
 /// ICE: tienen que llegar todos.
 #[tokio::test]

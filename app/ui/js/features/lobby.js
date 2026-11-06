@@ -2,6 +2,18 @@
 // intenta nada fuera de la LAN hasta que el usuario pulsa «Conectarse».
 // Conectado, ve quién más lo está y puede pedirle conectarse; si el otro
 // acepta, los dos dejan el server y quedan conectados solo entre ellos.
+//
+// También pinta la cabecera con este equipo: sin conexión enseña su IP y su
+// código; conectado, solo el nombre, con quién está y «Desconectar».
+
+import { t } from '../i18n/index.js';
+import { on } from '../lib/bus.js';
+import { $, esc, setHtml } from '../lib/dom.js';
+import { initials, shortCode } from '../lib/format.js';
+import { call } from '../lib/tauri.js';
+import { toast } from '../lib/toast.js';
+import { app } from '../state.js';
+import { addRemotePeer, avatar, removePeer } from './peers.js';
 
 const net = {
   state: 'offline', // offline | connecting | online | paired
@@ -12,9 +24,9 @@ const net = {
   error: '',
 };
 
-function initNet(s) {
-  if (s.partner) setPartner(s.partner);
-  else setNetState(s.online ? 'online' : 'offline');
+export function initNet(snapshot) {
+  if (snapshot.partner) setPartner(snapshot.partner);
+  else setNetState(snapshot.online ? 'online' : 'offline');
 }
 
 function setNetState(state) {
@@ -25,33 +37,57 @@ function setNetState(state) {
     net.outgoing.clear();
     net.error = '';
   }
-  renderNet();
-}
-
-function renderNet() {
-  const { state, partner } = net;
-  $('#net-dot').className = `dot ${state === 'paired' ? 'paired' : state === 'online' ? 'online' : ''}`;
-  $('#net-state').textContent =
-    state === 'paired' ? t('net.paired', { name: partner.name }) : t(`net.${state}`);
-  const toggle = $('#net-toggle');
-  toggle.textContent = t(state === 'offline' ? 'net.connect' : 'net.disconnect');
-  toggle.className = state === 'offline' ? 'small' : 'small ghost';
-  toggle.disabled = state === 'connecting';
-  $('#lobby').hidden = state !== 'online';
+  renderHeader();
   renderLobby();
 }
 
+// ---------- cabecera ----------
+
+export function renderHeader() {
+  const s = app.settings;
+  if (!s) return;
+  const { state, partner } = net;
+  const connected = state === 'online' || state === 'paired';
+  $('#me-avatar').textContent = initials(s.name);
+  $('#me-name').textContent = s.name;
+  // Conectado no hacen falta la IP ni el código: solo con quién se está.
+  $('#me-details').hidden = connected;
+  $('#code-line').hidden = connected || !s.code;
+  if (!connected) {
+    const ips = s.ips.length ? s.ips.join(', ') : t('me.no_network');
+    $('#me-sub').textContent = t('me.sub', { ips, port: s.port });
+    if (s.code) $('#me-code').textContent = shortCode(s.code);
+  }
+  $('#net-dot').className = `dot ${state}`;
+  $('#net-state').textContent =
+    state === 'paired' ? t('net.paired', { name: partner.name }) : t(state === 'offline' ? 'net.local' : `net.${state}`);
+  const toggle = $('#net-toggle');
+  toggle.textContent = t(state === 'offline' ? 'net.connect' : 'net.disconnect');
+  toggle.className = state === 'offline' ? 'primary small' : 'ghost small';
+  toggle.disabled = state === 'connecting';
+  // Sin server ni pareja no hay nada de qué desconectarse; sin server
+  // configurado, tampoco a qué conectarse.
+  toggle.hidden = state === 'offline' && !s.code;
+}
+
+// ---------- en línea ahora ----------
+
 function renderLobby() {
+  $('#lobby').hidden = net.state !== 'online';
   if (net.state !== 'online') return;
   $('#lobby-status').textContent = net.error ? t('lobby.unreachable') : '';
   const rows = [];
   for (const [request, from] of net.incoming) {
     rows.push(`
       <div class="lobby-row request" data-request="${esc(request)}">
-        ${avatar(from.name, from.platform)}
-        <div class="info"><div class="pname">${esc(from.name)}</div><div class="sub">${esc(t('lobby.wants'))}</div></div>
-        <button class="ghost small" data-act="decline">${esc(t('btn.decline'))}</button>
-        <button class="small" data-act="accept">${esc(t('btn.accept'))}</button>
+        <div class="lobby-who">
+          ${avatar(from.name, from.platform, 'small')}
+          <div class="info"><div class="pname">${esc(from.name)}</div><div class="sub">${esc(t('lobby.wants'))}</div></div>
+        </div>
+        <div class="lobby-actions">
+          <button class="ghost small" data-act="decline">${esc(t('btn.decline'))}</button>
+          <button class="primary small" data-act="accept">${esc(t('btn.accept'))}</button>
+        </div>
       </div>`);
   }
   const asking = new Set([...net.incoming.values()].map((u) => u.id));
@@ -59,14 +95,19 @@ function renderLobby() {
     const pending = net.outgoing.has(user.id);
     rows.push(`
       <div class="lobby-row" data-user="${esc(user.id)}">
-        ${avatar(user.name, user.platform)}
-        <div class="info"><div class="pname">${esc(user.name)}</div>${pending ? `<div class="sub">${esc(t('lobby.waiting'))}</div>` : ''}</div>
+        <div class="lobby-who">
+          ${avatar(user.name, user.platform, 'small')}
+          <div class="info"><div class="pname">${esc(user.name)}</div>${pending ? `<div class="sub">${esc(t('lobby.waiting'))}</div>` : ''}</div>
+        </div>
         ${pending
           ? `<button class="ghost small" data-act="cancel">${esc(t('btn.cancel'))}</button>`
-          : `<button class="small" data-act="request">${esc(t('lobby.connect'))}</button>`}
+          : `<button class="primary small" data-act="request">${esc(t('lobby.connect'))}</button>`}
       </div>`);
   }
-  setHtml($('#lobby-list'), rows.length ? rows.join('') : `<div class="empty">${esc(t('lobby.empty'))}</div>`);
+  setHtml(
+    $('#lobby-list'),
+    rows.length ? rows.join('') : `<div class="empty small">${esc(t('lobby.empty'))}<br>${esc(t('net.online_hint'))}</div>`,
+  );
 }
 
 $('#net-toggle').addEventListener('click', async () => {
@@ -116,7 +157,7 @@ $('#lobby-list').addEventListener('click', async (ev) => {
   }
 });
 
-function onLobbyEvent(e) {
+export function onLobbyEvent(e) {
   switch (e.kind) {
     case 'lobby_users':
       net.users = e.users;
@@ -157,29 +198,24 @@ function setPartner(partner) {
 
 function dropPartner() {
   net.partner = null;
-  peers.delete('partner');
-  renderPeers();
+  removePeer('partner');
 }
 
-// La pareja se desconectó: el backend ya volvió a solo red local.
-function onUnpair(peer, name) {
+/** La pareja se desconectó: el backend ya volvió a solo red local. */
+export function onUnpair(peer, name) {
   if (net.partner?.code !== peer) return;
   dropPartner();
   setNetState('offline');
   toast(t('toast.partner_left', { name }));
 }
 
-$('#lang').addEventListener('change', renderNet);
+$('#copy-code').addEventListener('click', async () => {
+  await navigator.clipboard.writeText(app.settings.code);
+  toast(t('toast.code_copied'));
+});
 
-// Ajustes: el server.
-$('#set-server').addEventListener('change', async (ev) => {
-  const server = ev.target.value.trim();
-  if (!server || server === settings?.server) return;
-  try {
-    await call('set_server', { server });
-    settings.server = server;
-    toast(t('toast.saved'));
-  } catch {
-    ev.target.value = settings?.server || '';
-  }
+on('settings', renderHeader);
+on('lang', () => {
+  renderHeader();
+  renderLobby();
 });

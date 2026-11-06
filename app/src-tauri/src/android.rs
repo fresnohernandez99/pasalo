@@ -49,6 +49,16 @@ impl Android {
         let _ = self.0.run_mobile_plugin::<serde_json::Value>("callAudio", CallAudio { on, speaker });
     }
 
+    /// Si hay permiso para la red local (Android 17+); con `ask`, lo pide o
+    /// abre los ajustes de la app si ya se negó para siempre.
+    pub fn local_network(&self, ask: bool) -> bool {
+        #[derive(serde::Serialize)]
+        struct Args {
+            ask: bool,
+        }
+        self.0.run_mobile_plugin::<Granted>("localNetwork", Args { ask }).is_ok_and(|g| g.granted)
+    }
+
     pub async fn pick_files(&self) -> Result<Vec<PathBuf>, String> {
         let picked: Picked = self.0.run_mobile_plugin_async("pickFiles", ()).await.map_err(|e| e.to_string())?;
         Ok(picked.paths)

@@ -1,0 +1,7 @@
+# Android 15+ usa páginas de memoria de 16 KB: las bibliotecas nativas tienen
+# que estar alineadas así o el sistema avisa (y Google Play las rechaza).
+[target.aarch64-linux-android]
+rustflags = ["-C", "link-arg=-Wl,-z,max-page-size=16384"]
+
+[target.x86_64-linux-android]
+rustflags = ["-C", "link-arg=-Wl,-z,max-page-size=16384"]

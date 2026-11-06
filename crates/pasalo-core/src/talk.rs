@@ -5,7 +5,8 @@
 //! Hay una conexión por pareja de equipos y se reutiliza. Cada mensaje viaja
 //! en su propio stream bidireccional (JSON con la longitud delante, más los
 //! bytes de la imagen si la hay) y el otro lado contesta con un `Ack`. La voz
-//! de las llamadas va en datagramas de esa misma conexión (ver [`VoiceLink`]).
+//! de las llamadas va en datagramas de esa misma conexión (ver [`VoiceLink`])
+//! y el vídeo, una imagen por stream unidireccional (ver [`VideoLink`]).
 //! Una conexión sin uso se cierra a los [`IDLE`]: abierta, iroh manda un
 //! keep-alive cada 5 s por cada ruta.
 //!
@@ -17,6 +18,7 @@ use std::collections::HashMap;
 use std::io;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
+use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -38,6 +40,15 @@ const MAX_FRAME: usize = 256 * 1024;
 /// Primer reintento de un mensaje pendiente; cada fallo dobla la espera.
 const RETRY_FIRST: Duration = Duration::from_secs(20);
 const RETRY_MAX: Duration = Duration::from_secs(600);
+/// Una imagen de vídeo comprimida nunca debería acercarse a esto.
+const MAX_VIDEO_FRAME: usize = 1024 * 1024;
+/// Primer byte de un stream unidireccional con una imagen de vídeo.
+const STREAM_VIDEO: u8 = 1;
+/// Si la imagen más vieja sin confirmar lleva esto en camino, la red no da
+/// abasto: se descartan imágenes hasta que se ponga al día.
+const VIDEO_MAX_LAG: Duration = Duration::from_millis(700);
+/// Una imagen que no llega en este tiempo ya no sirve.
+const VIDEO_TIMEOUT: Duration = Duration::from_secs(10);
 /// Tiempo sin mensajes ni voz tras el que se cierra una conexión.
 pub const IDLE: Duration = Duration::from_secs(90);
 
@@ -120,6 +131,61 @@ impl VoiceSender {
     }
 }
 
+/// Canal de vídeo con un equipo. Cada imagen va en su propio stream
+/// unidireccional: llega entera o no llega, y una que se retrasa no frena a
+/// los mensajes del chat.
+pub struct VideoLink {
+    pub sender: VideoSender,
+    pub rx: mpsc::UnboundedReceiver<Bytes>,
+}
+
+/// Lado de envío de un [`VideoLink`].
+#[derive(Clone)]
+pub struct VideoSender {
+    conn: Connection,
+    /// Imágenes enviadas y sin confirmar, por orden de envío.
+    in_flight: Arc<Mutex<BTreeMap<u64, Instant>>>,
+    next: Arc<std::sync::atomic::AtomicU64>,
+}
+
+impl VideoSender {
+    /// Envía una imagen. Devuelve `false` si se descartó porque la red va
+    /// atrasada: la siguiente que se mande tiene que ser una imagen clave.
+    /// Hay que llamarla dentro de un runtime de tokio.
+    pub fn send(&self, frame: Bytes) -> bool {
+        let seq = {
+            let mut in_flight = self.in_flight.lock().unwrap();
+            if in_flight.values().next().is_some_and(|sent| sent.elapsed() > VIDEO_MAX_LAG) {
+                return false;
+            }
+            let seq = self.next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            in_flight.insert(seq, Instant::now());
+            seq
+        };
+        let (conn, in_flight) = (self.conn.clone(), self.in_flight.clone());
+        tokio::spawn(async move {
+            let sent = async {
+                let mut stream = conn.open_uni().await.map_err(io::Error::other)?;
+                // Por detrás de los mensajes y las señales, que pesan poco.
+                let _ = stream.set_priority(-1);
+                stream.write_all(&[STREAM_VIDEO]).await.map_err(io::Error::other)?;
+                stream.write_all(&frame).await.map_err(io::Error::other)?;
+                stream.finish().map_err(io::Error::other)?;
+                // Termina cuando el otro lado lo ha recibido todo.
+                stream.stopped().await.map_err(io::Error::other)?;
+                Ok::<_, io::Error>(())
+            };
+            match tokio::time::timeout(VIDEO_TIMEOUT, sent).await {
+                Ok(Ok(())) => {}
+                Ok(Err(e)) => tracing::debug!("imagen de vídeo sin entregar: {e}"),
+                Err(_) => tracing::debug!("imagen de vídeo sin confirmar a tiempo"),
+            }
+            in_flight.lock().unwrap().remove(&seq);
+        });
+        true
+    }
+}
+
 #[derive(Clone)]
 pub struct Talk {
     inner: Arc<Inner>,
@@ -139,6 +205,7 @@ struct Inner {
     /// IP:puerto de iroh de los equipos de la LAN, sacado del descubrimiento.
     lan: Mutex<HashMap<EndpointId, SocketAddr>>,
     voice: Mutex<HashMap<EndpointId, mpsc::UnboundedSender<Bytes>>>,
+    video: Mutex<HashMap<EndpointId, mpsc::UnboundedSender<Bytes>>>,
     /// Mensajes salientes sin entregar, por id.
     pending: Mutex<HashMap<String, ChatMessage>>,
     /// Entregas en curso, para no lanzar dos a la vez del mismo mensaje.
@@ -162,6 +229,7 @@ impl Talk {
                 backoff: Default::default(),
                 lan: Default::default(),
                 voice: Default::default(),
+                video: Default::default(),
                 pending: Mutex::new(pending),
                 delivering: Default::default(),
                 attempts: Default::default(),
@@ -236,6 +304,24 @@ impl Talk {
     pub fn end_voice(&self, peer: &str) {
         if let Some(id) = crate::parse_code(peer) {
             self.inner.voice.lock().unwrap().remove(&id);
+        }
+    }
+
+    /// Abre el canal de vídeo con `peer`. Las imágenes que lleguen de ese
+    /// equipo salen por `rx`, cada una entera (pueden llegar desordenadas).
+    pub async fn video(&self, peer: &str) -> Result<VideoLink, Error> {
+        let id = parse_peer(peer)?;
+        let conn = self.connection(id).await?;
+        let (tx, rx) = mpsc::unbounded_channel();
+        self.inner.video.lock().unwrap().insert(id, tx);
+        let sender = VideoSender { conn, in_flight: Default::default(), next: Default::default() };
+        Ok(VideoLink { sender, rx })
+    }
+
+    /// Deja de entregar el vídeo de `peer`.
+    pub fn end_video(&self, peer: &str) {
+        if let Some(id) = crate::parse_code(peer) {
+            self.inner.video.lock().unwrap().remove(&id);
         }
     }
 
@@ -334,7 +420,11 @@ impl Talk {
         let idle: Vec<EndpointId> = {
             let used = self.inner.used.lock().unwrap();
             let voice = self.inner.voice.lock().unwrap();
-            used.iter().filter(|(id, at)| at.elapsed() >= IDLE && !voice.contains_key(*id)).map(|(id, _)| *id).collect()
+            let video = self.inner.video.lock().unwrap();
+            used.iter()
+                .filter(|(id, at)| at.elapsed() >= IDLE && !voice.contains_key(*id) && !video.contains_key(*id))
+                .map(|(id, _)| *id)
+                .collect()
         };
         if idle.is_empty() {
             return;
@@ -455,7 +545,24 @@ impl Talk {
                 });
             }
         };
-        tokio::join!(datagrams, streams);
+        let uni = async {
+            while let Ok(mut recv) = conn.accept_uni().await {
+                self.touch(id);
+                let this = self.clone();
+                tokio::spawn(async move {
+                    let Ok(Ok(data)) = tokio::time::timeout(VIDEO_TIMEOUT, recv.read_to_end(MAX_VIDEO_FRAME + 1)).await else {
+                        return;
+                    };
+                    if data.first() != Some(&STREAM_VIDEO) {
+                        return;
+                    }
+                    if let Some(tx) = this.inner.video.lock().unwrap().get(&id) {
+                        let _ = tx.send(Bytes::from(data).slice(1..));
+                    }
+                });
+            }
+        };
+        tokio::join!(datagrams, streams, uni);
         let mut conns = self.inner.conns.lock().await;
         if conns.get(&id).is_some_and(|c| c.stable_id() == conn.stable_id()) {
             conns.remove(&id);

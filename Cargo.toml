@@ -14,3 +14,20 @@ opt-level = 3
 
 [profile.dev.package.codec2]
 opt-level = 3
+
+# Lo que se publica: lo más pequeño posible sin frenar lo que corre en
+# tiempo real (los códecs y el cifrado van a la máxima optimización).
+[profile.release]
+opt-level = "s"
+lto = true
+codegen-units = 1
+strip = true
+
+[profile.release.package.unsafe-libopus]
+opt-level = 3
+
+[profile.release.package.codec2]
+opt-level = 3
+
+[profile.release.package.pasalo-call]
+opt-level = 3
