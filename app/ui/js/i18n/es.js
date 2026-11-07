@@ -315,4 +315,8 @@ export default {
   'preview.once_on': "Se verá una sola vez",
   'preview.size': "{size} al enviarla",
   'preview.size_many': "{n} fotos · {size} en total",
+  'web.app': "App",
+  'web.get_app': "Descargar",
+  'web.app_for': "Pasalo para {platform}: también ve la red local y sigue funcionando en segundo plano",
+  'web.no_ios_app': "No hay app para iPhone: añade esta web a la pantalla de inicio y funciona como una",
 };

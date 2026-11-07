@@ -315,4 +315,8 @@ export default {
   'preview.once_on': "Can be viewed only once",
   'preview.size': "{size} to send",
   'preview.size_many': "{n} photos · {size} in total",
+  'web.app': "App",
+  'web.get_app': "Download",
+  'web.app_for': "Pasalo for {platform}: it also sees your local network and keeps working in the background",
+  'web.no_ios_app': "There is no iPhone app: add this page to your Home Screen and it works like one",
 };

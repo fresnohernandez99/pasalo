@@ -17,6 +17,9 @@
 .card { background: var(--surface); border-radius: var(--radius); box-shadow: var(--shadow-1); padding: 16px; }
 .card .hint { margin: 12px 0 0; }
 .card select, .card input { width: 100%; }
+/* Las casillas no se estiran (aplastaban el texto de al lado). */
+.card .switch-row input { width: 22px; }
+.field-switch > span { display: flex; flex-direction: column; gap: 2px; flex: 1; min-width: 0; }
 .device-head { display: flex; align-items: center; gap: 14px; }
 .row-line { display: flex; align-items: center; gap: 8px; margin-top: 14px; min-height: 34px; }
 .row-label { width: 90px; flex: none; color: var(--muted); font-size: 14px; }

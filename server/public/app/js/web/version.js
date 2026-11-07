@@ -1,3 +1,3 @@
 // Lo escribe web/build.sh.
 export const VERSION = "1.0.2";
-export const BUILD = "58c2cdf892e1";
+export const BUILD = "d2e143772b4e";

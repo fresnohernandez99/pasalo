@@ -256,6 +256,53 @@ function reloadWhenIdle() {
   location.reload();
 }
 
+// ---------- descargar la app ----------
+
+const REPO = 'fresnohernandez99/pasalo';
+const RELEASES = `https://github.com/${REPO}/releases/latest`;
+
+/** El archivo de la última versión que sirve en este sistema (como `is_our_asset` en la app). */
+function ourAsset(name) {
+  const ua = navigator.userAgent;
+  if (/Android/.test(ua)) return name.endsWith('arm64-v8a.apk');
+  if (/Mac/.test(ua)) return name.endsWith('.dmg');
+  if (/Win/.test(ua)) return name.endsWith('-setup.exe');
+  return name.endsWith('.AppImage');
+}
+
+function platformName() {
+  const ua = navigator.userAgent;
+  if (/Android/.test(ua)) return 'Android';
+  if (/Mac/.test(ua)) return 'Mac';
+  if (/Win/.test(ua)) return 'Windows';
+  return 'Linux';
+}
+
+// En Ajustes → Acerca de. En el iPhone no hay app: se explica que esta web,
+// en la pantalla de inicio, es la app.
+function getApp() {
+  const row = document.getElementById('get-app-row');
+  if (!row) return;
+  row.hidden = false;
+  const fill = () => {
+    document.getElementById('get-app-text').textContent = isIos() ? t('web.no_ios_app') : t('web.app_for', { platform: platformName() });
+    document.getElementById('get-app').hidden = isIos();
+  };
+  fill();
+  on('lang', fill);
+  document.getElementById('get-app').addEventListener('click', async () => {
+    // La pestaña se abre ya (dentro del toque) y luego se le pone la descarga.
+    const tab = window.open('about:blank', '_blank');
+    let url = RELEASES;
+    try {
+      const release = await (await fetch(`https://api.github.com/repos/${REPO}/releases/latest`)).json();
+      url = release.assets?.find((a) => ourAsset(a.name))?.browser_download_url || release.html_url || RELEASES;
+    } catch {}
+    if (tab) tab.location.href = url;
+    else location.href = url;
+  });
+}
+
 // ---------- arranque ----------
 
 export function initWebUi(api) {
@@ -282,6 +329,7 @@ export function initWebUi(api) {
   const loaded = () => {
     installHint();
     backGesture();
+    getApp();
     // Sin red local, añadir es por código o enlace.
     const input = document.getElementById('manual-ip');
     if (input) input.dataset.i18nPlaceholder = 'peers.add_placeholder_web';
