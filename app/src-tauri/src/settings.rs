@@ -48,6 +48,19 @@ pub struct Snapshot {
     version: &'static str,
 }
 
+/// En Android, mantiene viva la app mientras está en línea o en una llamada
+/// (`media`: 0 sin llamada, 1 de voz, 2 de vídeo). En escritorio no hace nada.
+// Asíncrono: la llamada a Kotlin espera al hilo principal.
+#[tauri::command]
+pub async fn keep_alive(app: tauri::AppHandle, on: bool, media: u8) {
+    #[cfg(target_os = "android")]
+    {
+        use tauri::Manager;
+        app.state::<crate::android::Android>().keep_alive(on, media);
+    }
+    let _ = (app, on, media);
+}
+
 #[tauri::command]
 pub async fn snapshot(state: State<'_, AppState>) -> CmdResult<Snapshot> {
     let settings = state.settings.lock().unwrap().clone();
@@ -87,6 +100,12 @@ pub async fn refresh(state: State<'_, AppState>) -> CmdResult<()> {
         discovery.announce().await;
     }
     Ok(())
+}
+
+/// Las IP de este equipo ahora (cambian al pasar de Wi-Fi a datos, etc.).
+#[tauri::command]
+pub fn local_addresses() -> Vec<String> {
+    local_ips()
 }
 
 #[tauri::command]

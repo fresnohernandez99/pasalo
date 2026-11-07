@@ -16,7 +16,7 @@
 #call-local {
   z-index: 2;
   right: 14px;
-  top: max(14px, env(safe-area-inset-top));
+  top: calc(max(14px, env(safe-area-inset-top)) + 52px);
   width: 28%;
   max-width: 180px;
   aspect-ratio: 3 / 4;
@@ -26,6 +26,33 @@
   transform: scaleX(-1);
   transition: opacity .2s;
 }
+/* Tocar la miniatura cambia de sitio las dos imágenes: la propia en grande
+   y la del otro en la esquina. */
+.call.swapped #call-local {
+  z-index: 0;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  max-width: none;
+  aspect-ratio: auto;
+  border-radius: 0;
+  box-shadow: none;
+}
+.call.swapped #call-remote {
+  z-index: 2;
+  inset: auto;
+  right: 14px;
+  top: calc(max(14px, env(safe-area-inset-top)) + 52px);
+  width: 28%;
+  max-width: 180px;
+  height: auto;
+  aspect-ratio: 3 / 4;
+  object-fit: cover;
+  border-radius: 14px;
+  box-shadow: 0 6px 20px rgb(0 0 0 / .5);
+}
+#call-local, #call-remote { cursor: pointer; }
+
 /* La cámara de atrás no se ve como en un espejo. */
 .call.rear #call-local { transform: none; }
 .call.voice video, .call.voice canvas, .call:not(.active) #call-local, .call.cam-off #call-local { display: none; }
@@ -47,13 +74,65 @@
 .call.has-video .call-bar { padding-top: 24px; background: linear-gradient(transparent, rgb(0 0 0 / .55) 40%); margin: 0 -16px calc(-1 * max(20px, var(--nav))); padding-bottom: max(20px, var(--nav)); }
 .call.has-video .call-top { margin: calc(-1 * max(24px, env(safe-area-inset-top))) -16px 0; padding: max(24px, env(safe-area-inset-top)) 16px 30px; background: linear-gradient(rgb(0 0 0 / .5), transparent); }
 
+/* Calidad: un botón medio transparente arriba a la derecha que despliega los selectores. */
+.call-quality {
+  position: absolute;
+  z-index: 3;
+  right: 14px;
+  top: max(10px, env(safe-area-inset-top));
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 8px;
+  transition: opacity .25s;
+}
+.call.incoming .call-quality { display: none; }
+.call-quality-btn {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  color: #eef0f4;
+  background: rgb(255 255 255 / .14);
+  backdrop-filter: blur(8px);
+  opacity: .7;
+  transition: opacity .15s, background .15s;
+}
+.call-quality-btn:hover, .call-quality-btn[aria-expanded="true"] { opacity: 1; background: rgb(255 255 255 / .24); }
+.call-quality-btn .i { width: 20px; height: 20px; }
+.call-quality-menu {
+  display: grid;
+  gap: 12px;
+  min-width: 220px;
+  padding: 14px;
+  border-radius: 14px;
+  background: rgb(20 24 32 / .92);
+  backdrop-filter: blur(12px);
+  box-shadow: 0 10px 30px rgb(0 0 0 / .5);
+}
+.call-quality-menu[hidden] { display: none; }
+.call-quality-menu label { display: grid; gap: 6px; font-size: 13px; color: #aab2c0; }
+.call-quality-menu select {
+  width: 100%;
+  padding: 8px 10px;
+  border-radius: 10px;
+  border: 1px solid rgb(255 255 255 / .14);
+  background: rgb(255 255 255 / .08);
+  color: #eef0f4;
+  font-size: 15px;
+}
+.call-quality-menu option { color: #0b0d12; }
+
 /* Un toque en la imagen esconde todo menos el vídeo; otro lo vuelve a enseñar. */
+.call.controls-hidden .call-quality { opacity: 0; pointer-events: none; }
 .call.controls-hidden .call-top { opacity: 0; transform: translateY(-12px); pointer-events: none; }
 .call.controls-hidden .call-bar { opacity: 0; transform: translateY(16px); pointer-events: none; }
 .call.controls-hidden #call-local { opacity: .85; }
 
 .call-bar { display: flex; flex-direction: column; gap: 26px; align-items: center; padding-bottom: 6px; }
-.call-grid { display: grid; grid-template-columns: repeat(3, 88px); gap: 18px 10px; justify-content: center; }
+.call-grid { display: flex; flex-wrap: wrap; gap: 18px 10px; justify-content: center; }
+.call-grid .cbtn { width: 76px; }
 .cbtn {
   position: relative;
   display: flex;
@@ -77,8 +156,6 @@
 .cbtn .ring .i { width: 26px; height: 26px; }
 .cbtn.on .ring { background: #eef0f4; color: #0b0d12; }
 .cbtn-label { line-height: 1.2; }
-/* El selector de calidad va invisible encima de su botón: lo abre el sistema. */
-.cbtn select { position: absolute; inset: 0; opacity: 0; width: 100%; font-size: 16px; cursor: pointer; }
 .call-actions { display: flex; gap: 80px; justify-content: center; }
 .round { display: flex; flex-direction: column; align-items: center; gap: 8px; color: #eef0f4; font-size: 14px; }
 .round .disc { width: 70px; height: 70px; border-radius: 50%; display: grid; place-items: center; color: #fff; transition: transform .12s; }

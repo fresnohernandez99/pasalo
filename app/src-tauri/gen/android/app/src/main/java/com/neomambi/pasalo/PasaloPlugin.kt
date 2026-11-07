@@ -8,6 +8,7 @@ import android.media.AudioManager
 import android.net.Uri
 import android.net.wifi.WifiManager
 import android.os.Build
+import android.os.PowerManager
 import android.provider.OpenableColumns
 import android.provider.Settings
 import android.webkit.WebView
@@ -40,6 +41,12 @@ class CallAudioArgs {
 }
 
 @InvokeArg
+class KeepAliveArgs {
+  var on: Boolean = false
+  var media: Int = PasaloService.MEDIA_NONE
+}
+
+@InvokeArg
 class LocalNetworkArgs {
   var ask: Boolean = false
 }
@@ -47,6 +54,8 @@ class LocalNetworkArgs {
 @TauriPlugin(permissions = [Permission(strings = [android.Manifest.permission.RECORD_AUDIO], alias = "microphone")])
 class PasaloPlugin(private val activity: Activity) : Plugin(activity) {
   private var multicastLock: WifiManager.MulticastLock? = null
+  /** Apaga la pantalla al acercar el teléfono a la cara, como en cualquier llamada. */
+  private var proximityLock: PowerManager.WakeLock? = null
 
   override fun load(webView: WebView) {
     // Sin este lock Android descarta los broadcasts UDP y no se ven los equipos de la LAN.
@@ -130,7 +139,46 @@ class PasaloPlugin(private val activity: Activity) : Plugin(activity) {
     audio.mode = if (args.on) AudioManager.MODE_IN_COMMUNICATION else AudioManager.MODE_NORMAL
     @Suppress("DEPRECATION")
     audio.isSpeakerphoneOn = args.on && args.speaker
+    // Solo con el auricular: con el altavoz (o en vídeo) se mira la pantalla.
+    setProximity(args.on && !args.speaker)
     invoke.resolve()
+  }
+
+  /**
+   * Mantiene el proceso vivo (servicio en primer plano) mientras está en línea
+   * o en una llamada. La primera vez pide permiso para la notificación.
+   */
+  @Command
+  fun keepAlive(invoke: Invoke) {
+    val args = invoke.parseArgs(KeepAliveArgs::class.java)
+    if (args.on) {
+      if (Build.VERSION.SDK_INT >= 33 &&
+        ContextCompat.checkSelfPermission(activity, android.Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED &&
+        !prefs().getBoolean("asked_notifications", false)
+      ) {
+        ActivityCompat.requestPermissions(activity, arrayOf(android.Manifest.permission.POST_NOTIFICATIONS), 4647)
+        prefs().edit().putBoolean("asked_notifications", true).apply()
+      }
+      PasaloService.start(activity, args.media)
+    } else {
+      PasaloService.stop(activity)
+    }
+    invoke.resolve()
+  }
+
+  private fun setProximity(on: Boolean) {
+    val power = activity.getSystemService(Context.POWER_SERVICE) as PowerManager
+    if (on) {
+      if (proximityLock?.isHeld == true || !power.isWakeLockLevelSupported(PowerManager.PROXIMITY_SCREEN_OFF_WAKE_LOCK)) return
+      proximityLock = power.newWakeLock(PowerManager.PROXIMITY_SCREEN_OFF_WAKE_LOCK, "pasalo:proximity").apply {
+        setReferenceCounted(false)
+        acquire(4 * 60 * 60 * 1000L)
+      }
+    } else {
+      // Si se suelta con la cara aún cerca, la pantalla vuelve al alejarla.
+      proximityLock?.let { if (it.isHeld) it.release(PowerManager.RELEASE_FLAG_WAIT_FOR_NO_PROXIMITY) }
+      proximityLock = null
+    }
   }
 
   /** Desde Android 17, sin este permiso no se ve ni se llega a ningún equipo de la LAN. */

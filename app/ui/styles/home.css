@@ -113,6 +113,17 @@ body.pane-open .pane { transform: none; visibility: visible; transition: transfo
 
 /* ---------- en línea ahora ---------- */
 
+.net-steps { list-style: none; margin: 0; padding: 14px 16px; display: grid; gap: 10px; background: var(--surface); border-radius: var(--radius); }
+.net-steps li { display: flex; align-items: center; gap: 10px; color: var(--muted); }
+.net-steps li.done { color: var(--text); }
+.net-steps li.current { color: var(--text); font-weight: 600; }
+.net-steps .mark { width: 18px; height: 18px; flex: none; display: grid; place-items: center; border-radius: 50%; border: 2px solid var(--border); }
+.net-steps li.done .mark { border-color: var(--accent); background: var(--accent); color: #fff; }
+.net-steps li.done .mark .i { width: 12px; height: 12px; }
+.net-steps li.current .mark { border-color: var(--accent); border-top-color: transparent; animation: spin .8s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.link-dialog { width: min(92vw, 380px); }
+.link-dialog .net-steps { padding: 0; background: none; margin-bottom: 8px; }
 .lobby-list { display: flex; flex-direction: column; gap: 8px; }
 .lobby-row {
   display: flex;

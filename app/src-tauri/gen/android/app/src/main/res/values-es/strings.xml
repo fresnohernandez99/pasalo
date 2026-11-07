@@ -1,0 +1,6 @@
+<resources>
+    <string name="service_channel">Conexión</string>
+    <string name="service_online">En línea: otros equipos pueden encontrarte</string>
+    <string name="service_call">Llamada en curso</string>
+    <string name="service_close">Cerrar</string>
+</resources>

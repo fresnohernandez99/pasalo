@@ -49,6 +49,17 @@ impl Android {
         let _ = self.0.run_mobile_plugin::<serde_json::Value>("callAudio", CallAudio { on, speaker });
     }
 
+    /// Servicio en primer plano (con su notificación) para que Android no
+    /// mate el proceso: `media` 0 sin llamada, 1 de voz, 2 de vídeo.
+    pub fn keep_alive(&self, on: bool, media: u8) {
+        #[derive(serde::Serialize)]
+        struct Args {
+            on: bool,
+            media: u8,
+        }
+        let _ = self.0.run_mobile_plugin::<serde_json::Value>("keepAlive", Args { on, media });
+    }
+
     /// Si hay permiso para la red local (Android 17+); con `ask`, lo pide o
     /// abre los ajustes de la app si ya se negó para siempre.
     pub fn local_network(&self, ask: bool) -> bool {

@@ -1,4 +1,8 @@
 <resources>
     <string name="app_name">"Pasalo"</string>
     <string name="main_activity_title">"Pasalo"</string>
+    <string name="service_channel">Connection</string>
+    <string name="service_online">Online: other devices can reach you</string>
+    <string name="service_call">Call in progress</string>
+    <string name="service_close">Close</string>
 </resources>

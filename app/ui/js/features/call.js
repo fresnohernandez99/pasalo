@@ -28,6 +28,7 @@ import { Channel, invoke } from '../lib/tauri.js';
 import { toast } from '../lib/toast.js';
 import { isMobile } from '../state.js';
 import { activePeer } from './chat.js';
+import { keepCall } from './keepalive.js';
 import { onHello, onUnpair } from './lobby.js';
 import { onBack } from './nav.js';
 import { ensureRemotePeer } from './peers.js';
@@ -79,12 +80,9 @@ function fillVideoModes(select, current) {
     .join('');
 }
 
-// Debajo de cada botón de calidad, su nombre corto («Normal»).
-function showModeLabels() {
-  for (const [select, label] of [['#call-mode', '#call-mode-label'], ['#call-vmode', '#call-vmode-label']]) {
-    const text = $(select).selectedOptions[0]?.textContent || '';
-    $(label).textContent = text.split(' · ')[0];
-  }
+function setQualityMenu(open) {
+  $('#call-quality-menu').hidden = !open;
+  $('#call-quality-btn').setAttribute('aria-expanded', String(open));
 }
 
 // ---------- señales ----------
@@ -183,7 +181,6 @@ export function onSignal({ peer, name, signal: s }) {
       if (VOICE_MODES.some(([m]) => m === s.data?.mode)) {
         live.audio = s.data.mode;
         $('#call-mode').value = live.audio;
-        showModeLabels();
         if (live.state === 'active') invoke('voice_mode', { mode: live.audio });
       }
       break;
@@ -191,7 +188,6 @@ export function onSignal({ peer, name, signal: s }) {
       if (VIDEO_MODES[s.data?.video]) {
         live.video = s.data.video;
         $('#call-vmode').value = live.video;
-        showModeLabels();
         live.sender?.setMode(live.video);
       }
       break;
@@ -234,6 +230,7 @@ function hangup(reason) {
 
 async function startMedia() {
   live.state = 'active';
+  keepCall(live.media);
   live.started = Date.now();
   // En una videollamada el teléfono no va pegado a la oreja.
   if (live.media === 'video' && isMobile()) live.speaker = true;
@@ -377,6 +374,7 @@ function endCall(message) {
   if (!live) return;
   const c = live;
   live = null;
+  keepCall(null);
   stopRinging();
   clearTimeout(c.ringTimer);
   clearInterval(c.statsTimer);
@@ -384,7 +382,8 @@ function endCall(message) {
   if (c.state === 'active') invoke('voice_stop').catch(() => {});
   stopVideo(c);
   $('#call').hidden = true;
-  $('#call').classList.remove('controls-hidden', 'rear');
+  $('#call').classList.remove('controls-hidden', 'rear', 'swapped');
+  setQualityMenu(false);
   if (message) toast(message);
 }
 
@@ -435,8 +434,11 @@ function showCall() {
   const video = c.media === 'video';
   $('#call').hidden = false;
   const hidden = $('#call').classList.contains('controls-hidden') && c.state === 'active';
-  $('#call').className = `call ${c.media} ${c.state}${hidden ? ' controls-hidden' : ''}${c.facing !== 'user' ? ' rear' : ''}`;
-  $('#call').classList.toggle('has-video', video && !!c.hasVideo && !c.remoteCamOff);
+  const hasVideo = video && !!c.hasVideo && !c.remoteCamOff;
+  // Cambiadas de sitio solo mientras se vean las dos.
+  const swapped = $('#call').classList.contains('swapped') && hasVideo && !c.camOff;
+  $('#call').className = `call ${c.media} ${c.state}${hidden ? ' controls-hidden' : ''}${c.facing !== 'user' ? ' rear' : ''}${swapped ? ' swapped' : ''}`;
+  $('#call').classList.toggle('has-video', hasVideo);
   $('#call').classList.toggle('cam-off', c.camOff);
   $('#call-name').textContent = c.peer.name;
   $('#call-avatar').textContent = initials(c.peer.name);
@@ -452,7 +454,6 @@ function showCall() {
   $('#call-vmode-btn').hidden = !video;
   fillAudioModes($('#call-mode'), c.audio);
   fillVideoModes($('#call-vmode'), c.video);
-  showModeLabels();
   $('#call-mute').classList.toggle('on', c.muted);
   $('#call-speaker').classList.toggle('on', c.speaker);
   $('#call-cam').classList.toggle('on', c.camOff);
@@ -501,19 +502,33 @@ $('#call-speaker').addEventListener('click', () => {
 $('#call-cam').addEventListener('click', () => setCamera(!!live?.camOff));
 $('#call-flip').addEventListener('click', flipCamera);
 
-// En una videollamada, tocar la imagen esconde los botones y los datos (para
-// verla entera) y otro toque los vuelve a enseñar.
+$('#call-quality-btn').addEventListener('click', () => setQualityMenu($('#call-quality-menu').hidden));
+
+// En una videollamada, tocar la miniatura cambia de sitio las dos imágenes;
+// tocar la grande esconde los botones y los datos (para verla entera) y otro
+// toque los vuelve a enseñar.
 $('#call').addEventListener('click', (ev) => {
+  if (ev.target.closest('.call-quality')) return;
+  // Fuera del menú de calidad, un toque solo lo cierra.
+  if (!$('#call-quality-menu').hidden) {
+    setQualityMenu(false);
+    return;
+  }
   if (!live || live.media !== 'video' || live.state !== 'active') return;
   if (ev.target.closest('button, select, .cbtn')) return;
-  $('#call').classList.toggle('controls-hidden');
+  const call = $('#call');
+  const thumb = call.classList.contains('swapped') ? $('#call-remote') : $('#call-local');
+  if (ev.target === thumb && call.classList.contains('has-video')) {
+    call.classList.toggle('swapped');
+    return;
+  }
+  call.classList.toggle('controls-hidden');
 });
 
 // En una llamada, Atrás no cuelga: hay que pulsar Colgar.
 onBack(() => !!live);
 
 $('#call-mode').addEventListener('change', (ev) => {
-  showModeLabels();
   if (!live) return;
   live.audio = ev.target.value;
   saveCallSettings(live.media === 'voice' ? { voiceMode: live.audio } : { videoAudioMode: live.audio });
@@ -522,7 +537,6 @@ $('#call-mode').addEventListener('change', (ev) => {
 });
 
 $('#call-vmode').addEventListener('change', (ev) => {
-  showModeLabels();
   if (!live) return;
   live.video = ev.target.value;
   saveCallSettings({ videoQuality: live.video });

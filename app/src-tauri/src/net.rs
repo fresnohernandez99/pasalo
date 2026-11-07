@@ -4,21 +4,43 @@
 use std::time::Duration;
 
 use pasalo_core::{Event, Lobby, LobbyUser, Partner, Signal};
-use tauri::{AppHandle, Manager, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 
 use crate::error::{CmdError, CmdResult};
 use crate::state::AppState;
 
+/// Lo que se espera a tener relay. Hasta entonces nadie de otra red llega a
+/// este equipo por su código.
+const RELAY_WAIT: Duration = Duration::from_secs(20);
+
+/// Cuenta a la interfaz por qué paso va la conexión (`internet`, `relay`, `server`).
+fn step(app: &AppHandle, step: &str) {
+    let _ = app.emit("net_step", step);
+}
+
+/// Sale a internet y espera a tener relay: entonces el código de este equipo
+/// ya sirve para llegar desde otra red.
+async fn reach_internet(app: &AppHandle, remote: &pasalo_core::Remote) -> CmdResult<()> {
+    step(app, "internet");
+    remote.set_internet(true).await.map_err(CmdError::other)?;
+    step(app, "relay");
+    if tokio::time::timeout(RELAY_WAIT, remote.online()).await.is_err() {
+        let _ = remote.set_internet(false).await;
+        return Err(CmdError::new("no_relay", ""));
+    }
+    Ok(())
+}
+
 /// Sale a internet y entra en el server. Hasta aquí la app no intenta nada fuera de la LAN.
 #[tauri::command]
-pub async fn net_connect(state: State<'_, AppState>) -> CmdResult<()> {
+pub async fn net_connect(app: AppHandle, state: State<'_, AppState>) -> CmdResult<()> {
     if state.partner.lock().unwrap().is_some() {
         return Ok(());
     }
-    join(&state).await
+    join(&app, &state).await
 }
 
-async fn join(state: &AppState) -> CmdResult<()> {
+async fn join(app: &AppHandle, state: &AppState) -> CmdResult<()> {
     let remote = state.remote.as_ref().ok_or_else(|| CmdError::new("remote_unavailable", ""))?;
     let mut lobby = state.lobby.lock().await;
     if lobby.is_some() {
@@ -33,7 +55,8 @@ async fn join(state: &AppState) -> CmdResult<()> {
     if server.is_empty() {
         return Err(CmdError::new("no_server", ""));
     }
-    remote.set_internet(true).await.map_err(CmdError::other)?;
+    reach_internet(app, remote).await?;
+    step(app, "server");
     match Lobby::join(&server, remote, me, state.events.clone()).await {
         Ok(joined) => {
             *lobby = Some(joined);
@@ -49,9 +72,9 @@ async fn join(state: &AppState) -> CmdResult<()> {
 /// Sale a internet sin entrar en el server: para llegar a alguien por su
 /// enlace, o para que lleguen a este equipo con el suyo.
 #[tauri::command]
-pub async fn net_direct(state: State<'_, AppState>) -> CmdResult<()> {
+pub async fn net_direct(app: AppHandle, state: State<'_, AppState>) -> CmdResult<()> {
     let remote = state.remote.as_ref().ok_or_else(|| CmdError::new("remote_unavailable", ""))?;
-    remote.set_internet(true).await.map_err(CmdError::other)
+    reach_internet(&app, remote).await
 }
 
 /// Sale del server y de la conexión con la pareja (avisándola), y vuelve a
@@ -107,7 +130,7 @@ fn watch_partner(app: AppHandle, partner: Partner) {
         }
         eprintln!("la pareja {} dejó de responder", partner.name);
         drop_partner(&app, &state);
-        let online = join(&state).await.is_ok();
+        let online = join(&app, &state).await.is_ok();
         let _ = state.events.send(Event::PartnerLost { code: partner.code, name: partner.name, online });
     });
 }

@@ -50,6 +50,11 @@
             <button id="perm-allow" class="primary small" type="button" data-i18n="perm.allow"></button>
           </div>
 
+          <!-- Mientras se conecta: qué paso va, hasta tener el ID de iroh en la red. -->
+          <div id="net-progress" class="section net-progress" hidden>
+            <ol id="net-steps" class="net-steps"></ol>
+          </div>
+
           <div id="lobby" class="section" hidden>
             <div class="section-head">
               <h2 data-i18n="lobby.title"></h2>
@@ -208,6 +213,14 @@
   <section id="call" class="call" hidden>
     <canvas id="call-remote"></canvas>
     <video id="call-local" autoplay playsinline muted></video>
+    <!-- La calidad, aparte de los botones de siempre: así no se cambia sin querer. -->
+    <div id="call-quality" class="call-quality">
+      <button id="call-quality-btn" class="call-quality-btn" type="button" data-i18n-title="call.quality" aria-expanded="false"><span data-icon="signal"></span></button>
+      <div id="call-quality-menu" class="call-quality-menu" hidden>
+        <label><span data-i18n="call.audio_q"></span><select id="call-mode"></select></label>
+        <label id="call-vmode-btn"><span data-i18n="call.video_q"></span><select id="call-vmode"></select></label>
+      </div>
+    </div>
     <div class="call-top">
       <div class="call-info">
         <div class="avatar huge" id="call-avatar"></div>
@@ -223,16 +236,6 @@
         <button id="call-speaker" class="cbtn" type="button"><span class="ring" data-icon="speaker"></span><span data-i18n="call.speaker"></span></button>
         <button id="call-cam" class="cbtn" type="button"><span class="ring" data-icon="videoOff"></span><span id="call-cam-label"></span></button>
         <button id="call-flip" class="cbtn" type="button"><span class="ring" data-icon="flip"></span><span data-i18n="call.flip"></span></button>
-        <div class="cbtn">
-          <span class="ring" data-icon="signal"></span>
-          <span class="cbtn-label"><span data-i18n="call.audio_q"></span> · <span id="call-mode-label"></span></span>
-          <select id="call-mode" data-i18n-title="call.audio_q"></select>
-        </div>
-        <div class="cbtn" id="call-vmode-btn">
-          <span class="ring" data-icon="video"></span>
-          <span class="cbtn-label"><span data-i18n="call.video_q"></span> · <span id="call-vmode-label"></span></span>
-          <select id="call-vmode" data-i18n-title="call.video_q"></select>
-        </div>
       </div>
       <div class="call-actions">
         <button id="call-decline" class="round danger" type="button"><span class="disc" data-icon="hangup"></span><span data-i18n="call.decline"></span></button>
@@ -248,6 +251,15 @@
     <img id="viewer-img" alt="">
     <button id="viewer-close" class="icon-btn viewer-close" type="button" data-i18n-title="viewer.close"><span data-icon="close"></span></button>
   </div>
+
+  <!-- Abierta con un enlace: primero se conecta (hasta tener iroh listo) y después se añade al otro. -->
+  <dialog id="link-dialog" class="link-dialog">
+    <h3 id="link-title"></h3>
+    <ol id="link-steps" class="net-steps"></ol>
+    <div class="dialog-actions">
+      <button type="button" class="ghost" id="link-cancel" data-i18n="btn.cancel"></button>
+    </div>
+  </dialog>
 
   <dialog id="add-dialog">
     <form id="manual">
