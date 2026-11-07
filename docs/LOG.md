@@ -443,3 +443,4 @@ Informe completo en coTs (`code-notes/261107-1552`).
   entrada; foco y `inert` de las pantallas; los detalles de error del núcleo
   siguen en español.
 - La LAN por TCP sigue sin cifrar (diseño).
+- Versión 1.0.2 (tag `v1.0.2`): todo lo de hoy (web, vídeo, seguridad, estadísticas).
