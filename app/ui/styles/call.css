@@ -8,7 +8,7 @@
   background: radial-gradient(120% 80% at 50% 0%, #1d2433 0%, #0b0d12 70%);
   color: #eef0f4;
   padding: max(24px, env(safe-area-inset-top)) 16px max(20px, var(--nav));
-  overflow: hidden;
+  overflow: hidden auto;
 }
 .call video, .call canvas { position: absolute; background: #000; }
 #call-remote { inset: 0; width: 100%; height: 100%; object-fit: contain; }
@@ -89,3 +89,19 @@
 #call-hangup .disc { width: 84px; height: 58px; border-radius: 29px; }
 .call.incoming #call-accept .disc { animation: nudge 1.2s ease-in-out infinite; }
 @keyframes nudge { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-6px); } }
+
+/* Ventanas bajas (el escritorio encogido): todo más compacto para que los
+   botones sigan a la vista. */
+@media (max-height: 640px) {
+  .call { padding-top: 16px; padding-bottom: 14px; }
+  .call-info { margin-top: 2vh; }
+  .call-info .avatar.huge { width: 72px; height: 72px; font-size: 28px; margin-bottom: 10px; }
+  .call-name { font-size: 22px; }
+  .call-bar { gap: 14px; }
+  .call-grid { gap: 10px; }
+  .cbtn { gap: 4px; }
+  .cbtn .ring { width: 46px; height: 46px; }
+  .cbtn .ring .i { width: 22px; height: 22px; }
+  .round .disc { width: 56px; height: 56px; }
+  #call-hangup .disc { width: 72px; height: 48px; }
+}

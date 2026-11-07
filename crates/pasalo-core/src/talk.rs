@@ -263,10 +263,23 @@ impl Talk {
     /// tuviera pendiente: ahora puede que se llegue a él sin internet.
     pub fn set_lan_addr(&self, code: &str, addr: SocketAddr) {
         let Some(id) = crate::parse_code(code) else { return };
-        let changed = self.inner.lan.lock().unwrap().insert(id, addr) != Some(addr);
-        if changed {
-            self.retry(Some(code));
+        let before = self.inner.lan.lock().unwrap().insert(id, addr);
+        if before == Some(addr) {
+            return;
         }
+        // Otro puerto es otra instancia (la app se reinició): la conexión que
+        // hubiera era con la vieja y ya no contesta. Reutilizarla dejaba los
+        // mensajes colgados hasta que iroh la diera por muerta.
+        if before.is_some() {
+            let this = self.clone();
+            let code = code.to_string();
+            tokio::spawn(async move {
+                this.forget_connection(id, None).await;
+                this.retry(Some(&code));
+            });
+            return;
+        }
+        self.retry(Some(code));
     }
 
     pub fn history(&self, peer: &str) -> Vec<ChatMessage> {
@@ -295,7 +308,11 @@ impl Talk {
         let id = parse_peer(peer)?;
         let name = self.inner.name.read().unwrap().clone();
         let conn = self.connection(id).await?;
-        exchange(&conn, &Frame::Signal { name, signal }, None).await
+        let sent = exchange(&conn, &Frame::Signal { name, signal }, None).await;
+        if sent.is_err() {
+            self.forget_connection(id, Some(&conn)).await;
+        }
+        sent
     }
 
     /// Abre el canal de voz con `peer`. Los datagramas que lleguen de ese
@@ -378,7 +395,6 @@ impl Talk {
         self.inner.pinned.lock().unwrap().remove(&id);
         self.inner.voice.lock().unwrap().remove(&id);
         self.inner.video.lock().unwrap().remove(&id);
-        self.inner.lan.lock().unwrap().remove(&id);
         self.inner.used.lock().unwrap().remove(&id);
         {
             let pending = self.inner.pending.lock().unwrap();
@@ -391,13 +407,33 @@ impl Talk {
                 !theirs
             });
         }
-        self.inner.backoff.lock().unwrap().insert(peer, (Instant::now() + RETRY_MAX, 10));
+        // Si está en la LAN se le sigue llegando sin internet: ahí no se espera.
+        if !self.inner.lan.lock().unwrap().contains_key(&id) {
+            self.inner.backoff.lock().unwrap().insert(peer, (Instant::now() + RETRY_MAX, 10));
+        }
         let this = self.clone();
         tokio::spawn(async move {
             if let Some(conn) = this.inner.conns.lock().await.remove(&id) {
                 conn.close(0u32.into(), b"desconectado");
             }
         });
+    }
+
+    /// Saca del caché la conexión con `id` (solo si es `which`, cuando se da)
+    /// y la cierra, salvo que lleve una llamada: entonces la cierra quien la
+    /// corte. La siguiente vez se conecta de nuevo.
+    async fn forget_connection(&self, id: EndpointId, which: Option<&Connection>) {
+        let mut conns = self.inner.conns.lock().await;
+        let Some(conn) = conns.get(&id) else { return };
+        if which.is_some_and(|w| w.stable_id() != conn.stable_id()) {
+            return;
+        }
+        let conn = conns.remove(&id).expect("está");
+        drop(conns);
+        let in_call = self.inner.voice.lock().unwrap().contains_key(&id) || self.inner.video.lock().unwrap().contains_key(&id);
+        if !in_call {
+            conn.close(0u32.into(), b"sin respuesta");
+        }
     }
 
     /// Atiende una conexión entrante del protocolo talk.
@@ -565,7 +601,11 @@ impl Talk {
             text: message.text.clone(),
             image: meta,
         };
-        exchange(&conn, &frame, path.as_deref()).await?;
+        if let Err(e) = exchange(&conn, &frame, path.as_deref()).await {
+            // El siguiente intento abre una conexión nueva en vez de insistir en esta.
+            self.forget_connection(id, Some(&conn)).await;
+            return Err(e);
+        }
 
         message.status = Status::Delivered;
         self.inner.store.append(&message).map_err(Error::Local)?;
@@ -595,7 +635,13 @@ impl Talk {
     /// entrante o abierta por nosotros: el otro lado reutiliza la conexión.
     async fn serve(&self, conn: Connection) {
         let id = conn.remote_id();
-        self.inner.conns.lock().await.entry(id).or_insert_with(|| conn.clone());
+        // La más reciente manda: si el otro acaba de conectar es que esta
+        // funciona, y la que hubiera puede ser de una instancia que ya no está.
+        if conn.side().is_server() {
+            self.inner.conns.lock().await.insert(id, conn.clone());
+        } else {
+            self.inner.conns.lock().await.entry(id).or_insert_with(|| conn.clone());
+        }
         self.touch(id);
         // Si nos busca es que se le puede llegar: lo pendiente para él, ya.
         if conn.side().is_server() {
@@ -666,7 +712,7 @@ impl Talk {
         mut recv: iroh::endpoint::RecvStream,
     ) -> Result<(), Error> {
         let peer = from.to_string();
-        match read_frame(&mut recv).await? {
+        match read_frame(&mut recv, SHORT).await? {
             Frame::Chat { id, ts, name, text, image } => {
                 let known = self.inner.store.history(&peer).iter().any(|m| m.id == id);
                 let mut saved = None;
@@ -713,7 +759,8 @@ async fn exchange(conn: &Connection, frame: &Frame, body: Option<&Path>) -> Resu
         timed(LONG, AsyncWriteExt::write_all(&mut send, &bytes)).await?;
     }
     let _ = send.finish();
-    match read_frame(&mut recv).await? {
+    // El acuse sale en cuanto el otro lo tiene todo: si tarda, la conexión no contesta.
+    match read_frame(&mut recv, SHORT).await? {
         Frame::Ack => Ok(()),
         _ => Err(Error::Protocol("se esperaba un acuse".into())),
     }
@@ -729,8 +776,8 @@ async fn write_frame<W: AsyncWrite + Unpin, T: Serialize>(w: &mut W, frame: &T) 
     .await
 }
 
-async fn read_frame<R: AsyncRead + Unpin, T: DeserializeOwned>(r: &mut R) -> Result<T, Error> {
-    let len = timed(LONG, r.read_u32()).await? as usize;
+async fn read_frame<R: AsyncRead + Unpin, T: DeserializeOwned>(r: &mut R, limit: Duration) -> Result<T, Error> {
+    let len = timed(limit, r.read_u32()).await? as usize;
     if len > MAX_FRAME {
         return Err(Error::Protocol(format!("mensaje demasiado grande ({len} bytes)")));
     }

@@ -14,6 +14,7 @@ mod receiver;
 mod remote;
 mod sender;
 mod talk;
+pub mod update;
 
 use std::net::SocketAddr;
 use std::path::Path;

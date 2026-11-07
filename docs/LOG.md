@@ -331,3 +331,19 @@ más) y WebRTC se queda para el vídeo. El server es solo señalización.
   avanzando: el descubrimiento puede perder anuncios.
 - Release: el alias de la clave sale de `ANDROID_KEY_ALIAS` (por defecto
   `key0`) y se comprueba la clave antes de firmar.
+
+### Después, en la misma sesión
+- **Mensajes colgados tras reiniciar una app**: el otro lado seguía usando la
+  conexión con la instancia vieja hasta que iroh la daba por muerta. Ahora, si
+  el equipo de la LAN cambia de puerto, se descarta; si un envío falla, la
+  conexión se olvida y se abre otra; una conexión entrante sustituye a la
+  guardada; y el acuse se espera 30 s (antes, hasta 10 min).
+- Al arrancar, la interfaz reintenta `snapshot` (Android a veces abre la app
+  mientras se instala, antes de que el backend esté listo).
+- Ventana de escritorio baja: la cuadrícula tenía una fila `auto` que crecía
+  con el chat y dejaba fuera lo de abajo. La llamada se compacta en alturas
+  bajas.
+- Ajustes → Acerca de: versión y «Buscar actualización» (última release de
+  GitHub, solo al pulsar; descarga el archivo para ese equipo).
+- Con `RUST_LOG` la app escribe el registro del núcleo por la salida de errores.
+- Versión 1.0.0.

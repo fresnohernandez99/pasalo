@@ -2,7 +2,9 @@
    Móvil: la pantalla principal ocupa todo y el chat entra por la derecha.
    Escritorio (≥ 860 px): lista a la izquierda y chat a la derecha. */
 
-.app { height: 100dvh; display: grid; grid-template-columns: 1fr; }
+/* Una sola fila del alto de la ventana: sin `minmax(0, …)` la fila crecía
+   con el contenido (el chat largo) y lo de abajo quedaba fuera. */
+.app { height: 100dvh; display: grid; grid-template-columns: 1fr; grid-template-rows: minmax(0, 1fr); }
 
 .home {
   position: relative;
@@ -29,7 +31,7 @@ body.pane-open .pane { transform: none; visibility: visible; transition: transfo
 @media (min-width: 860px) {
   .app { grid-template-columns: 380px 1fr; }
   .home { border-right: 1px solid var(--border); }
-  .pane { position: static; transform: none; visibility: visible; transition: none; min-width: 0; }
+  .pane { position: static; transform: none; visibility: visible; transition: none; min-width: 0; min-height: 0; }
   .pane-empty { flex: 1; display: grid; place-content: center; justify-items: center; gap: 8px; color: var(--muted); padding: 24px; text-align: center; }
   .back { display: none !important; }
 }
@@ -191,6 +193,9 @@ body.pane-open .pane { transform: none; visibility: visible; transition: transfo
 .fab:active { transform: scale(.94); }
 .fab .i { width: 26px; height: 26px; }
 body[data-tab="transfers"] .fab { display: none; }
+/* En Transferencias no hace falta este equipo ni la conexión: solo la lista. */
+body[data-tab="transfers"] :is(.topbar, .netbar) { display: none; }
+.mobile[data-tab="transfers"] .home-body { padding-top: max(8px, env(safe-area-inset-top)); }
 
 .tabbar {
   display: flex;

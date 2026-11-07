@@ -16,7 +16,7 @@ tauri-build = { version = "2", features = [] }
 base64 = "0.22"
 bytes = "1"
 if-addrs = "0.13"
-pasalo-call = { version = "0.1.0", path = "../../crates/pasalo-call" }
+pasalo-call = { version = "1.0.0", path = "../../crates/pasalo-call" }
 pasalo-core = { path = "../../crates/pasalo-core" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -24,6 +24,7 @@ tauri = { version = "2", features = [] }
 tauri-plugin-dialog = "2"
 tauri-plugin-opener = "2"
 tokio = { version = "1", features = ["sync", "rt"] }
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 [features]
 # Para probar: deja inspeccionar el WebView (también en Android, con

@@ -188,6 +188,19 @@
         <label class="field"><span data-i18n="settings.server"></span><input id="set-server" placeholder="https://…vercel.app" autocomplete="off" spellcheck="false"></label>
         <p class="hint" data-i18n="settings.server_hint"></p>
       </div>
+
+      <h2 data-i18n="settings.about"></h2>
+      <div class="card">
+        <div class="row-line first">
+          <span class="row-label" data-i18n="settings.version"></span>
+          <span id="set-version" class="sub"></span>
+          <button id="check-update" class="ghost small" type="button" data-i18n="update.check"></button>
+        </div>
+        <div id="update-result" class="update-result" hidden>
+          <span id="update-text"></span>
+          <button id="update-get" class="primary small" type="button" data-i18n="update.download" hidden></button>
+        </div>
+      </div>
     </div>
   </section>
 

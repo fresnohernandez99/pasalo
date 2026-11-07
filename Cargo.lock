@@ -3924,7 +3924,7 @@ dependencies = [
 
 [[package]]
 name = "pasalo-app"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "base64 0.22.1",
  "bytes",
@@ -3938,11 +3938,12 @@ dependencies = [
  "tauri-plugin-dialog",
  "tauri-plugin-opener",
  "tokio",
+ "tracing-subscriber",
 ]
 
 [[package]]
 name = "pasalo-call"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "codec2",
  "cpal",
@@ -3953,7 +3954,7 @@ dependencies = [
 
 [[package]]
 name = "pasalo-cli"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "anyhow",
  "bytes",
@@ -3968,7 +3969,7 @@ dependencies = [
 
 [[package]]
 name = "pasalo-core"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "blake3",
  "bytes",

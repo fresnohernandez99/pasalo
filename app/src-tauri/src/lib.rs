@@ -100,6 +100,14 @@ fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
 }
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // Para diagnosticar: con `RUST_LOG=pasalo_core=debug` el núcleo cuenta
+    // por la salida de errores qué pasa con las conexiones.
+    if std::env::var_os("RUST_LOG").is_some() {
+        let _ = tracing_subscriber::fmt()
+            .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+            .with_writer(std::io::stderr)
+            .try_init();
+    }
     let builder = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init());
@@ -109,7 +117,8 @@ pub fn run() {
         .setup(setup)
         .invoke_handler(tauri::generate_handler![
             settings::snapshot, settings::refresh, settings::set_name, settings::choose_dir, settings::open_dir,
-            settings::reveal, settings::set_server, settings::local_network,
+            settings::reveal, settings::set_server, settings::local_network, settings::check_update,
+            settings::open_release,
             files::pick_files, files::pick_folder, files::send, files::send_text, files::probe, files::pause,
             files::resume, files::forget, files::transfer_decide, files::cancel_incoming,
             net::net_connect, net::net_disconnect, net::lobby_request, net::lobby_cancel, net::lobby_answer,

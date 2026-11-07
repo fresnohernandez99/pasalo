@@ -42,6 +42,8 @@ pub struct Snapshot {
     /// En el server (buscando con quién conectarse).
     online: bool,
     partner: Option<Partner>,
+    /// Versión instalada.
+    version: &'static str,
 }
 
 #[tauri::command]
@@ -67,6 +69,7 @@ pub async fn snapshot(state: State<'_, AppState>) -> CmdResult<Snapshot> {
         server: settings.server,
         online,
         partner,
+        version: env!("CARGO_PKG_VERSION"),
     })
 }
 
@@ -128,6 +131,38 @@ pub async fn set_server(state: State<'_, AppState>, server: String) -> CmdResult
     }
     state.settings.lock().unwrap().server = server;
     state.save_settings()
+}
+
+/// Busca en GitHub si hay una versión más nueva que la instalada.
+#[tauri::command]
+pub async fn check_update(state: State<'_, AppState>) -> CmdResult<pasalo_core::update::Release> {
+    let remote = state.remote.as_ref().ok_or_else(|| CmdError::new("remote_unavailable", ""))?;
+    pasalo_core::update::latest_release(remote, env!("CARGO_PKG_VERSION"), is_our_asset)
+        .await
+        .map_err(|e| CmdError::new("update_failed", e.detail()))
+}
+
+/// El archivo de la release que le sirve a este equipo.
+fn is_our_asset(name: &str) -> bool {
+    if cfg!(target_os = "android") {
+        name.ends_with(if cfg!(target_arch = "aarch64") { "arm64-v8a.apk" } else { "armeabi-v7a.apk" })
+    } else if cfg!(target_os = "macos") {
+        name.ends_with(".dmg")
+    } else if cfg!(target_os = "windows") {
+        name.ends_with("-setup.exe") || name.ends_with(".msi")
+    } else {
+        name.ends_with(".AppImage")
+    }
+}
+
+/// Abre en el navegador una página o descarga de las releases (solo esas).
+#[tauri::command]
+pub fn open_release(app: AppHandle, url: String) -> CmdResult<()> {
+    let ours = format!("https://github.com/{}/releases/", pasalo_core::update::REPO);
+    if !url.starts_with(&ours) {
+        return Err(CmdError::other("enlace no válido"));
+    }
+    app.opener().open_url(url, None::<&str>).map_err(CmdError::other)
 }
 
 /// Permiso de red local de Android 17+ (`None` donde no hace falta). Con

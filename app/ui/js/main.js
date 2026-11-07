@@ -2,7 +2,7 @@
 
 import { applyStatic, errorText } from './i18n/index.js';
 import { applyIcons } from './lib/icons.js';
-import { call, listen } from './lib/tauri.js';
+import { invoke, listen } from './lib/tauri.js';
 import { toast } from './lib/toast.js';
 import { app } from './state.js';
 import { onSignal, onTalkLost } from './features/call.js';
@@ -51,11 +51,28 @@ listen('pasalo', ({ payload: e }) => {
   }
 });
 
+// Si Android abre la app mientras se instala (o el backend tarda en
+// arrancar), la primera petición puede fallar: se reintenta un rato antes de
+// dar la interfaz por rota.
+async function loadSnapshot() {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return await invoke('snapshot');
+    } catch (err) {
+      if (attempt >= 40) {
+        toast(errorText(err), true);
+        throw err;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 250));
+    }
+  }
+}
+
 async function init() {
   applyIcons();
   applyStatic();
   showTab('peers');
-  const snapshot = await call('snapshot');
+  const snapshot = await loadSnapshot();
   app.settings = snapshot;
   document.body.classList.toggle('mobile', snapshot.mobile);
   renderHeader();

@@ -1,10 +1,10 @@
 // Pantalla de Ajustes. Cada cambio se guarda al momento.
 
-import { LANGS, currentLang, setLang, t } from '../i18n/index.js';
+import { LANGS, currentLang, errorText, setLang, t } from '../i18n/index.js';
 import { emit, on } from '../lib/bus.js';
 import { $, esc } from '../lib/dom.js';
 import { initials, shortCode } from '../lib/format.js';
-import { call } from '../lib/tauri.js';
+import { call, invoke } from '../lib/tauri.js';
 import { toast } from '../lib/toast.js';
 import { app } from '../state.js';
 import { fillCallSettings } from './call.js';
@@ -40,6 +40,7 @@ function fill() {
   $('#dir-label').textContent = s.dir;
   $('#open-dir').title = t('dir.open_title', { dir: s.dir });
   $('#set-server').value = s.server || '';
+  $('#set-version').textContent = s.version || '';
   $('#lang').innerHTML = Object.keys(LANGS)
     .map((code) => `<option value="${code}" ${code === currentLang() ? 'selected' : ''}>${esc(LANGS[code]['lang.name'])}</option>`)
     .join('');
@@ -110,6 +111,42 @@ $('#set-server').addEventListener('change', async (ev) => {
     ev.target.value = app.settings.server || '';
   }
 });
+
+// ---------- versión nueva ----------
+
+// Solo cuando el usuario lo pide: la app no consulta nada por su cuenta.
+let release = null;
+
+$('#check-update').addEventListener('click', async () => {
+  const button = $('#check-update');
+  button.disabled = true;
+  button.textContent = t('update.checking');
+  try {
+    release = await invoke('check_update');
+    showRelease();
+  } catch (err) {
+    release = null;
+    $('#update-result').hidden = false;
+    $('#update-text').textContent = errorText(err);
+    $('#update-get').hidden = true;
+  } finally {
+    button.disabled = false;
+    button.textContent = t('update.check');
+  }
+});
+
+function showRelease() {
+  if (!release) return;
+  $('#update-result').hidden = false;
+  $('#update-text').textContent = release.newer ? t('update.available', { version: release.version }) : t('update.latest');
+  $('#update-get').hidden = !release.newer;
+}
+
+$('#update-get').addEventListener('click', () => {
+  if (release) call('open_release', { url: release.download || release.url }).catch(() => {});
+});
+
+on('lang', showRelease);
 
 on('settings', () => {
   if (!$('#settings').hidden) $('#set-avatar').textContent = initials(app.settings.name);
