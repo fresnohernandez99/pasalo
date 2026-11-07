@@ -1,0 +1,22 @@
+/* Visor de fotos a pantalla completa (ver js/features/viewer.js). */
+.viewer { position: fixed; z-index: 40; inset: 0; touch-action: none; overflow: hidden; }
+.viewer-bg { position: absolute; inset: 0; background: #000; opacity: 0; }
+#viewer-img {
+  position: absolute;
+  transform-origin: 0 0;
+  will-change: transform;
+  -webkit-user-drag: none;
+  user-select: none;
+  pointer-events: auto;
+}
+.viewer-close {
+  position: absolute;
+  z-index: 1;
+  top: max(12px, env(safe-area-inset-top));
+  right: 12px;
+  color: #fff;
+  background: rgb(255 255 255 / .14);
+  opacity: 0;
+  transition: opacity .2s;
+}
+.viewer.open .viewer-close { opacity: 1; }

@@ -1,0 +1,30 @@
+/* Pantallas que se abren encima de todo (Ajustes). */
+.screen {
+  position: fixed;
+  z-index: 15;
+  inset: 0 0 var(--kb) 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+  animation: slide-in .24s cubic-bezier(.2, .8, .2, 1);
+}
+@keyframes slide-in { from { transform: translateX(24px); opacity: 0; } }
+.screen-head { display: flex; align-items: center; gap: 8px; padding: 8px 12px 8px 6px; }
+.mobile .screen-head { padding-top: max(8px, env(safe-area-inset-top)); }
+.screen-head h1 { font-size: 20px; }
+.screen-body { flex: 1; min-height: 0; overflow-y: auto; width: 100%; max-width: 600px; align-self: center; padding: 0 16px calc(24px + var(--nav)); }
+.screen-body h2 { font-size: 13px; font-weight: 650; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); margin: 22px 6px 8px; }
+.card { background: var(--surface); border-radius: var(--radius); box-shadow: var(--shadow-1); padding: 16px; }
+.card .hint { margin: 12px 0 0; }
+.card select, .card input { width: 100%; }
+.device-head { display: flex; align-items: center; gap: 14px; }
+.row-line { display: flex; align-items: center; gap: 8px; margin-top: 14px; min-height: 34px; }
+.row-label { width: 90px; flex: none; color: var(--muted); font-size: 14px; }
+.row-line.first { margin-top: 0; }
+.update-result { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 12px; margin-top: 12px; font-size: 14px; }
+.update-result > span { flex: 1; min-width: 160px; }
+.row-line .code, .row-line .sub { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dir-row { display: flex; gap: 8px; align-items: center; }
+.ghost.dir { flex: 1; min-width: 0; justify-content: flex-start; border-radius: var(--radius-sm); font-weight: 500; }
+#dir-label { overflow: hidden; text-overflow: ellipsis; }
+.mobile #open-dir { pointer-events: none; }

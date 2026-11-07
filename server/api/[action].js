@@ -6,6 +6,16 @@ import { HttpError, handle } from '../lib/lobby.js';
 
 export default async function handler(req, res) {
   const action = req.query?.action ?? new URL(req.url, 'http://x').pathname.split('/').pop();
+  // Pasalo web desde otro dominio (p. ej. una copia propia que usa este
+  // server): no hay cookies, cada petición lleva su token.
+  res.setHeader('access-control-allow-origin', '*');
+  if (req.method === 'OPTIONS') {
+    res.setHeader('access-control-allow-methods', 'GET, POST, OPTIONS');
+    res.setHeader('access-control-allow-headers', 'content-type');
+    res.setHeader('access-control-max-age', '86400');
+    res.statusCode = 204;
+    return res.end();
+  }
   try {
     const db = await database();
     if (req.method === 'GET' && action === 'health') {
