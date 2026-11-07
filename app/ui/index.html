@@ -26,7 +26,7 @@
               <span class="sub" id="me-sub"></span>
               <span id="code-line" class="code-line" hidden>
                 <span class="code" id="me-code" data-i18n-title="me.code_title"></span>
-                <button id="copy-code" class="icon-btn small" type="button" data-i18n-title="btn.copy"><span data-icon="copy"></span></button>
+                <button id="copy-code" class="icon-btn small" type="button" data-i18n-title="btn.copy_link"><span data-icon="copy"></span></button>
               </span>
             </div>
           </div>
@@ -151,7 +151,7 @@
         <div class="row-line" id="set-code-row">
           <span class="row-label" data-i18n="settings.code"></span>
           <span class="code" id="set-code"></span>
-          <button id="set-copy-code" class="icon-btn small" type="button" data-i18n-title="btn.copy"><span data-icon="copy"></span></button>
+          <button id="set-copy-code" class="icon-btn small" type="button" data-i18n-title="btn.copy_link"><span data-icon="copy"></span></button>
         </div>
         <div class="row-line">
           <span class="row-label" data-i18n="settings.address"></span>
@@ -252,7 +252,7 @@
   <dialog id="add-dialog">
     <form id="manual">
       <h3 data-i18n="peers.add_title"></h3>
-      <input id="manual-ip" data-i18n-placeholder="peers.add_placeholder" autocomplete="off" spellcheck="false" inputmode="decimal">
+      <input id="manual-ip" data-i18n-placeholder="peers.add_placeholder" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" inputmode="text">
       <div class="dialog-actions">
         <button type="button" class="ghost" id="add-cancel" data-i18n="btn.cancel"></button>
         <button type="submit" class="primary" data-i18n="btn.accept"></button>

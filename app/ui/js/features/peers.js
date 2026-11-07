@@ -7,10 +7,11 @@ import { emit, on } from '../lib/bus.js';
 import { $, $$, esc, setHtml } from '../lib/dom.js';
 import { initials } from '../lib/format.js';
 import { icon } from '../lib/icons.js';
-import { call, listen } from '../lib/tauri.js';
+import { call, invoke, listen } from '../lib/tauri.js';
 import { toast } from '../lib/toast.js';
 import { isMobile } from '../state.js';
 import { activePeerCode, openChat, unreadCount } from './chat.js';
+import { openLink } from './lobby.js';
 import { openTextDialog, pauseFor, resumeFor, sendPaths } from './transfers.js';
 
 /** device_id → { device_id, name, platform, os?, addr, code? } */
@@ -180,13 +181,19 @@ function openAddDialog() {
 
 $('#add-fab').addEventListener('click', openAddDialog);
 $('#add-cancel').addEventListener('click', () => $('#add-dialog').close());
-$('#manual').addEventListener('submit', (ev) => {
+$('#manual').addEventListener('submit', async (ev) => {
   ev.preventDefault();
   const value = $('#manual-ip').value.trim();
   if (!value) return;
-  // A otras redes se llega con «Conectarse», no pegando códigos.
-  if (isCode(value)) {
-    toast(t('toast.use_connect'), true);
+  // Un código o un enlace de Pasalo: se llega por internet, sin server.
+  const link = isCode(value) ? { code: value.replace(/\s/g, ''), name: '' } : await invoke('link_parse', { text: value });
+  if (link) {
+    $('#add-dialog').close();
+    openLink(link);
+    return;
+  }
+  if (/^[a-z]+:\/\//i.test(value)) {
+    toast(t('toast.link_invalid'), true);
     return;
   }
   addManualPeer(value);

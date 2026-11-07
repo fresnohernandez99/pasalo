@@ -4,6 +4,8 @@
 <dict>
   <key>NSMicrophoneUsageDescription</key>
   <string>Pasalo uses the microphone for voice and video calls.</string>
+  <key>NSLocalNetworkUsageDescription</key>
+  <string>Pasalo finds and connects to your devices on the local network to send files, chat and call.</string>
   <key>NSCameraUsageDescription</key>
   <string>Pasalo uses the camera for video calls.</string>
 </dict>

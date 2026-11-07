@@ -28,7 +28,7 @@ import { Channel, invoke } from '../lib/tauri.js';
 import { toast } from '../lib/toast.js';
 import { isMobile } from '../state.js';
 import { activePeer } from './chat.js';
-import { onUnpair } from './lobby.js';
+import { onHello, onUnpair } from './lobby.js';
 import { onBack } from './nav.js';
 import { ensureRemotePeer } from './peers.js';
 import { VIDEO_MODES, VideoReceiver, VideoSender, decodableCodecs, pickCodec } from './video.js';
@@ -136,6 +136,10 @@ function newCall(fields) {
 export function onSignal({ peer, name, signal: s }) {
   if (s.kind === 'unpair') {
     onUnpair(peer, name);
+    return;
+  }
+  if (s.kind === 'hello') {
+    onHello(peer, name);
     return;
   }
   if (s.kind === 'invite') {
@@ -301,6 +305,7 @@ async function startVideo(c) {
     mode: c.video,
     send: (bytes) => invoke('video_send', bytes),
     onBytes: (n) => (c.videoUp += n),
+    onCameraLost: () => recoverCamera(c),
   });
   c.sender.setPaused(c.camOff);
   await c.sender.start();
@@ -311,6 +316,27 @@ function camera(facing) {
     audio: false,
     video: { facingMode: facing, width: { ideal: 640 }, height: { ideal: 480 } },
   });
+}
+
+/** La cámara se cortó a mitad de llamada: se pide otra vez hasta que vuelva. */
+async function recoverCamera(c) {
+  while (c === live && c.sender) {
+    try {
+      const stream = await camera(c.facing);
+      if (c !== live || !c.sender) {
+        stream.getTracks().forEach((track) => track.stop());
+        return;
+      }
+      c.stream?.getTracks().forEach((track) => track.stop());
+      c.stream = stream;
+      $('#call-local').srcObject = stream;
+      await c.sender.setStream(stream);
+      return;
+    } catch {
+      // Otra app la tiene todavía: se reintenta en un momento.
+      await new Promise((resolve) => setTimeout(resolve, 2000));
+    }
+  }
 }
 
 /** Cambia entre la cámara de delante y la de atrás. */
@@ -328,12 +354,14 @@ async function flipCamera() {
     stream.getTracks().forEach((track) => track.stop());
     return;
   }
-  c.stream.getTracks().forEach((track) => track.stop());
+  // La vieja se suelta después: si no, el emisor la vería cortada y la pediría de nuevo.
+  const old = c.stream;
   c.stream = stream;
   c.facing = facing;
   $('#call-local').srcObject = stream;
   $('#call').classList.toggle('rear', facing !== 'user');
   await c.sender?.setStream(stream);
+  old.getTracks().forEach((track) => track.stop());
 }
 
 function stopVideo(c) {

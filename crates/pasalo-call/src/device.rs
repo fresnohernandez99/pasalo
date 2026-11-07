@@ -274,6 +274,8 @@ mod platform {
     use std::ffi::{CStr, c_void};
     use std::sync::mpsc;
     use std::sync::{Arc, Mutex, OnceLock};
+    use std::thread;
+    use std::time::Duration;
 
     use super::CallError;
     use crate::Receiver;
@@ -356,10 +358,24 @@ mod platform {
     /// Lo que hace cada callback con las muestras (mono, f32).
     type Handler = Box<dyn FnMut(&mut [f32]) + Send>;
 
-    /// Un stream abierto. Al soltarlo se cierra y después se libera su callback.
-    pub struct Stream {
+    /// Lo que le llega al hilo que cuida los streams.
+    enum Event {
+        /// El stream de esa dirección se cayó (p. ej. cambió la salida de audio).
+        Lost(i32),
+        Stop,
+    }
+
+    /// A quién avisa el callback de error de un stream.
+    struct Notify {
+        direction: i32,
+        events: mpsc::Sender<Event>,
+    }
+
+    /// Un stream abierto. Al soltarlo se cierra y después se liberan sus callbacks.
+    struct Stream {
         raw: *mut RawStream,
         handler: *mut Handler,
+        notify: *mut Notify,
     }
 
     // SAFETY: AAudio permite cerrar el stream desde cualquier hilo y el
@@ -368,11 +384,12 @@ mod platform {
 
     impl Drop for Stream {
         fn drop(&mut self) {
-            // SAFETY: `close` espera a que acabe el callback en curso; después
-            // nadie más usa el handler.
+            // SAFETY: `close` espera a que acaben los callbacks en curso;
+            // después nadie más usa el handler ni el aviso.
             unsafe {
                 AAudioStream_close(self.raw);
                 drop(Box::from_raw(self.handler));
+                drop(Box::from_raw(self.notify));
             }
         }
     }
@@ -387,19 +404,30 @@ mod platform {
         CALLBACK_CONTINUE
     }
 
-    extern "C" fn on_error(_: *mut RawStream, _: *mut c_void, error: i32) {
+    /// AAudio no deja cerrar ni reabrir desde aquí: se avisa al hilo que cuida
+    /// los streams. Pasa sobre todo al entrar en modo llamada o cambiar entre
+    /// altavoz, auricular y Bluetooth: la salida en MMAP se desconecta.
+    extern "C" fn on_error(_: *mut RawStream, user: *mut c_void, error: i32) {
         tracing::warn!("error de audio: {error}");
+        // SAFETY: `user` es el Notify del stream, vivo hasta cerrarlo.
+        let notify = unsafe { &*(user as *const Notify) };
+        let _ = notify.events.send(Event::Lost(notify.direction));
     }
 
-    fn open(direction: i32, handler: Handler) -> Result<Stream, i32> {
+    fn open(direction: i32, handler: Handler, events: mpsc::Sender<Event>) -> Result<Stream, i32> {
         let handler = Box::into_raw(Box::new(handler));
+        let notify = Box::into_raw(Box::new(Notify { direction, events }));
         // SAFETY: llamadas a la NDK con un builder recién creado que se borra
-        // al final; si el stream no se abre, el handler se libera aquí.
+        // al final; si el stream no se abre, los callbacks se liberan aquí.
         unsafe {
+            let free = || {
+                drop(Box::from_raw(handler));
+                drop(Box::from_raw(notify));
+            };
             let mut builder = std::ptr::null_mut();
             let status = AAudio_createStreamBuilder(&mut builder);
             if status < 0 {
-                drop(Box::from_raw(handler));
+                free();
                 return Err(status);
             }
             AAudioStreamBuilder_setDirection(builder, direction);
@@ -416,19 +444,42 @@ mod platform {
                 }
             }
             AAudioStreamBuilder_setDataCallback(builder, on_data, handler as *mut c_void);
-            AAudioStreamBuilder_setErrorCallback(builder, on_error, std::ptr::null_mut());
+            AAudioStreamBuilder_setErrorCallback(builder, on_error, notify as *mut c_void);
             let mut raw = std::ptr::null_mut();
             let status = AAudioStreamBuilder_openStream(builder, &mut raw);
             AAudioStreamBuilder_delete(builder);
             if status < 0 {
-                drop(Box::from_raw(handler));
+                free();
                 return Err(status);
             }
-            Ok(Stream { raw, handler })
+            let stream = Stream { raw, handler, notify };
+            let status = AAudioStream_requestStart(stream.raw);
+            if status < 0 {
+                return Err(status);
+            }
+            Ok(stream)
         }
     }
 
-    pub type Streams = (Stream, Stream);
+    /// El micrófono y el altavoz, con un hilo que los vuelve a abrir si se
+    /// caen. Al soltarlo se cierran los dos.
+    pub struct Streams {
+        events: mpsc::Sender<Event>,
+        keeper: Option<thread::JoinHandle<()>>,
+    }
+
+    impl Drop for Streams {
+        fn drop(&mut self) {
+            let _ = self.events.send(Event::Stop);
+            if let Some(keeper) = self.keeper.take() {
+                let _ = keeper.join();
+            }
+        }
+    }
+
+    /// Intentos de reabrir un stream caído antes de rendirse.
+    const REOPEN_TRIES: u32 = 10;
+    const REOPEN_WAIT: Duration = Duration::from_millis(200);
 
     pub struct Devices;
 
@@ -451,21 +502,60 @@ mod platform {
         }
 
         pub fn start(self, samples: mpsc::Sender<Vec<f32>>, receiver: Arc<Mutex<Receiver>>) -> Result<Streams, CallError> {
-            let input = open(
-                DIRECTION_INPUT,
+            let mic = move || -> Handler {
+                let samples = samples.clone();
                 Box::new(move |pcm| {
                     let _ = samples.send(pcm.to_vec());
-                }),
-            )
-            .map_err(|_| CallError::NoInput)?;
-            let output = open(DIRECTION_OUTPUT, Box::new(move |out| receiver.lock().unwrap().pull(out)))
-                .map_err(|_| CallError::NoOutput)?;
-            // SAFETY: streams recién abiertos.
-            let started = unsafe { (AAudioStream_requestStart(input.raw), AAudioStream_requestStart(output.raw)) };
-            if started.0 < 0 || started.1 < 0 {
-                return Err(CallError::Device(format!("AAudio no arrancó ({}, {})", started.0, started.1)));
-            }
-            Ok((input, output))
+                })
+            };
+            let speaker = move || -> Handler {
+                let receiver = receiver.clone();
+                Box::new(move |out| receiver.lock().unwrap().pull(out))
+            };
+            let (events, lost) = mpsc::channel();
+            let input = open(DIRECTION_INPUT, mic(), events.clone()).map_err(|_| CallError::NoInput)?;
+            let output = open(DIRECTION_OUTPUT, speaker(), events.clone()).map_err(|_| CallError::NoOutput)?;
+            let notify = events.clone();
+            let keeper = thread::Builder::new()
+                .name("pasalo-call-audio".into())
+                .spawn(move || {
+                    // Por dirección: DIRECTION_OUTPUT es 0 y DIRECTION_INPUT 1.
+                    let mut streams = [Some(output), Some(input)];
+                    while let Ok(Event::Lost(direction)) = lost.recv() {
+                        // Un cambio de ruta suele tirar los dos a la vez.
+                        let mut dead = vec![direction];
+                        while let Ok(event) = lost.recv_timeout(Duration::from_millis(50)) {
+                            match event {
+                                Event::Lost(d) => dead.push(d),
+                                Event::Stop => return,
+                            }
+                        }
+                        for direction in [DIRECTION_OUTPUT, DIRECTION_INPUT] {
+                            if !dead.contains(&direction) {
+                                continue;
+                            }
+                            // El viejo se cierra antes de abrir el nuevo.
+                            let slot = &mut streams[direction as usize];
+                            *slot = None;
+                            for attempt in 1..=REOPEN_TRIES {
+                                let handler = if direction == DIRECTION_INPUT { mic() } else { speaker() };
+                                match open(direction, handler, notify.clone()) {
+                                    Ok(stream) => {
+                                        *slot = Some(stream);
+                                        tracing::info!("audio reabierto (dirección {direction})");
+                                        break;
+                                    }
+                                    Err(e) if attempt == REOPEN_TRIES => {
+                                        tracing::warn!("no se pudo reabrir el audio (dirección {direction}): {e}");
+                                    }
+                                    Err(_) => thread::sleep(REOPEN_WAIT),
+                                }
+                            }
+                        }
+                    }
+                })
+                .map_err(|e| CallError::Device(e.to_string()))?;
+            Ok(Streams { events, keeper: Some(keeper) })
         }
     }
 }

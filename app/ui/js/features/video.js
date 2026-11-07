@@ -33,6 +33,11 @@ const KEY_EVERY_MS = 30_000;
 // Lo que se espera a una imagen que falta antes de saltar a la siguiente clave.
 const GAP_WAIT_MS = 300;
 const KEY_REQUEST_EVERY_MS = 1000;
+// Llegan imágenes pero no se dibuja ninguna en este tiempo: el decodificador
+// se quedó trabado sin avisar y se empieza de nuevo.
+const STALL_MS = 2500;
+// Lo mínimo entre dos intentos de rehacer el compresor tras un error.
+const REBUILD_EVERY_MS = 1000;
 
 export const videoSupported = () => typeof VideoEncoder !== 'undefined' && typeof VideoDecoder !== 'undefined';
 
@@ -71,14 +76,17 @@ function targetSize(width, height, long) {
  * Cámara → imágenes comprimidas. `send(bytes)` devuelve una promesa con
  * `false` si la red las está descartando (la siguiente sale clave).
  * `onBytes(n)` cuenta lo enviado, para las estadísticas.
+ * `onCameraLost()` avisa de que la cámara se cortó (p. ej. otra app la tomó)
+ * y hay que pedirla de nuevo con `setStream`.
  */
 export class VideoSender {
-  constructor({ stream, codec, mode, send, onBytes }) {
+  constructor({ stream, codec, mode, send, onBytes, onCameraLost }) {
     this.stream = stream;
     this.codec = codec;
     this.mode = mode;
     this.send = send;
     this.onBytes = onBytes;
+    this.onCameraLost = onCameraLost;
     this.epoch = Math.floor(Math.random() * 256);
     this.seq = 0;
     this.needKey = true;
@@ -91,13 +99,23 @@ export class VideoSender {
     this.video.srcObject = stream;
     this.canvas = document.createElement('canvas');
     this.ctx = this.canvas.getContext('2d', { alpha: false });
-    this.encoder = new VideoEncoder({
+    this.builtAt = 0;
+    this.encoder = this.makeEncoder();
+  }
+
+  // Si el compresor falla (pasa con el de hardware del teléfono), se rehace en
+  // la siguiente imagen: si no, el vídeo se quedaría parado para siempre.
+  makeEncoder() {
+    this.builtAt = Date.now();
+    this.size = null;
+    const encoder = new VideoEncoder({
       output: (chunk) => this.output(chunk),
       error: (err) => {
         console.warn('encoder', err);
-        this.encoder = null;
+        if (this.encoder === encoder) this.encoder = null;
       },
     });
+    return encoder;
   }
 
   async start() {
@@ -122,6 +140,7 @@ export class VideoSender {
     this.stream = stream;
     this.video.srcObject = stream;
     this.size = null;
+    this.cameraLost = false;
     await this.video.play().catch(() => {});
   }
 
@@ -156,7 +175,23 @@ export class VideoSender {
 
   capture() {
     const v = this.video;
-    if (this.paused || !this.encoder || !v.videoWidth || this.encoder.state === 'closed') return;
+    if (this.paused || this.stopped) return;
+    const track = this.stream?.getVideoTracks()[0];
+    if (!track || track.readyState === 'ended') {
+      if (!this.cameraLost) {
+        this.cameraLost = true;
+        this.onCameraLost?.();
+      }
+      return;
+    }
+    // Android pausa el <video> al salir de la app y no siempre lo reanuda: se
+    // seguiría mandando la misma imagen congelada.
+    if (v.paused) v.play().catch(() => {});
+    if (!this.encoder || this.encoder.state === 'closed') {
+      if (Date.now() - this.builtAt < REBUILD_EVERY_MS) return;
+      this.encoder = this.makeEncoder();
+    }
+    if (!v.videoWidth) return;
     // Si el compresor va atrasado, esta imagen sobra.
     if (this.encoder.encodeQueueSize > 1) return;
     const want = targetSize(v.videoWidth, v.videoHeight, VIDEO_MODES[this.mode].long);
@@ -198,6 +233,7 @@ export class VideoSender {
   }
 
   stop() {
+    this.stopped = true;
     clearInterval(this.timer);
     if (this.encoder && this.encoder.state !== 'closed') this.encoder.close();
     this.encoder = null;
@@ -220,6 +256,7 @@ export class VideoReceiver {
     this.onFrame = onFrame;
     this.decoder = null;
     this.codecId = null;
+    this.drawnAt = Date.now();
     this.reset(null);
   }
 
@@ -247,6 +284,16 @@ export class VideoReceiver {
     if (p.epoch !== this.epoch) {
       this.reset(p.epoch);
       this.resetDecoder();
+    }
+    // Siguen llegando imágenes pero no se dibuja nada: se empieza de nuevo
+    // desde la próxima clave.
+    const now = Date.now();
+    if (now - this.drawnAt > STALL_MS) {
+      console.warn('video atascado: se reinicia el decodificador');
+      this.drawnAt = now;
+      this.reset(this.epoch);
+      this.resetDecoder();
+      this.askKey();
     }
     if (this.next !== null && p.seq < this.next) return; // vieja: ya se saltó
     this.pending.set(p.seq, p);
@@ -334,6 +381,7 @@ export class VideoReceiver {
     }
     this.ctx.drawImage(frame, 0, 0, w, h);
     frame.close();
+    this.drawnAt = Date.now();
     this.onFrame?.();
   }
 

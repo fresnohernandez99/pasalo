@@ -41,6 +41,8 @@ pub struct Snapshot {
     server: String,
     /// En el server (buscando con quién conectarse).
     online: bool,
+    /// En internet sin server: alcanzable por su enlace.
+    direct: bool,
     partner: Option<Partner>,
     /// Versión instalada.
     version: &'static str,
@@ -58,6 +60,11 @@ pub async fn snapshot(state: State<'_, AppState>) -> CmdResult<Snapshot> {
     let mobile = cfg!(mobile);
     let online = state.lobby.lock().await.is_some();
     let partner = state.partner.lock().unwrap().clone();
+    let internet = match &state.remote {
+        Some(remote) => remote.internet().await,
+        None => false,
+    };
+    let direct = internet && !online && partner.is_none();
     Ok(Snapshot {
         name: settings.name,
         dir: settings.dir,
@@ -68,6 +75,7 @@ pub async fn snapshot(state: State<'_, AppState>) -> CmdResult<Snapshot> {
         peers,
         server: settings.server,
         online,
+        direct,
         partner,
         version: env!("CARGO_PKG_VERSION"),
     })

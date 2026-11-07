@@ -46,6 +46,14 @@ async fn join(state: &AppState) -> CmdResult<()> {
     }
 }
 
+/// Sale a internet sin entrar en el server: para llegar a alguien por su
+/// enlace, o para que lleguen a este equipo con el suyo.
+#[tauri::command]
+pub async fn net_direct(state: State<'_, AppState>) -> CmdResult<()> {
+    let remote = state.remote.as_ref().ok_or_else(|| CmdError::new("remote_unavailable", ""))?;
+    remote.set_internet(true).await.map_err(CmdError::other)
+}
+
 /// Sale del server y de la conexión con la pareja (avisándola), y vuelve a
 /// solo red local.
 #[tauri::command]

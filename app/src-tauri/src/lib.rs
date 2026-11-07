@@ -7,6 +7,7 @@ mod call;
 mod chat;
 mod error;
 mod files;
+mod links;
 mod net;
 mod settings;
 mod state;
@@ -81,6 +82,8 @@ fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
         Ok::<_, std::io::Error>(state)
     })?;
 
+    crate::links::init(app);
+
     // Los eventos esperan en el canal hasta aquí, así que no se pierde ninguno.
     let (emitter, talk) = (handle.clone(), state.talk.clone());
     app.manage(state);
@@ -108,7 +111,18 @@ pub fn run() {
             .with_writer(std::io::stderr)
             .try_init();
     }
-    let builder = tauri::Builder::default()
+    let builder = tauri::Builder::default();
+    // En Windows y Linux abrir un enlace lanza otra instancia: se le pasa a la
+    // que ya está abierta y esa se cierra. Tiene que ir antes que deep-link.
+    #[cfg(any(windows, target_os = "linux"))]
+    let builder = builder.plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+        if let Some(window) = app.get_webview_window("main") {
+            let _ = window.set_focus();
+        }
+    }));
+    let builder = builder
+        .plugin(tauri_plugin_deep_link::init())
+        .manage(links::Pending::default())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init());
     #[cfg(target_os = "android")]
@@ -121,7 +135,8 @@ pub fn run() {
             settings::open_release,
             files::pick_files, files::pick_folder, files::send, files::send_text, files::probe, files::pause,
             files::resume, files::forget, files::transfer_decide, files::cancel_incoming,
-            net::net_connect, net::net_disconnect, net::lobby_request, net::lobby_cancel, net::lobby_answer,
+            net::net_connect, net::net_direct, net::net_disconnect,
+            links::link_take, links::link_parse, links::link_mine, net::lobby_request, net::lobby_cancel, net::lobby_answer,
             chat::chat_history, chat::chat_send, chat::chat_send_image, chat::chat_image,
             call::call_signal, call::voice_start, call::voice_mode, call::voice_mute, call::voice_speaker,
             call::voice_stop, call::voice_stats, call::video_start, call::video_send, call::video_stop

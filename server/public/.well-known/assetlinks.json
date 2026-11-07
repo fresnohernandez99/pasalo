@@ -1,0 +1,12 @@
+[
+  {
+    "relation": ["delegate_permission/common.handle_all_urls"],
+    "target": {
+      "namespace": "android_app",
+      "package_name": "com.neomambi.pasalo",
+      "sha256_cert_fingerprints": [
+        "D0:B7:2E:1F:0E:BB:9A:5A:63:2C:07:B1:09:0B:89:5D:80:71:EC:3C:91:D5:E1:00:42:77:96:22:B6:87:C9:65"
+      ]
+    }
+  }
+]

@@ -21,6 +21,7 @@ pasalo-core = { path = "../../crates/pasalo-core" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tauri = { version = "2", features = [] }
+tauri-plugin-deep-link = "2"
 tauri-plugin-dialog = "2"
 tauri-plugin-opener = "2"
 tokio = { version = "1", features = ["sync", "rt"] }
@@ -30,3 +31,6 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 # Para probar: deja inspeccionar el WebView (también en Android, con
 # chrome://inspect o el protocolo de DevTools por adb).
 devtools = ["tauri/devtools"]
+
+[target.'cfg(any(windows, target_os = "linux"))'.dependencies]
+tauri-plugin-single-instance = { version = "2", features = ["deep-link"] }

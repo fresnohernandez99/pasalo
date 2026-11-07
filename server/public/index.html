@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Pasalo</title>
+  <meta name="description" content="Pasalo: archivos, chat y llamadas entre tus equipos, en la misma red o por internet.">
+  <meta property="og:title" content="Pasalo">
+  <meta property="og:description" content="Abre este enlace para conectarte en Pasalo.">
+  <style>
+    :root { --bg: #f6f7f9; --card: #fff; --text: #14171c; --muted: #5d6573; --accent: #2f6fed; --line: #e3e6eb; }
+    @media (prefers-color-scheme: dark) {
+      :root { --bg: #0f1115; --card: #181b21; --text: #eef0f3; --muted: #9aa3b2; --accent: #5b8cff; --line: #2a2f38; }
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; min-height: 100vh; display: grid; place-items: center; padding: 24px 16px;
+      background: var(--bg); color: var(--text); font: 16px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+    main { width: 100%; max-width: 420px; background: var(--card); border: 1px solid var(--line); border-radius: 16px; padding: 28px 24px; text-align: center; }
+    h1 { margin: 0 0 4px; font-size: 26px; }
+    p { margin: 8px 0; color: var(--muted); }
+    .who { color: var(--text); font-weight: 600; }
+    .actions { display: grid; gap: 10px; margin-top: 22px; }
+    a.btn { display: block; padding: 12px 16px; border-radius: 10px; text-decoration: none; font-weight: 600; }
+    a.primary { background: var(--accent); color: #fff; }
+    a.ghost { border: 1px solid var(--line); color: var(--text); }
+    code { display: block; margin-top: 18px; padding: 10px; border-radius: 8px; background: var(--bg); color: var(--muted);
+      font-size: 12px; word-break: break-all; user-select: all; }
+    [hidden] { display: none !important; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Pasalo</h1>
+    <p id="lead"></p>
+    <div class="actions">
+      <a id="open" class="btn primary" hidden></a>
+      <a id="get" class="btn ghost" href="https://github.com/fresnohernandez99/pasalo/releases/latest"></a>
+    </div>
+    <p id="manual" hidden></p>
+    <code id="code" hidden></code>
+  </main>
+  <script>
+    // Enlace de un equipo: ?c=<código>&n=<nombre>. Esta página solo abre la
+    // app con él; la conexión no pasa por aquí. En Android, con la app
+    // instalada, el enlace la abre directamente y esta página ni se ve.
+    const TEXT = {
+      es: { home: 'Archivos, chat y llamadas entre tus equipos, en la misma red o por internet.',
+            invite: '{name} te invita a conectarte en Pasalo.', someone: 'Alguien',
+            open: 'Abrir en Pasalo', get: 'Descargar Pasalo',
+            manual: '¿No se abre? Instala Pasalo y pega este código en «Añadir equipo»:' },
+      en: { home: 'Files, chat and calls between your devices, on the same network or over the internet.',
+            invite: '{name} invites you to connect on Pasalo.', someone: 'Someone',
+            open: 'Open in Pasalo', get: 'Download Pasalo',
+            manual: "Doesn't open? Install Pasalo and paste this code in “Add device”:" },
+      ru: { home: 'Файлы, чат и звонки между вашими устройствами — в одной сети или через интернет.',
+            invite: '{name} приглашает вас подключиться в Pasalo.', someone: 'Кто-то',
+            open: 'Открыть в Pasalo', get: 'Скачать Pasalo',
+            manual: 'Не открывается? Установите Pasalo и вставьте этот код в «Добавить устройство»:' },
+    };
+    const lang = (navigator.language || 'es').slice(0, 2);
+    const t = TEXT[lang] || TEXT.en;
+    document.documentElement.lang = TEXT[lang] ? lang : 'en';
+
+    const params = new URLSearchParams(location.search);
+    const code = (params.get('c') || '').replace(/\s/g, '');
+    const name = (params.get('n') || '').slice(0, 64);
+    const $ = (id) => document.getElementById(id);
+    $('get').textContent = t.get;
+
+    if (!/^[0-9a-z]{52,64}$/i.test(code)) {
+      $('lead').textContent = t.home;
+    } else {
+      const lead = $('lead');
+      const [before, after] = t.invite.split('{name}');
+      const who = document.createElement('span');
+      who.className = 'who';
+      who.textContent = name || t.someone;
+      lead.append(before, who, after);
+
+      const query = new URLSearchParams({ c: code, n: name }).toString();
+      const custom = `pasalo://add?${query}`;
+      const android = /android/i.test(navigator.userAgent);
+      const open = $('open');
+      open.textContent = t.open;
+      open.href = android
+        ? `intent://add?${query}#Intent;scheme=pasalo;package=com.neomambi.pasalo;end`
+        : custom;
+      open.hidden = false;
+      $('manual').textContent = t.manual;
+      $('manual').hidden = false;
+      $('code').textContent = code;
+      $('code').hidden = false;
+      // Se intenta abrir solo; si no está instalada no pasa nada y quedan los botones.
+      setTimeout(() => { location.href = open.href; }, 300);
+    }
+  </script>
+</body>
+</html>

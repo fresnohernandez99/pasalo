@@ -8,6 +8,7 @@ import { call, invoke } from '../lib/tauri.js';
 import { toast } from '../lib/toast.js';
 import { app } from '../state.js';
 import { fillCallSettings } from './call.js';
+import { copyMyLink } from './lobby.js';
 import { onBack } from './nav.js';
 
 export function openSettings() {
@@ -80,10 +81,7 @@ $('#set-name').addEventListener('keydown', (ev) => {
 });
 $('#set-name').addEventListener('blur', saveName);
 
-$('#set-copy-code').addEventListener('click', async () => {
-  await navigator.clipboard.writeText(app.settings.code);
-  toast(t('toast.code_copied'));
-});
+$('#set-copy-code').addEventListener('click', copyMyLink);
 
 $('#open-dir').addEventListener('click', () => call('open_dir'));
 $('#change-dir').addEventListener('click', async () => {

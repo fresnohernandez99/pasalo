@@ -3,6 +3,9 @@
 // Conectado, ve quién más lo está y puede pedirle conectarse; si el otro
 // acepta, los dos dejan el server y quedan conectados solo entre ellos.
 //
+// Con el enlace de un equipo no hace falta el server: los dos salen a
+// internet (estado `direct`) y se hablan por su código, por los relays de iroh.
+//
 // También pinta la cabecera con este equipo: sin conexión enseña su IP y su
 // código; conectado, solo el nombre, con quién está y «Desconectar».
 
@@ -10,15 +13,16 @@ import { t } from '../i18n/index.js';
 import { on } from '../lib/bus.js';
 import { $, esc, setHtml } from '../lib/dom.js';
 import { initials, shortCode } from '../lib/format.js';
-import { call } from '../lib/tauri.js';
+import { call, invoke } from '../lib/tauri.js';
 import { toast } from '../lib/toast.js';
 import { app } from '../state.js';
 import { endCallWith } from './call.js';
-import { addRemotePeer, avatar, removePeer } from './peers.js';
+import { openChat } from './chat.js';
+import { addRemotePeer, avatar, ensureRemotePeer, findPeerByCode, removePeer } from './peers.js';
 import { pauseFor, resumeFor } from './transfers.js';
 
 const net = {
-  state: 'offline', // offline | connecting | online | paired
+  state: 'offline', // offline | connecting | online | paired | direct
   users: [], // [{ id, name, platform }] en el server
   incoming: new Map(), // id de solicitud → { id, name, platform }
   outgoing: new Map(), // id de usuario → id de solicitud
@@ -28,7 +32,7 @@ const net = {
 
 export function initNet(snapshot) {
   if (snapshot.partner) setPartner(snapshot.partner);
-  else setNetState(snapshot.online ? 'online' : 'offline');
+  else setNetState(snapshot.online ? 'online' : snapshot.direct ? 'direct' : 'offline');
 }
 
 function setNetState(state) {
@@ -60,9 +64,9 @@ export function renderHeader() {
     $('#me-sub').textContent = t('me.sub', { ips, port: s.port });
     if (s.code) $('#me-code').textContent = shortCode(s.code);
   }
-  $('#net-dot').className = `dot ${state}`;
   $('#net-state').textContent =
     state === 'paired' ? t('net.paired', { name: partner.name }) : t(state === 'offline' ? 'net.local' : `net.${state}`);
+  $('#net-dot').className = `dot ${state === 'direct' ? 'online' : state}`;
   const toggle = $('#net-toggle');
   toggle.textContent = t(state === 'offline' ? 'net.connect' : 'net.disconnect');
   toggle.className = state === 'offline' ? 'primary small' : 'ghost small';
@@ -228,10 +232,74 @@ export function onUnpair(peer, name) {
   toast(t('toast.partner_left', { name }));
 }
 
-$('#copy-code').addEventListener('click', async () => {
-  await navigator.clipboard.writeText(app.settings.code);
-  toast(t('toast.code_copied'));
-});
+// ---------- enlaces ----------
+
+/** Sale a internet sin server, si no estaba ya: así se llega y llegan por código. */
+async function goDirect() {
+  if (net.state !== 'offline') return true;
+  try {
+    await call('net_direct');
+    setNetState('direct');
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Copia el enlace de este equipo. Quien lo tenga tiene que poder llegar, así
+ * que este equipo sale a internet (sin entrar en el server).
+ */
+export async function copyMyLink() {
+  const link = await call('link_mine');
+  await navigator.clipboard.writeText(link);
+  const was = net.state;
+  await goDirect();
+  toast(t(was === 'offline' ? 'toast.link_copied_online' : 'toast.link_copied'));
+}
+
+// Se avisa al otro equipo de que se le añadió; si todavía no se llega (el
+// relay tarda unos segundos), se insiste un rato.
+async function sayHello(code) {
+  for (let attempt = 0; attempt < 6; attempt++) {
+    try {
+      await invoke('call_signal', { peer: code, call: '', kind: 'hello', data: null });
+      return true;
+    } catch {
+      await new Promise((resolve) => setTimeout(resolve, 3000));
+    }
+  }
+  return false;
+}
+
+/** Abre el enlace de otro equipo: lo añade y abre su chat. */
+export async function openLink({ code, name }) {
+  if (code === app.settings?.code) {
+    toast(t('toast.link_self'), true);
+    return;
+  }
+  if (!(await goDirect())) return;
+  ensureRemotePeer(code, name || shortCode(code));
+  const peer = findPeerByCode(code);
+  if (peer) openChat(peer);
+  toast(t('toast.link_added', { name: peer?.name || name }));
+  if (!(await sayHello(code))) toast(t('toast.link_unreachable', { name: peer?.name || name }), true);
+}
+
+/** Alguien abrió el enlace de este equipo. */
+export function onHello(peer, name) {
+  const known = findPeerByCode(peer);
+  ensureRemotePeer(peer, name);
+  if (!known) toast(t('toast.link_hello', { name }));
+}
+
+/** El enlace con que se abrió la app (o que llegó con ella abierta). */
+export async function takeLink() {
+  const link = await invoke('link_take').catch(() => null);
+  if (link) await openLink(link);
+}
+
+$('#copy-code').addEventListener('click', copyMyLink);
 
 on('settings', renderHeader);
 on('lang', () => {

@@ -7,7 +7,7 @@ import { toast } from './lib/toast.js';
 import { app } from './state.js';
 import { onSignal, onTalkLost } from './features/call.js';
 import { onChatEvent } from './features/chat.js';
-import { initNet, onLobbyEvent, renderHeader } from './features/lobby.js';
+import { initNet, onLobbyEvent, renderHeader, takeLink } from './features/lobby.js';
 import { showTab } from './features/nav.js';
 import { initPeers, onPeerEvent } from './features/peers.js';
 import { initPermissions } from './features/permissions.js';
@@ -79,6 +79,9 @@ async function init() {
   initPeers(snapshot);
   initNet(snapshot);
   if (snapshot.mobile) initPermissions();
+  // Abierta con un enlace de otro equipo (o llega uno con la app abierta).
+  listen('pasalo_link', takeLink);
+  takeLink();
 }
 
 init();
