@@ -12,7 +12,7 @@ import { $ } from '../lib/dom.js';
 import { invoke } from '../lib/tauri.js';
 import { toast } from '../lib/toast.js';
 import { app } from '../state.js';
-import { onBack } from './nav.js';
+import { onBack, updateLayers } from './nav.js';
 
 let open = false;
 const web = () => !!app.settings?.web;
@@ -44,6 +44,7 @@ export async function openOnce(peer, id) {
   viewer.classList.toggle('hold', web());
   viewer.classList.remove('showing');
   viewer.hidden = false;
+  updateLayers($('#once-close'));
 }
 
 export function closeOnce() {
@@ -55,6 +56,7 @@ export function closeOnce() {
   pointers.clear();
   gesture = null;
   $('#once-viewer').hidden = true;
+  updateLayers();
   invoke('secure_view', { on: false }).catch(() => {});
   return true;
 }

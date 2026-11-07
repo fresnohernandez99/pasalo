@@ -14,7 +14,7 @@ import { onBack, setPaneOpen } from './nav.js';
 import { avatar, ensureRemotePeer, findPeerByCode, peerCode } from './peers.js';
 import { act, items, liveWith, sendPaths } from './transfers.js';
 import { openViewer } from './viewer.js';
-import { compressImage } from '../lib/images.js';
+import { openPhotoPreview } from './photo-preview.js';
 import { openOnce } from './once.js';
 import { isRecording, startRecording } from './recorder.js';
 
@@ -419,8 +419,6 @@ $('#attach-menu').addEventListener('click', async (ev) => {
   const peer = chat.peer;
   if (what === 'photo') {
     $('#chat-file').click();
-  } else if (what === 'once') {
-    $('#chat-once-file').click();
   } else if (what === 'files') {
     sendPaths(peer, await call('pick_files'));
   } else if (what === 'folder') {
@@ -429,43 +427,20 @@ $('#attach-menu').addEventListener('click', async (ev) => {
   }
 });
 
-$('#chat-file').addEventListener('change', async (ev) => {
+// Las fotos pasan por la vista previa: ahí ya van comprimidas (1600 px, WebP
+// o JPEG, sin metadatos; unos 150-400 KB) y se puede marcar «ver una vez».
+$('#chat-file').addEventListener('change', (ev) => {
   const files = [...ev.target.files];
   ev.target.value = '';
-  for (const file of files) await sendImage(file);
-});
-
-// Las fotos del móvil pesan varios MB: todas pasan por compressImage (1600 px,
-// WebP o JPEG, sin metadatos) antes de enviarlas, unos 150-400 KB.
-async function sendImage(file) {
-  if (!chat.peer) return;
-  try {
-    const { data, ext } = await compressImage(file);
-    const m = await tryCall('chat_send_image', { peer: chat.peer.code, data, ext });
-    if (m) {
+  const peer = chat.peer;
+  if (!files.length || !peer) return;
+  openPhotoPreview(files, async ({ data, ext, once }) => {
+    const m = await tryCall(once ? 'chat_send_once' : 'chat_send_image', { peer: peer.code, data, ext });
+    if (m && chat.peer?.code === peer.code) {
       upsertMessage(m);
       renderChat(true);
     }
-  } catch (err) {
-    toast(errorText(err), true);
-  }
-}
-
-// Foto de una vez: igual de comprimida, y sin quedarse en este equipo.
-$('#chat-once-file').addEventListener('change', async (ev) => {
-  const file = ev.target.files[0];
-  ev.target.value = '';
-  if (!file || !chat.peer) return;
-  try {
-    const { data, ext } = await compressImage(file, 1440);
-    const m = await tryCall('chat_send_once', { peer: chat.peer.code, data, ext });
-    if (m) {
-      upsertMessage(m);
-      renderChat(true);
-    }
-  } catch (err) {
-    toast(errorText(err), true);
-  }
+  });
 });
 
 // Nota de voz.

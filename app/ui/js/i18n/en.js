@@ -300,7 +300,6 @@ export default {
   'details.enhance': "Enhanced video",
   'details.yes': "Yes",
   'details.no': "No",
-  'chat.once': "View-once photo",
   'chat.voice_note': "Voice note",
   'rec.recording': "Recording…",
   'rec.too_short': "Hold the recording a bit longer",
@@ -311,4 +310,9 @@ export default {
   'once.seen': "View-once photo · viewed",
   'once.hint': "It's deleted when you close it",
   'once.hold': "Press and hold to see it. It's deleted when you close it",
+  'preview.preparing': "Getting the photo ready…",
+  'preview.once': "View once",
+  'preview.once_on': "Can be viewed only once",
+  'preview.size': "{size} to send",
+  'preview.size_many': "{n} photos · {size} in total",
 };

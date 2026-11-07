@@ -137,13 +137,11 @@
             <button type="button" id="chat-attach" class="icon-btn" data-i18n-title="chat.attach"><span data-icon="plus"></span></button>
             <div id="attach-menu" class="menu" hidden>
               <button type="button" data-attach="photo"><span data-icon="image"></span><span data-i18n="chat.photo"></span></button>
-              <button type="button" data-attach="once"><span data-icon="shield"></span><span data-i18n="chat.once"></span></button>
               <button type="button" data-attach="files"><span data-icon="file"></span><span data-i18n="chat.files"></span></button>
               <button type="button" data-attach="folder" class="desktop-only"><span data-icon="folder"></span><span data-i18n="chat.folder"></span></button>
             </div>
           </div>
           <input type="file" id="chat-file" accept="image/*" multiple hidden>
-          <input type="file" id="chat-once-file" accept="image/*" hidden>
           <textarea id="chat-input" rows="1" data-i18n-placeholder="chat.placeholder" data-i18n-title="chat.placeholder"></textarea>
           <button type="button" id="chat-mic" class="icon-btn" data-i18n-title="chat.voice_note"><span data-icon="mic"></span></button>
           <button type="submit" id="chat-send" class="send" disabled data-i18n-title="btn.send"><span data-icon="send"></span></button>
@@ -277,6 +275,21 @@
   </section>
 
   <!-- Visor de fotos. -->
+  <!-- Vista previa de las fotos antes de enviarlas (ver photo-preview.js). -->
+  <div id="photo-preview" class="photo-preview" hidden>
+    <div class="pp-head">
+      <button id="pp-close" class="icon-btn" type="button" data-i18n-title="btn.cancel"><span data-icon="close"></span></button>
+      <span id="pp-count" class="pp-count"></span>
+    </div>
+    <div class="pp-stage"><img id="pp-img" alt=""></div>
+    <div id="pp-thumbs" class="pp-thumbs"></div>
+    <div class="pp-bar">
+      <button id="pp-once" class="pp-once" type="button" aria-pressed="false"><span>1</span></button>
+      <span id="pp-info" class="pp-info"></span>
+      <button id="pp-send" class="send" type="button" data-i18n-title="btn.send"><span data-icon="send"></span></button>
+    </div>
+  </div>
+
   <!-- Foto de una sola vez: se ve aquí y se borra al cerrarla. Sin menú,
        sin arrastrar y, donde el sistema lo permite, sin capturas. -->
   <div id="once-viewer" class="once-viewer" hidden>

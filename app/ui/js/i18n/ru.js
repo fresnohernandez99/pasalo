@@ -300,7 +300,6 @@ export default {
   'details.enhance': "Улучшение видео",
   'details.yes': "Да",
   'details.no': "Нет",
-  'chat.once': "Фото на один просмотр",
   'chat.voice_note': "Голосовое сообщение",
   'rec.recording': "Запись…",
   'rec.too_short': "Запишите чуть подольше",
@@ -311,4 +310,9 @@ export default {
   'once.seen': "Фото на один просмотр · просмотрено",
   'once.hint': "Удалится после закрытия",
   'once.hold': "Удерживайте, чтобы посмотреть. Удалится после закрытия",
+  'preview.preparing': "Подготовка фото…",
+  'preview.once': "Один просмотр",
+  'preview.once_on': "Можно посмотреть только один раз",
+  'preview.size': "{size} при отправке",
+  'preview.size_many': "Фото: {n} · всего {size}",
 };

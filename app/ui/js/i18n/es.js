@@ -300,7 +300,6 @@ export default {
   'details.enhance': "Imagen mejorada",
   'details.yes': "Sí",
   'details.no': "No",
-  'chat.once': "Foto de una vez",
   'chat.voice_note': "Nota de voz",
   'rec.recording': "Grabando…",
   'rec.too_short': "Mantén la grabación un poco más",
@@ -311,4 +310,9 @@ export default {
   'once.seen': "Foto de una vez · vista",
   'once.hint': "Se borra al cerrarla",
   'once.hold': "Mantén pulsado para verla. Se borra al cerrarla",
+  'preview.preparing': "Preparando la foto…",
+  'preview.once': "Ver una vez",
+  'preview.once_on': "Se verá una sola vez",
+  'preview.size': "{size} al enviarla",
+  'preview.size_many': "{n} fotos · {size} en total",
 };

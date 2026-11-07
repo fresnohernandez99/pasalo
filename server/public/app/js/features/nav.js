@@ -38,7 +38,8 @@ let unseen = 0;
 export function updateLayers(focus) {
   const call = !$('#call').hidden;
   const settings = !$('#settings').hidden;
-  $('.app').inert = call || settings;
+  const photo = !$('#photo-preview').hidden || !$('#once-viewer').hidden;
+  $('.app').inert = call || settings || photo;
   $('#settings').inert = call;
   if (focus && !focus.hidden) focus.focus({ preventScroll: true });
 }
