@@ -28,6 +28,8 @@ Grab the latest build from [Releases](https://github.com/fresnohernandez99/pasal
 | Linux | `.AppImage`, `.deb` or `.rpm` |
 | Android | `Pasalo-<version>-android.apk` |
 
+**iPhone and any browser:** open [pasalo-server.vercel.app/app](https://pasalo-server.vercel.app/app/) and, on the iPhone, add it to the Home Screen (Share → Add to Home Screen). It has chat, calls and file transfers with everyone else through the server or by link, but it can't see the local network and only works while the page is open. See [`web/`](web/README.md).
+
 The builds are not signed with Apple or Microsoft certificates yet:
 
 - **macOS:** the first time, right-click Pasalo → **Open** → **Open**.
@@ -168,6 +170,7 @@ crates/pasalo-call   voice calls (codecs and packets)
 server               connection server for Vercel with MongoDB (see server/README.md)
 app/src-tauri        Tauri app (Rust) and the Android project in gen/android
 app/ui               interface (HTML, CSS and JS, no build step), translations in i18n.js
+web                  Pasalo web (iroh and voice in WASM, for the iPhone); published in server/public/app
 ```
 
 ## License

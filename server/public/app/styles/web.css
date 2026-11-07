@@ -1,0 +1,57 @@
+/* Solo en el navegador (ver web/README.md). Lo que no aplica sin red local
+   ni carpetas se esconde, y se añade lo propio de la web. */
+
+/* Sin red local: ni IP ni puerto, ni buscar equipos, ni carpeta de recepción,
+   ni buscar actualizaciones (la web siempre es la última). */
+.web #me-sub,
+.web #refresh,
+.web #perm-banner,
+.web .row-line:has(#set-address),
+.web h2[data-i18n="settings.receiving"],
+.web .card:has(#open-dir),
+.web #check-update,
+.web #update-result { display: none !important; }
+
+/* Lo recibido, esperando a que se guarde. */
+.web-received {
+  position: fixed;
+  left: 12px;
+  right: 12px;
+  bottom: calc(76px + var(--nav));
+  z-index: 15;
+  max-width: 460px;
+  margin: 0 auto;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-2);
+  padding: 10px 12px;
+}
+.web-received[hidden] { display: none; }
+.web-received-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 6px; }
+.web-received-list { max-height: 34vh; overflow-y: auto; display: grid; gap: 6px; }
+.web-received-row { display: flex; align-items: center; gap: 8px; }
+.web-received-info { flex: 1; min-width: 0; }
+.web-received-name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.web-received-row .icon-btn { font-size: 20px; line-height: 1; }
+/* En pantallas anchas, encima de la caja de escribir del chat. */
+@media (min-width: 860px) {
+  .web-received { left: auto; right: 20px; bottom: 84px; width: 420px; }
+}
+
+/* Cómo instalarla en el iPhone. */
+.web-install {
+  position: fixed;
+  left: 12px;
+  right: 12px;
+  top: max(12px, env(safe-area-inset-top));
+  z-index: 16;
+  max-width: 460px;
+  margin: 0 auto;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-2);
+  padding: 14px 16px;
+}
+.web-install p { margin: 6px 0 10px; color: var(--muted); font-size: 14px; }

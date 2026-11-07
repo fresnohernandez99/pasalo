@@ -28,6 +28,8 @@ Pasalo работает на **macOS, Windows, Linux и Android**. Ядро на
 | Linux | `.AppImage`, `.deb` или `.rpm` |
 | Android | `Pasalo-<версия>-android.apk` |
 
+**iPhone и любой браузер:** откройте [pasalo-server.vercel.app/app](https://pasalo-server.vercel.app/app/) и на iPhone добавьте на экран «Домой» («Поделиться» → «На экран „Домой“»). Есть чат, звонки и передача файлов через сервер или по ссылке, но локальная сеть не видна, и всё работает, только пока страница открыта. См. [`web/`](web/README.md).
+
 Сборки пока не подписаны сертификатами Apple и Microsoft:
 
 - **macOS:** при первом запуске нажмите на Pasalo правой кнопкой → **Открыть** → **Открыть**.
@@ -168,6 +170,7 @@ crates/pasalo-call   голосовые звонки (кодеки и пакет
 server               сервер подключения для Vercel с MongoDB (см. server/README.md)
 app/src-tauri        приложение Tauri (Rust) и проект Android в gen/android
 app/ui               интерфейс (HTML, CSS и JS без сборки), переводы в i18n.js
+web                  Pasalo web (iroh и голос в WASM, для iPhone); публикуется в server/public/app
 ```
 
 ## Лицензия

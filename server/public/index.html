@@ -34,27 +34,36 @@
     <p id="lead"></p>
     <div class="actions">
       <a id="open" class="btn primary" hidden></a>
+      <a id="web" class="btn ghost" href="app/"></a>
       <a id="get" class="btn ghost" href="https://github.com/fresnohernandez99/pasalo/releases/latest"></a>
     </div>
     <p id="manual" hidden></p>
     <code id="code" hidden></code>
+    <p id="pwa" hidden></p>
   </main>
   <script>
     // Enlace de un equipo: ?c=<código>&n=<nombre>. Esta página solo abre la
     // app con él; la conexión no pasa por aquí. En Android, con la app
-    // instalada, el enlace la abre directamente y esta página ni se ve.
+    // instalada, el enlace la abre directamente y esta página ni se ve. En el
+    // iPhone no hay app: se abre Pasalo web (/app/) con el mismo enlace.
     const TEXT = {
       es: { home: 'Archivos, chat y llamadas entre tus equipos, en la misma red o por internet.',
             invite: '{name} te invita a conectarte en Pasalo.', someone: 'Alguien',
-            open: 'Abrir en Pasalo', get: 'Descargar Pasalo',
+            open: 'Abrir en Pasalo', get: 'Descargar Pasalo', web: 'Usar en el navegador',
+            webOpen: 'Abrir en el navegador',
+            pwa: '¿Tienes Pasalo en la pantalla de inicio? Copia este enlace y pégalo allí con el botón +.',
             manual: '¿No se abre? Instala Pasalo y pega este código en «Añadir equipo»:' },
       en: { home: 'Files, chat and calls between your devices, on the same network or over the internet.',
             invite: '{name} invites you to connect on Pasalo.', someone: 'Someone',
-            open: 'Open in Pasalo', get: 'Download Pasalo',
+            open: 'Open in Pasalo', get: 'Download Pasalo', web: 'Use in the browser',
+            webOpen: 'Open in the browser',
+            pwa: 'Have Pasalo on your Home Screen? Copy this link and paste it there with the + button.',
             manual: "Doesn't open? Install Pasalo and paste this code in “Add device”:" },
       ru: { home: 'Файлы, чат и звонки между вашими устройствами — в одной сети или через интернет.',
             invite: '{name} приглашает вас подключиться в Pasalo.', someone: 'Кто-то',
-            open: 'Открыть в Pasalo', get: 'Скачать Pasalo',
+            open: 'Открыть в Pasalo', get: 'Скачать Pasalo', web: 'Открыть в браузере',
+            webOpen: 'Открыть в браузере',
+            pwa: 'Pasalo на экране «Домой»? Скопируйте эту ссылку и вставьте её там кнопкой +.',
             manual: 'Не открывается? Установите Pasalo и вставьте этот код в «Добавить устройство»:' },
     };
     const lang = (navigator.language || 'es').slice(0, 2);
@@ -66,6 +75,10 @@
     const name = (params.get('n') || '').slice(0, 64);
     const $ = (id) => document.getElementById(id);
     $('get').textContent = t.get;
+    $('web').textContent = t.web;
+    // En el iPhone (y el iPad) no hay app: solo la web.
+    const ios = /iPhone|iPad|iPod/.test(navigator.userAgent) || (/Macintosh/.test(navigator.userAgent) && navigator.maxTouchPoints > 1);
+    if (ios) $('get').hidden = true;
 
     if (!/^[0-9a-z]{52,64}$/i.test(code)) {
       $('lead').textContent = t.home;
@@ -78,6 +91,22 @@
       lead.append(before, who, after);
 
       const query = new URLSearchParams({ c: code, n: name }).toString();
+      $('web').href = `app/?${query}`;
+      $('web').textContent = t.webOpen;
+      if (ios) {
+        // Sin app que abrir: la web es lo principal. Las apps de la pantalla
+        // de inicio no reciben enlaces, así que se explica cómo pasárselo.
+        $('web').className = 'btn primary';
+        $('pwa').textContent = t.pwa;
+        $('pwa').hidden = false;
+        $('code').textContent = location.href;
+        $('code').hidden = false;
+      } else {
+        openApp(query);
+      }
+    }
+
+    function openApp(query) {
       const custom = `pasalo://add?${query}`;
       const android = /android/i.test(navigator.userAgent);
       const open = $('open');

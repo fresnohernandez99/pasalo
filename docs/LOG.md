@@ -347,3 +347,42 @@ más) y WebRTC se queda para el vídeo. El server es solo señalización.
   GitHub, solo al pulsar; descarga el archivo para ese equipo).
 - Con `RUST_LOG` la app escribe el registro del núcleo por la salida de errores.
 - Versión 1.0.0.
+
+## Sesión 2026-11-07 — Pasalo web (iPhone)
+
+### Qué se hizo
+- `web/`: cliente para el navegador, sobre todo para el iPhone, publicado como
+  PWA en `/app/` del mismo despliegue de Vercel que el server.
+- iroh 1.4 compila para `wasm32-unknown-unknown` (solo relays, pkarr por
+  HTTPS); `pasalo-call` sin dispositivos también. En `web/src/lib.rs` va lo
+  que tiene que ser Rust: iroh, el códec de voz y BLAKE3.
+- Los protocolos (archivos, talk, server) se reescribieron en JavaScript con
+  los mismos mensajes, y `web/js/backend/index.js` da los mismos comandos y
+  eventos que la app de Tauri: la interfaz de `app/ui` se usa tal cual (el
+  build cambia solo `lib/tauri.js`).
+- Lo recibido se guarda por trozos en IndexedDB (se reanuda aunque se cierre
+  la página) y se ofrece con «Guardar» (menú de compartir en el iPhone).
+- La voz: AudioWorklet ↔ códec en WASM ↔ datagramas. El vídeo, el mismo de
+  la app (WebCodecs).
+- Página de enlaces: en el iPhone, el botón principal abre la web.
+- API del server con CORS, para una copia de la web en otro dominio.
+
+### Cómo se probó (Chrome en el Mac, server local)
+- Web ↔ CLI: emparejar por el server, chat en los dos sentidos, archivo de
+  3 MB a la app y de 5 MB desde la app (SHA-256 iguales), voz en los dos
+  sentidos (~20 kbps, sin pérdidas).
+- Web ↔ web (localhost y 127.0.0.1): emparejar, videollamada con cámara y
+  micrófono simulados (vídeo y voz en los dos sentidos), colgar, foto del
+  chat, 20 MB con pausa y reanudación (siguió desde 6,8 MB, hash igual).
+- Abrir un enlace desde la página de enlaces: sale a internet, añade al otro
+  y abre su chat.
+
+### Qué no se ha probado
+- Nada en un iPhone de verdad: Safari (WebCodecs, AudioWorklet, compartir
+  archivos, desbloqueo del audio), la PWA instalada, qué pasa al bloquear.
+- El despliegue en Vercel con la web.
+
+### Notas
+- Una llamada no puede esperar a `AudioContext.resume()`: sin un toque real
+  no termina nunca. Ahora se espera 500 ms y el audio arranca con el primer toque.
+- Un tono puro de prueba no pasa el detector de voz: para probar, uno modulado.

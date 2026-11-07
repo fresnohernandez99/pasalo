@@ -1,0 +1,233 @@
+/* ---------- distribución ----------
+   Móvil: la pantalla principal ocupa todo y el chat entra por la derecha.
+   Escritorio (≥ 860 px): lista a la izquierda y chat a la derecha. */
+
+/* Una sola fila del alto de la ventana: sin `minmax(0, …)` la fila crecía
+   con el contenido (el chat largo) y lo de abajo quedaba fuera. */
+.app { height: 100dvh; display: grid; grid-template-columns: 1fr; grid-template-rows: minmax(0, 1fr); }
+
+.home {
+  position: relative;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+}
+
+.pane {
+  position: fixed;
+  z-index: 10;
+  inset: 0 0 var(--kb) 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--chat-bg);
+  transform: translateX(100%);
+  visibility: hidden;
+  transition: transform .26s cubic-bezier(.2, .8, .2, 1), visibility 0s .26s;
+}
+body.pane-open .pane { transform: none; visibility: visible; transition: transform .26s cubic-bezier(.2, .8, .2, 1); }
+.pane-empty { display: none; }
+
+@media (min-width: 860px) {
+  .app { grid-template-columns: 380px 1fr; }
+  .home { border-right: 1px solid var(--border); }
+  .pane { position: static; transform: none; visibility: visible; transition: none; min-width: 0; min-height: 0; }
+  .pane-empty { flex: 1; display: grid; place-content: center; justify-items: center; gap: 8px; color: var(--muted); padding: 24px; text-align: center; }
+  .back { display: none !important; }
+}
+
+/* ---------- cabecera: este equipo ---------- */
+
+.topbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 12px 4px 16px;
+}
+.mobile .topbar { padding-top: max(12px, env(safe-area-inset-top)); }
+.me { flex: 1; min-width: 0; display: flex; align-items: center; gap: 12px; }
+.me-avatar { border-radius: 50%; }
+.me-text { flex: 1; min-width: 0; display: flex; flex-direction: column; align-items: flex-start; }
+.me-name { max-width: 100%; font-size: 18px; font-weight: 650; text-align: left; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.me-details { display: flex; align-items: center; flex-wrap: wrap; column-gap: 8px; min-width: 0; max-width: 100%; }
+.me-details .sub { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.code-line { display: flex; align-items: center; gap: 2px; margin: -6px 0; }
+
+.netbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin: 8px 16px 4px;
+  padding: 8px 8px 8px 14px;
+  background: var(--surface);
+  border-radius: 999px;
+  box-shadow: var(--shadow-1);
+}
+.net-state { flex: 1; min-width: 0; font-size: 14px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.code-line { display: flex; align-items: center; gap: 2px; }
+.netbar .primary, .netbar .ghost { flex: none; }
+
+.home-body { flex: 1; min-height: 0; overflow-y: auto; padding: 8px 12px calc(96px + var(--nav)); }
+
+.section { margin-top: 10px; }
+.section-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 6px 6px 8px; min-height: 40px; }
+.section-head h2 { font-size: 13px; font-weight: 650; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
+
+.banner {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 4px 12px;
+  align-items: center;
+  margin: 8px 4px 0;
+  padding: 14px;
+  border-radius: var(--radius);
+  background: var(--accent-soft);
+}
+.banner-icon { color: var(--accent); }
+.banner-text { display: flex; flex-direction: column; gap: 2px; font-size: 14px; }
+.banner .primary { grid-column: 2; justify-self: start; margin-top: 6px; }
+
+/* ---------- equipos ---------- */
+
+.peers { display: flex; flex-direction: column; background: var(--surface); border-radius: var(--radius); box-shadow: var(--shadow-1); overflow: hidden; }
+.peers:has(> .empty) { background: none; box-shadow: none; }
+.peer {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 6px 10px 14px;
+  min-height: 68px;
+  cursor: pointer;
+  transition: background .12s;
+}
+.peer + .peer { border-top: 1px solid var(--border); }
+.peer:hover, .peer:active { background: var(--surface-2); }
+.peer.open { background: var(--accent-soft); }
+.peer.drop { background: var(--accent-soft); outline: 2px dashed var(--accent); outline-offset: -4px; }
+.peer .info { flex: 1; min-width: 0; }
+.pname { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.peer .sub { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.peer .icon-btn { color: var(--accent); }
+.peer .icon-btn.subtle { color: var(--muted); }
+
+/* ---------- en línea ahora ---------- */
+
+.net-steps { list-style: none; margin: 0; padding: 14px 16px; display: grid; gap: 10px; background: var(--surface); border-radius: var(--radius); }
+.net-steps li { display: flex; align-items: center; gap: 10px; color: var(--muted); }
+.net-steps li.done { color: var(--text); }
+.net-steps li.current { color: var(--text); font-weight: 600; }
+.net-steps .mark { width: 18px; height: 18px; flex: none; display: grid; place-items: center; border-radius: 50%; border: 2px solid var(--border); }
+.net-steps li.done .mark { border-color: var(--accent); background: var(--accent); color: #fff; }
+.net-steps li.done .mark .i { width: 12px; height: 12px; }
+.net-steps li.current .mark { border-color: var(--accent); border-top-color: transparent; animation: spin .8s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.link-dialog { width: min(92vw, 380px); }
+.link-dialog .net-steps { padding: 0; background: none; margin-bottom: 8px; }
+.lobby-list { display: flex; flex-direction: column; gap: 8px; }
+.lobby-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  padding: 10px 12px;
+  background: var(--surface);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-1);
+}
+.lobby-row.request { background: var(--accent-soft); }
+.lobby-who { flex: 1 1 180px; min-width: 0; display: flex; align-items: center; gap: 10px; }
+.lobby-who .info { min-width: 0; }
+/* Si no caben al lado, los botones bajan a su propia línea. */
+.lobby-actions { display: flex; gap: 8px; margin-left: auto; }
+.lobby-list .empty { background: var(--surface); border-radius: var(--radius); }
+
+/* ---------- transferencias ---------- */
+
+.transfers { display: flex; flex-direction: column; gap: 10px; }
+.tcard {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 12px;
+  padding: 14px;
+  background: var(--surface);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-1);
+}
+.ticon { width: 40px; height: 40px; border-radius: 12px; display: grid; place-items: center; background: var(--accent-soft); color: var(--accent); }
+.tbody { min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+.tline { display: flex; gap: 8px; align-items: baseline; justify-content: space-between; }
+.ttitle { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tstatus { flex: none; font-size: 13px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.tmeta { color: var(--muted); font-size: 13px; font-variant-numeric: tabular-nums; }
+.terror { color: var(--err); font-size: 13px; word-break: break-word; }
+.tcard .bar { margin-top: 6px; }
+.tactions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; margin-top: 8px; }
+.tactions:empty { display: none; }
+.ttext {
+  margin: 4px 0 0;
+  padding: 10px;
+  background: var(--surface-2);
+  border-radius: 8px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 180px;
+  overflow: auto;
+  font: 14px/1.4 var(--mono);
+  -webkit-user-select: text;
+  user-select: text;
+}
+.tcard.done .fill { background: var(--ok); }
+.tcard.done .tstatus { color: var(--ok); }
+.tcard.error .tstatus, .tcard.interrupted .tstatus { color: var(--err); }
+.tcard.retrying .tstatus, .tcard.paused .tstatus, .tcard.request .tstatus, .tcard.waiting .tstatus { color: var(--warn); }
+.tcard.retrying .fill, .tcard.paused .fill { background: var(--warn); }
+.tcard.request { box-shadow: 0 0 0 2px var(--accent), var(--shadow-1); }
+
+/* ---------- botón flotante y pestañas ---------- */
+
+.fab {
+  position: absolute;
+  z-index: 5;
+  right: 18px;
+  bottom: calc(80px + var(--nav));
+  width: 56px;
+  height: 56px;
+  border-radius: 18px;
+  display: grid;
+  place-items: center;
+  background: var(--accent);
+  color: var(--accent-text);
+  box-shadow: var(--shadow-2);
+  transition: transform .15s;
+}
+.fab:active { transform: scale(.94); }
+.fab .i { width: 26px; height: 26px; }
+body[data-tab="transfers"] .fab { display: none; }
+/* En Transferencias no hace falta este equipo ni la conexión: solo la lista. */
+body[data-tab="transfers"] :is(.topbar, .netbar) { display: none; }
+.mobile[data-tab="transfers"] .home-body { padding-top: max(8px, env(safe-area-inset-top)); }
+
+.tabbar {
+  display: flex;
+  background: var(--surface);
+  border-top: 1px solid var(--border);
+  padding-bottom: var(--nav);
+}
+.tab {
+  flex: 1;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  padding: 10px 0 8px;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 500;
+}
+.tab .i { width: 24px; height: 24px; padding: 0; }
+.tab > span:first-child { display: grid; place-items: center; width: 60px; height: 30px; border-radius: 15px; transition: background .15s; }
+.tab.on { color: var(--accent); }
+.tab.on > span:first-child { background: var(--accent-soft); }
+.tab .badge { position: absolute; top: 4px; left: calc(50% + 12px); }

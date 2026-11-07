@@ -1,0 +1,208 @@
+* { box-sizing: border-box; }
+
+/* Que `hidden` gane aunque la clase ponga display. */
+[hidden] { display: none !important; }
+
+html, body { height: 100%; margin: 0; }
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font: 15px/1.4 var(--font);
+  -webkit-font-smoothing: antialiased;
+  -webkit-tap-highlight-color: transparent;
+  -webkit-user-select: none;
+  user-select: none;
+  cursor: default;
+  overflow: hidden;
+}
+
+h1, h2, h3 { margin: 0; font-weight: 650; }
+
+.i { width: 22px; height: 22px; flex: none; display: block; }
+
+/* ---------- botones ---------- */
+
+button {
+  font: inherit;
+  color: inherit;
+  border: none;
+  background: none;
+  padding: 0;
+  cursor: pointer;
+}
+button:disabled { opacity: .45; cursor: default; }
+button:focus-visible, [tabindex]:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+.primary, .ghost, .danger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: var(--tap);
+  padding: 0 18px;
+  border-radius: 999px;
+  font-weight: 600;
+  white-space: nowrap;
+  transition: background .15s, filter .15s, transform .1s;
+}
+.primary { background: var(--accent); color: var(--accent-text); }
+.primary:not(:disabled):active { transform: scale(.97); }
+.ghost { background: var(--surface-2); color: var(--text); }
+.ghost:not(:disabled):hover { filter: brightness(.97); }
+.danger { background: color-mix(in srgb, var(--err) 14%, transparent); color: var(--err); }
+.danger-text { color: var(--err); }
+.small { min-height: 34px; padding: 0 14px; font-size: 14px; }
+
+.icon-btn {
+  display: inline-grid;
+  place-items: center;
+  width: var(--tap);
+  height: var(--tap);
+  border-radius: 50%;
+  color: var(--text);
+  flex: none;
+  transition: background .15s;
+}
+.icon-btn:not(:disabled):hover, .icon-btn.on { background: var(--surface-2); }
+.icon-btn.small { width: 34px; height: 34px; }
+.icon-btn.small .i { width: 18px; height: 18px; }
+.icon-btn.subtle { color: var(--muted); }
+
+/* ---------- campos ---------- */
+
+input, textarea, select {
+  font: inherit;
+  color: var(--text);
+  background: var(--surface-2);
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  padding: 11px 12px;
+  outline: none;
+  -webkit-user-select: text;
+  user-select: text;
+  transition: border-color .15s, background .15s;
+}
+input:focus, textarea:focus, select:focus { border-color: var(--accent); background: var(--surface); }
+
+.field { display: flex; flex-direction: column; gap: 6px; font-size: 14px; color: var(--muted); }
+.field + .field { margin-top: 14px; }
+/* Interruptor: texto a la izquierda, casilla a la derecha. */
+.switch-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; cursor: pointer; }
+.switch-row input { width: 22px; height: 22px; flex: none; accent-color: var(--accent); }
+.field-switch { margin-top: 16px; font-size: 15px; }
+.field-switch > span { display: grid; gap: 2px; }
+.field-switch small { font-size: 13px; }
+.grow { flex: 1; min-width: 0; }
+
+/* ---------- piezas ---------- */
+
+.sub { color: var(--muted); font-size: 14px; }
+.hint { color: var(--muted); font-size: 14px; margin: 12px 4px 0; }
+.code { font-family: var(--mono); font-size: 13px; color: var(--muted); -webkit-user-select: text; user-select: text; }
+
+.avatar {
+  --hue: 220;
+  position: relative;
+  flex: none;
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background: hsl(var(--hue) 70% 92%);
+  color: hsl(var(--hue) 55% 35%);
+  font-weight: 650;
+  font-size: 16px;
+}
+@media (prefers-color-scheme: dark) {
+  .avatar { background: hsl(var(--hue) 35% 24%); color: hsl(var(--hue) 70% 82%); }
+}
+.avatar.small { width: 36px; height: 36px; font-size: 14px; }
+.avatar.big { width: 64px; height: 64px; font-size: 24px; }
+.avatar.huge { width: 112px; height: 112px; font-size: 42px; }
+/* Tipo de equipo, en la esquina inferior derecha. */
+.avatar .device {
+  position: absolute;
+  right: -3px;
+  bottom: -3px;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background: var(--surface);
+  color: var(--muted);
+  box-shadow: 0 0 0 2px var(--surface);
+}
+.avatar .device .i { width: 13px; height: 13px; }
+.avatar.small .device { width: 17px; height: 17px; }
+.avatar.small .device .i { width: 11px; height: 11px; }
+
+.badge {
+  display: inline-grid;
+  place-items: center;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 6px;
+  border-radius: 10px;
+  background: var(--accent);
+  color: var(--accent-text);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); flex: none; }
+.dot.connecting { background: var(--warn); animation: pulse 1s infinite alternate; }
+.dot.online { background: var(--warn); }
+.dot.paired { background: var(--ok); }
+@keyframes pulse { to { opacity: .3; } }
+
+.empty { color: var(--muted); text-align: center; padding: 36px 20px; font-size: 14px; display: grid; justify-items: center; gap: 6px; }
+.empty.small { padding: 16px 12px; }
+.empty-icon { width: 56px; height: 56px; border-radius: 50%; display: grid; place-items: center; background: var(--surface-2); color: var(--muted); margin-bottom: 6px; }
+.empty-icon .i { width: 26px; height: 26px; }
+.empty-title { color: var(--text); font-weight: 600; font-size: 15px; }
+
+.bar { height: 6px; background: var(--surface-2); border-radius: 3px; overflow: hidden; }
+.fill { height: 100%; width: 0; background: var(--accent); border-radius: 3px; transition: width .2s linear; }
+
+/* ---------- diálogos y avisos ---------- */
+
+dialog {
+  border: none;
+  border-radius: 20px;
+  background: var(--surface);
+  color: var(--text);
+  width: min(440px, calc(100vw - 32px));
+  padding: 20px;
+  box-shadow: var(--shadow-2);
+}
+dialog::backdrop { background: rgb(0 0 0 / .4); }
+dialog h3 { margin: 0 0 14px; font-size: 18px; }
+dialog input, dialog textarea { width: 100%; }
+dialog textarea { resize: vertical; }
+.dialog-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
+
+.toast {
+  position: fixed;
+  z-index: 50;
+  left: 50%;
+  bottom: calc(24px + var(--nav) + var(--kb));
+  max-width: min(520px, calc(100vw - 32px));
+  padding: 11px 16px;
+  border-radius: 12px;
+  background: var(--text);
+  color: var(--bg);
+  font-size: 14px;
+  box-shadow: var(--shadow-2);
+  opacity: 0;
+  transform: translate(-50%, 12px);
+  transition: opacity .2s, transform .2s;
+  pointer-events: none;
+}
+.toast.show { opacity: 1; transform: translate(-50%, 0); }
+.toast.error { background: var(--err); color: #fff; }
+
+/* En el móvil no hay carpetas que elegir, ni arrastrar y soltar, ni Finder. */
+.mobile .desktop-only, .mobile .drag-hint { display: none !important; }

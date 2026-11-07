@@ -1,0 +1,302 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Pasalo</title>
+  <link rel="stylesheet" href="styles/tokens.css">
+  <link rel="stylesheet" href="styles/base.css">
+  <link rel="stylesheet" href="styles/home.css">
+  <link rel="stylesheet" href="styles/chat.css">
+  <link rel="stylesheet" href="styles/screens.css">
+  <link rel="stylesheet" href="styles/call.css">
+  <link rel="stylesheet" href="styles/viewer.css">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+  <link rel="icon" href="icons/icon-192.png">
+  <meta name="theme-color" content="#2f6bff">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="Pasalo">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <link rel="stylesheet" href="styles/web.css">
+</head>
+<body>
+  <div class="app">
+    <!-- Pantalla principal: este equipo, los equipos y las transferencias.
+         En pantallas anchas es la columna de la izquierda. -->
+    <aside class="home">
+      <header class="topbar">
+        <div class="me">
+          <button id="me" class="me-avatar" type="button" data-i18n-title="settings.device"><span class="avatar" id="me-avatar">·</span></button>
+          <div class="me-text">
+            <button id="me-name" class="me-name" type="button" data-i18n-title="settings.device"></button>
+            <div id="me-details" class="me-details">
+              <span class="sub" id="me-sub"></span>
+              <span id="code-line" class="code-line" hidden>
+                <span class="code" id="me-code" data-i18n-title="me.code_title"></span>
+                <button id="copy-code" class="icon-btn small" type="button" data-i18n-title="btn.copy_link"><span data-icon="copy"></span></button>
+              </span>
+            </div>
+          </div>
+        </div>
+        <button id="open-settings" class="icon-btn" type="button" data-i18n-title="settings.title"><span data-icon="gear"></span></button>
+      </header>
+      <div class="netbar">
+        <span id="net-dot" class="dot"></span>
+        <span id="net-state" class="net-state"></span>
+        <button id="net-toggle" class="primary small" type="button"></button>
+      </div>
+
+      <div class="home-body">
+        <section class="tab-page" data-page="peers">
+          <div id="perm-banner" class="banner" hidden>
+            <span class="banner-icon" data-icon="wifi"></span>
+            <div class="banner-text">
+              <strong data-i18n="perm.local_title"></strong>
+              <span data-i18n="perm.local_text"></span>
+            </div>
+            <button id="perm-allow" class="primary small" type="button" data-i18n="perm.allow"></button>
+          </div>
+
+          <!-- Mientras se conecta: qué paso va, hasta tener el ID de iroh en la red. -->
+          <div id="net-progress" class="section net-progress" hidden>
+            <ol id="net-steps" class="net-steps"></ol>
+          </div>
+
+          <div id="lobby" class="section" hidden>
+            <div class="section-head">
+              <h2 data-i18n="lobby.title"></h2>
+              <span id="lobby-status" class="sub"></span>
+            </div>
+            <div id="lobby-list" class="lobby-list"></div>
+          </div>
+
+          <div class="section">
+            <div class="section-head">
+              <h2 data-i18n="peers.title"></h2>
+              <button id="refresh" class="icon-btn small" type="button" data-i18n-title="peers.search"><span data-icon="refresh"></span></button>
+            </div>
+            <div id="peers" class="peers"></div>
+            <p id="peers-hint" class="hint"><span data-i18n="peers.chat_or_send"></span> <span class="drag-hint" data-i18n="peers.hint"></span></p>
+          </div>
+        </section>
+
+        <section class="tab-page" data-page="transfers" hidden>
+          <div class="section">
+            <div class="section-head">
+              <h2 data-i18n="transfers.title"></h2>
+              <button id="clear" class="ghost small" type="button" data-i18n="activity.clear"></button>
+            </div>
+            <div id="transfers" class="transfers"></div>
+            <div id="transfers-empty" class="empty">
+              <div class="empty-icon" data-icon="transfers"></div>
+              <div data-i18n="activity.empty"></div>
+            </div>
+          </div>
+        </section>
+      </div>
+
+      <button id="add-fab" class="fab" type="button" data-i18n-title="peers.add_title"><span data-icon="plus"></span></button>
+
+      <nav class="tabbar">
+        <button class="tab on" type="button" data-tab="peers">
+          <span data-icon="devices"></span>
+          <span data-i18n="nav.devices"></span>
+        </button>
+        <button class="tab" type="button" data-tab="transfers">
+          <span data-icon="transfers"></span>
+          <span data-i18n="nav.transfers"></span>
+          <span class="badge" id="transfers-badge" hidden></span>
+        </button>
+      </nav>
+    </aside>
+
+    <!-- Chat con un equipo. En el móvil es una pantalla encima de la principal. -->
+    <main class="pane">
+      <div id="pane-empty" class="pane-empty">
+        <div class="empty-icon" data-icon="chat"></div>
+        <div data-i18n="chat.select"></div>
+      </div>
+
+      <section id="chat" class="chat" hidden>
+        <header class="chat-head">
+          <button id="chat-close" class="icon-btn back" type="button" data-i18n-title="btn.back"><span data-icon="back"></span></button>
+          <span id="chat-avatar" class="avatar"></span>
+          <div class="chat-who">
+            <div id="chat-name" class="chat-name"></div>
+            <div id="chat-sub" class="sub"></div>
+          </div>
+          <button id="chat-voice" class="icon-btn" type="button" data-i18n-title="call.voice"><span data-icon="phone"></span></button>
+          <button id="chat-video" class="icon-btn" type="button" data-i18n-title="call.video"><span data-icon="video"></span></button>
+        </header>
+        <div id="chat-strip" class="chat-strip" hidden></div>
+        <div id="chat-list" class="chat-list"></div>
+        <form id="chat-form" class="composer">
+          <div class="attach">
+            <button type="button" id="chat-attach" class="icon-btn" data-i18n-title="chat.attach"><span data-icon="plus"></span></button>
+            <div id="attach-menu" class="menu" hidden>
+              <button type="button" data-attach="photo"><span data-icon="image"></span><span data-i18n="chat.photo"></span></button>
+              <button type="button" data-attach="files"><span data-icon="file"></span><span data-i18n="chat.files"></span></button>
+              <button type="button" data-attach="folder" class="desktop-only"><span data-icon="folder"></span><span data-i18n="chat.folder"></span></button>
+            </div>
+          </div>
+          <input type="file" id="chat-file" accept="image/*" multiple hidden>
+          <textarea id="chat-input" rows="1" data-i18n-placeholder="chat.placeholder"></textarea>
+          <button type="submit" id="chat-send" class="send" disabled data-i18n-title="btn.send"><span data-icon="send"></span></button>
+        </form>
+      </section>
+    </main>
+  </div>
+
+  <!-- Ajustes: cada cambio se guarda al momento. -->
+  <section id="settings" class="screen" hidden>
+    <header class="screen-head">
+      <button id="settings-close" class="icon-btn" type="button" data-i18n-title="btn.back"><span data-icon="back"></span></button>
+      <h1 data-i18n="settings.title"></h1>
+    </header>
+    <div class="screen-body">
+      <h2 data-i18n="settings.device"></h2>
+      <div class="card">
+        <div class="device-head">
+          <span class="avatar big" id="set-avatar"></span>
+          <label class="field grow"><span data-i18n="settings.name"></span><input id="set-name" spellcheck="false" autocomplete="off"></label>
+        </div>
+        <div class="row-line" id="set-code-row">
+          <span class="row-label" data-i18n="settings.code"></span>
+          <span class="code" id="set-code"></span>
+          <button id="set-copy-code" class="icon-btn small" type="button" data-i18n-title="btn.copy_link"><span data-icon="copy"></span></button>
+        </div>
+        <div class="row-line">
+          <span class="row-label" data-i18n="settings.address"></span>
+          <span id="set-address" class="sub"></span>
+        </div>
+      </div>
+
+      <h2 data-i18n="settings.receiving"></h2>
+      <div class="card">
+        <div class="field">
+          <span data-i18n="dir.caption"></span>
+          <div class="dir-row">
+            <button id="open-dir" class="ghost dir" type="button"><span data-icon="folder"></span><span id="dir-label">…</span></button>
+            <button id="change-dir" class="ghost small desktop-only" type="button" data-i18n="dir.change"></button>
+          </div>
+        </div>
+      </div>
+
+      <h2 data-i18n="settings.calls"></h2>
+      <div class="card">
+        <label class="field"><span data-i18n="settings.voice_mode"></span><select id="set-voice-mode"></select></label>
+        <label class="field"><span data-i18n="settings.video_audio_mode"></span><select id="set-video-audio-mode"></select></label>
+        <label class="field"><span data-i18n="settings.video_quality"></span><select id="set-video-quality"></select></label>
+        <label class="switch-row field-switch"><span><span data-i18n="settings.blur"></span><small class="sub" data-i18n="settings.blur_hint"></small></span><input type="checkbox" id="set-blur"></label>
+        <label class="switch-row field-switch"><span><span data-i18n="settings.enhance"></span><small class="sub" data-i18n="settings.enhance_hint"></small></span><input type="checkbox" id="set-enhance"></label>
+        <p class="hint" data-i18n="settings.calls_hint"></p>
+      </div>
+
+      <h2 data-i18n="settings.general"></h2>
+      <div class="card">
+        <label class="field"><span data-i18n="settings.language"></span><select id="lang" aria-label="Language"></select></label>
+      </div>
+
+      <h2 data-i18n="settings.network"></h2>
+      <div class="card">
+        <label class="field"><span data-i18n="settings.server"></span><input id="set-server" placeholder="https://…vercel.app" autocomplete="off" spellcheck="false"></label>
+        <p class="hint" data-i18n="settings.server_hint"></p>
+      </div>
+
+      <h2 data-i18n="settings.about"></h2>
+      <div class="card">
+        <div class="row-line first">
+          <span class="row-label" data-i18n="settings.version"></span>
+          <span id="set-version" class="sub"></span>
+          <button id="check-update" class="ghost small" type="button" data-i18n="update.check"></button>
+        </div>
+        <div id="update-result" class="update-result" hidden>
+          <span id="update-text"></span>
+          <button id="update-get" class="primary small" type="button" data-i18n="update.download" hidden></button>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Llamada de voz o vídeo. -->
+  <section id="call" class="call" hidden>
+    <canvas id="call-remote"></canvas>
+    <video id="call-local" autoplay playsinline muted></video>
+    <!-- La calidad, aparte de los botones de siempre: así no se cambia sin querer. -->
+    <div id="call-quality" class="call-quality">
+      <button id="call-quality-btn" class="call-quality-btn" type="button" data-i18n-title="call.quality" aria-expanded="false"><span data-icon="signal"></span></button>
+      <div id="call-quality-menu" class="call-quality-menu" hidden>
+        <label><span data-i18n="call.audio_q"></span><select id="call-mode"></select></label>
+        <label id="call-vmode-btn"><span data-i18n="call.video_q"></span><select id="call-vmode"></select></label>
+        <label id="call-blur-row" class="switch-row"><span data-i18n="call.blur"></span><input type="checkbox" id="call-blur"></label>
+      </div>
+    </div>
+    <div class="call-top">
+      <div class="call-info">
+        <div class="avatar huge" id="call-avatar"></div>
+        <div id="call-name" class="call-name"></div>
+        <div id="call-state" class="call-state"></div>
+        <div id="call-stats" class="call-stats"></div>
+        <div id="call-remote-off" class="call-remote-off" hidden><span data-icon="videoOff"></span><span data-i18n="call.cam_off_remote"></span></div>
+      </div>
+    </div>
+    <div class="call-bar">
+      <div id="call-controls-live" class="call-grid">
+        <button id="call-mute" class="cbtn" type="button"><span class="ring" data-icon="micOff"></span><span data-i18n="call.mute"></span></button>
+        <button id="call-speaker" class="cbtn" type="button"><span class="ring" data-icon="speaker"></span><span data-i18n="call.speaker"></span></button>
+        <button id="call-cam" class="cbtn" type="button"><span class="ring" data-icon="videoOff"></span><span id="call-cam-label"></span></button>
+        <button id="call-flip" class="cbtn" type="button"><span class="ring" data-icon="flip"></span><span data-i18n="call.flip"></span></button>
+      </div>
+      <div class="call-actions">
+        <button id="call-decline" class="round danger" type="button"><span class="disc" data-icon="hangup"></span><span data-i18n="call.decline"></span></button>
+        <button id="call-accept" class="round ok" type="button"><span class="disc" data-icon="phone"></span><span data-i18n="call.accept"></span></button>
+        <button id="call-hangup" class="round danger" type="button" data-i18n-title="call.hangup"><span class="disc" data-icon="hangup"></span></button>
+      </div>
+    </div>
+  </section>
+
+  <!-- Visor de fotos. -->
+  <div id="viewer" class="viewer" hidden>
+    <div class="viewer-bg"></div>
+    <img id="viewer-img" alt="">
+    <button id="viewer-close" class="icon-btn viewer-close" type="button" data-i18n-title="viewer.close"><span data-icon="close"></span></button>
+  </div>
+
+  <!-- Abierta con un enlace: primero se conecta (hasta tener iroh listo) y después se añade al otro. -->
+  <dialog id="link-dialog" class="link-dialog">
+    <h3 id="link-title"></h3>
+    <ol id="link-steps" class="net-steps"></ol>
+    <div class="dialog-actions">
+      <button type="button" class="ghost" id="link-cancel" data-i18n="btn.cancel"></button>
+    </div>
+  </dialog>
+
+  <dialog id="add-dialog">
+    <form id="manual">
+      <h3 data-i18n="peers.add_title"></h3>
+      <input id="manual-ip" data-i18n-placeholder="peers.add_placeholder" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" inputmode="text">
+      <div class="dialog-actions">
+        <button type="button" class="ghost" id="add-cancel" data-i18n="btn.cancel"></button>
+        <button type="submit" class="primary" data-i18n="btn.accept"></button>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- Texto suelto, para equipos sin chat (añadidos por IP o versiones viejas). -->
+  <dialog id="text-dialog">
+    <form method="dialog" id="text-form">
+      <h3><span data-i18n="text.title"></span> <span id="text-target"></span></h3>
+      <textarea id="text-body" rows="7" data-i18n-placeholder="text.placeholder"></textarea>
+      <div class="dialog-actions">
+        <button type="button" class="ghost" id="text-cancel" data-i18n="btn.cancel"></button>
+        <button type="submit" class="primary" data-i18n="btn.send"></button>
+      </div>
+    </form>
+  </dialog>
+
+  <div id="toast" class="toast" role="status" hidden></div>
+  <script type="module" src="js/main.js"></script>
+</body>
+</html>

@@ -28,6 +28,8 @@ Baja la última versión de [Releases](https://github.com/fresnohernandez99/pasa
 | Linux | `.AppImage`, `.deb` o `.rpm` |
 | Android | `Pasalo-<versión>-android.apk` |
 
+**iPhone y cualquier navegador:** abre [pasalo-server.vercel.app/app](https://pasalo-server.vercel.app/app/) y, en el iPhone, añádela a la pantalla de inicio (Compartir → Añadir a pantalla de inicio). Tiene chat, llamadas y envío de archivos con los demás por el server o por enlace, pero no ve la red local y solo funciona con la página abierta. Ver [`web/`](web/README.md).
+
 Todavía no van firmadas con certificados de Apple ni de Microsoft:
 
 - **macOS:** la primera vez, clic derecho en Pasalo → **Abrir** → **Abrir**.
@@ -168,6 +170,7 @@ crates/pasalo-call   llamadas de voz (códecs y paquetes)
 server               server de conexión para Vercel con MongoDB (ver server/README.md)
 app/src-tauri        app de Tauri (Rust) y el proyecto de Android en gen/android
 app/ui               interfaz (HTML, CSS y JS, sin paso de compilación), traducciones en i18n.js
+web                  Pasalo web (iroh y la voz en WASM, para el iPhone); se publica en server/public/app
 ```
 
 ## Licencia

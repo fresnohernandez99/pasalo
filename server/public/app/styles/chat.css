@@ -1,0 +1,162 @@
+.chat { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+
+.chat-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 8px 8px 6px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+}
+.mobile .chat-head { padding-top: max(8px, env(safe-area-inset-top)); }
+@media (min-width: 860px) { .chat-head { padding-left: 16px; } }
+.chat-who { flex: 1; min-width: 0; }
+.chat-name { font-weight: 650; font-size: 16px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.chat-head .icon-btn:not(.back) { color: var(--accent); }
+
+/* Lo que se envía o se recibe de este equipo, encima de los mensajes. */
+.chat-strip { display: flex; flex-direction: column; gap: 1px; background: var(--border); border-bottom: 1px solid var(--border); }
+.strip-row { display: flex; align-items: center; gap: 10px; padding: 8px 12px; background: var(--surface); }
+.strip-icon { color: var(--accent); }
+.strip-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 5px; }
+.strip-line { display: flex; justify-content: space-between; gap: 8px; font-size: 13px; }
+.strip-title { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.strip-status { flex: none; color: var(--muted); font-variant-numeric: tabular-nums; }
+.strip-row .bar { height: 4px; }
+
+/* ---------- mensajes ---------- */
+
+.chat-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  display: flex;
+  flex-direction: column;
+  padding: 10px 12px 14px;
+}
+.chat-list > .empty { margin: auto; max-width: 320px; }
+
+.day { align-self: center; margin: 14px 0 8px; }
+.day span { display: block; padding: 4px 12px; border-radius: 999px; background: var(--surface); color: var(--muted); font-size: 12px; font-weight: 600; box-shadow: var(--shadow-1); }
+
+.msg { display: flex; margin-top: 2px; }
+.msg.first { margin-top: 8px; }
+.msg.out { justify-content: flex-end; }
+.bubble {
+  position: relative;
+  max-width: min(78%, 520px);
+  padding: 7px 10px 6px 12px;
+  border-radius: 18px;
+  background: var(--bubble-in);
+  box-shadow: var(--shadow-1);
+  -webkit-user-select: text;
+  user-select: text;
+  overflow-wrap: anywhere;
+}
+.msg.out .bubble { background: var(--bubble-out); color: var(--bubble-out-text); }
+/* Las esquinas de dentro del grupo, menos redondas; la última lleva «cola». */
+.msg.in:not(.first) .bubble { border-top-left-radius: 6px; }
+.msg.in:not(.last) .bubble { border-bottom-left-radius: 6px; }
+.msg.out:not(.first) .bubble { border-top-right-radius: 6px; }
+.msg.out:not(.last) .bubble { border-bottom-right-radius: 6px; }
+.msg.in.last .bubble { border-bottom-left-radius: 4px; }
+.msg.out.last .bubble { border-bottom-right-radius: 4px; }
+
+.msg-text { white-space: pre-wrap; }
+/* La hora va dentro de la burbuja, al final, sin empujar el texto. */
+.meta {
+  float: right;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  margin: 6px 0 -2px 10px;
+  font-size: 11px;
+  line-height: 1;
+  opacity: .7;
+  font-variant-numeric: tabular-nums;
+}
+.tick .i { width: 14px; height: 14px; }
+.tick.pending { opacity: .8; }
+
+/* Foto: ocupa la burbuja; si va sola, la hora encima de la foto. */
+.msg-img {
+  display: block;
+  width: min(260px, 64vw);
+  max-height: 340px;
+  aspect-ratio: 4 / 3;
+  margin: -3px -6px 4px -8px;
+  border-radius: 14px;
+  overflow: hidden;
+  background: var(--surface-2);
+  cursor: zoom-in;
+}
+.msg-img img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.msg.photo .bubble { padding: 4px; }
+.msg.photo .msg-img { margin: 0; }
+.msg.photo .meta {
+  position: absolute;
+  right: 10px;
+  bottom: 10px;
+  margin: 0;
+  padding: 3px 6px;
+  border-radius: 8px;
+  background: rgb(0 0 0 / .45);
+  color: #fff;
+  opacity: 1;
+}
+
+/* ---------- escribir ---------- */
+
+.composer {
+  display: flex;
+  align-items: flex-end;
+  gap: 6px;
+  padding: 8px 8px calc(8px + var(--nav));
+  background: var(--surface);
+  border-top: 1px solid var(--border);
+}
+.composer textarea {
+  flex: 1;
+  resize: none;
+  max-height: 140px;
+  min-height: var(--tap);
+  border-radius: 22px;
+  padding: 11px 16px;
+  line-height: 1.35;
+}
+.composer .icon-btn { color: var(--muted); }
+.send {
+  width: var(--tap);
+  height: var(--tap);
+  flex: none;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background: var(--accent);
+  color: var(--accent-text);
+  transition: transform .15s, opacity .15s;
+}
+.send:disabled { opacity: .35; }
+.send:not(:disabled):active { transform: scale(.92); }
+.send .i { width: 20px; height: 20px; }
+
+.attach { position: relative; }
+.menu {
+  position: absolute;
+  z-index: 3;
+  left: 0;
+  bottom: calc(100% + 10px);
+  min-width: 190px;
+  padding: 6px;
+  border-radius: 16px;
+  background: var(--surface);
+  box-shadow: var(--shadow-2);
+  display: flex;
+  flex-direction: column;
+  animation: pop .14s ease-out;
+}
+.menu button { display: flex; align-items: center; gap: 12px; padding: 12px 14px; border-radius: 10px; text-align: left; font-weight: 500; }
+.menu button:hover { background: var(--surface-2); }
+.menu .i { color: var(--accent); }
+@keyframes pop { from { opacity: 0; transform: translateY(6px) scale(.98); } }

@@ -8,3 +8,4 @@ node_modules
 # Claves de firma: nunca al repositorio (es público).
 *.jks
 *.keystore
+/web/target
