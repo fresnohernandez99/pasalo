@@ -296,4 +296,8 @@ export default {
   'reason.timeout': "никто не ответил",
   'reason.cancelled': "отменено",
   'reason.too_large': "слишком большой объём",
+  'details.blur': "Размытие фона",
+  'details.enhance': "Улучшение видео",
+  'details.yes': "Да",
+  'details.no': "Нет",
 };

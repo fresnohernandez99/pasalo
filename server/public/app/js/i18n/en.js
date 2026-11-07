@@ -296,4 +296,8 @@ export default {
   'reason.timeout': "nobody answered",
   'reason.cancelled': "it was cancelled",
   'reason.too_large': "it's too large",
+  'details.blur': "Background blur",
+  'details.enhance': "Enhanced video",
+  'details.yes': "Yes",
+  'details.no': "No",
 };

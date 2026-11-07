@@ -600,7 +600,7 @@ const commands = {
 /** Lo que se sube de cada llamada: nada de con quién fue. */
 const STATS_FIELDS = [
   'id', 'media', 'role', 'outcome', 'started', 'duration_ms', 'audio', 'video', 'sent', 'received', 'video_sent',
-  'video_received', 'lost', 'recovered',
+  'video_received', 'lost', 'recovered', 'blur', 'enhance',
 ];
 
 function statsFields(record) {
