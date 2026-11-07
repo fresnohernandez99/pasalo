@@ -67,6 +67,9 @@ button:focus-visible, [tabindex]:focus-visible { outline: 2px solid var(--accent
 .icon-btn:not(:disabled):hover, .icon-btn.on { background: var(--surface-2); }
 .icon-btn.small { width: 34px; height: 34px; }
 .icon-btn.small .i { width: 18px; height: 18px; }
+/* En el móvil, todo lo que se toca mide al menos lo que un dedo. */
+.mobile .small { min-height: var(--tap); }
+.mobile .icon-btn.small { width: var(--tap); height: var(--tap); }
 .icon-btn.subtle { color: var(--muted); }
 
 /* ---------- campos ---------- */
@@ -203,6 +206,10 @@ dialog textarea { resize: vertical; }
 }
 .toast.show { opacity: 1; transform: translate(-50%, 0); }
 .toast.error { background: var(--err); color: #fff; }
+/* En oscuro, --err es claro: el texto blanco no se leería. */
+@media (prefers-color-scheme: dark) {
+  .toast.error { background: #b42318; }
+}
 
 /* En el móvil no hay carpetas que elegir, ni arrastrar y soltar, ni Finder. */
 .mobile .desktop-only, .mobile .drag-hint { display: none !important; }

@@ -9,7 +9,7 @@ import { initials } from '../lib/format.js';
 import { icon } from '../lib/icons.js';
 import { call, invoke, listen } from '../lib/tauri.js';
 import { toast } from '../lib/toast.js';
-import { isMobile } from '../state.js';
+import { app, isMobile } from '../state.js';
 import { activePeerCode, openChat, unreadCount } from './chat.js';
 import { openLink } from './lobby.js';
 import { openTextDialog, pauseFor, resumeFor, sendPaths } from './transfers.js';
@@ -166,7 +166,8 @@ $('#peers').addEventListener('click', async (ev) => {
 });
 
 $('#peers').addEventListener('keydown', (ev) => {
-  if (ev.key !== 'Enter' || !ev.target.classList.contains('peer')) return;
+  if ((ev.key !== 'Enter' && ev.key !== ' ') || !ev.target.classList.contains('peer')) return;
+  ev.preventDefault();
   const peer = peers.get(ev.target.dataset.id);
   if (peer) openPeer(peer);
 });
@@ -194,6 +195,11 @@ $('#manual').addEventListener('submit', async (ev) => {
   }
   if (/^[a-z]+:\/\//i.test(value)) {
     toast(t('toast.link_invalid'), true);
+    return;
+  }
+  // En el navegador no hay red local: una IP no lleva a ninguna parte.
+  if (app.settings?.web) {
+    toast(t('toast.web_code_only'), true);
     return;
   }
   addManualPeer(value);

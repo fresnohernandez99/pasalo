@@ -14,6 +14,7 @@ import { onBack } from './nav.js';
 export function openSettings() {
   fill();
   fillCallSettings();
+  refreshStats();
   $('#settings').hidden = false;
 }
 
@@ -100,6 +101,8 @@ $('#lang').addEventListener('change', (ev) => {
 
 $('#set-server').addEventListener('change', async (ev) => {
   const server = ev.target.value.trim();
+  // Vacío no vale (sin server no hay a qué conectarse): vuelve el que había.
+  if (!server) ev.target.value = app.settings.server || '';
   if (!server || server === app.settings.server) return;
   try {
     await call('set_server', { server });
@@ -107,6 +110,28 @@ $('#set-server').addEventListener('change', async (ev) => {
     toast(t('toast.saved'));
   } catch {
     ev.target.value = app.settings.server || '';
+  }
+});
+
+// ---------- estadísticas de llamadas ----------
+
+// Se suben solo al pulsar el botón: nada sale del equipo por su cuenta.
+async function refreshStats() {
+  const n = await invoke('stats_pending').catch(() => 0);
+  $('#stats-pending').textContent = n ? t('stats.pending', { n }) : t('stats.none');
+  $('#stats-upload').disabled = !n;
+}
+
+$('#stats-upload').addEventListener('click', async () => {
+  const button = $('#stats-upload');
+  button.disabled = true;
+  try {
+    const n = await call('stats_upload');
+    toast(t('toast.stats_uploaded', { n }));
+  } catch {
+    // call() ya avisó.
+  } finally {
+    refreshStats();
   }
 });
 
@@ -144,7 +169,10 @@ $('#update-get').addEventListener('click', () => {
   if (release) call('open_release', { url: release.download || release.url }).catch(() => {});
 });
 
-on('lang', showRelease);
+on('lang', () => {
+  showRelease();
+  if (!$('#settings').hidden) refreshStats();
+});
 
 on('settings', () => {
   if (!$('#settings').hidden) $('#set-avatar').textContent = initials(app.settings.name);

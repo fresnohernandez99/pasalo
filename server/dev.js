@@ -3,7 +3,7 @@
 // enlaces y Pasalo web en /app/). Sin MONGODB_URI arranca un MongoDB en
 // memoria (mongodb-memory-server, solo en desarrollo) que se borra al salir.
 
-import { createReadStream, statSync } from 'node:fs';
+import { createReadStream, readFileSync, statSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { extname, join, normalize } from 'node:path';
 
@@ -21,6 +21,15 @@ const TYPES = {
   '.png': 'image/png', '.svg': 'image/svg+xml', '.tflite': 'application/octet-stream',
 };
 const PUBLIC = join(import.meta.dirname, 'public');
+// Las mismas cabeceras que pone Vercel (vercel.json), para probar con ellas.
+const HEADERS = JSON.parse(readFileSync(join(import.meta.dirname, 'vercel.json'), 'utf8')).headers || [];
+
+function vercelHeaders(pathname, res) {
+  for (const rule of HEADERS) {
+    const pattern = new RegExp(`^${rule.source.replace(/\(\.\*\)/g, '.*')}$`);
+    if (pattern.test(pathname)) for (const { key, value } of rule.headers) res.setHeader(key, value);
+  }
+}
 
 function serveStatic(pathname, res) {
   let path = normalize(join(PUBLIC, decodeURIComponent(pathname)));
@@ -31,6 +40,7 @@ function serveStatic(pathname, res) {
   } catch {
     return false;
   }
+  vercelHeaders(pathname, res);
   res.setHeader('content-type', TYPES[extname(path)] || 'application/octet-stream');
   createReadStream(path).pipe(res);
   return true;

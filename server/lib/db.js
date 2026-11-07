@@ -5,6 +5,7 @@
 
 import { MongoClient } from 'mongodb';
 import { setup } from './lobby.js';
+import { setupStats } from './stats.js';
 
 let ready = null;
 
@@ -17,6 +18,7 @@ export function database() {
     await client.connect();
     const db = client.db(process.env.MONGODB_DB || 'pasalo');
     await setup(db);
+    await setupStats(db);
     return db;
   })().catch((err) => {
     ready = null;

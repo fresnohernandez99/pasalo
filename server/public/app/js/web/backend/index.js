@@ -67,7 +67,8 @@ const s = {
   joining: null,
   partner: null,
   voice: null,
-  video: null, // { peer, sender }
+  video: null, // { peer, sender, queue: [imagen], wake: () => void }
+  joinGen: 0, // sube al desconectar: un `join` en marcha ya no cuenta
   outgoing: new Map(), // id → { code, entries, job }
   picks: new Map(), // ruta inventada → lo elegido
   nextId: 1,
@@ -182,16 +183,27 @@ async function reachInternet() {
 async function join() {
   if (s.lobby) return;
   if (s.joining) return s.joining;
+  const gen = s.joinGen;
   s.joining = (async () => {
     if (!s.settings.server) throw cmdError('no_server');
     await reachInternet();
     step('server');
+    // Un id nuevo por sesión: el server lo enseña a todos, y el `device_id`
+    // es permanente.
+    const me = { ...local(), id: uuid() };
+    let lobby;
     try {
-      s.lobby = await Lobby.join(s.settings.server, local(), s.node.code, emit);
+      lobby = await Lobby.join(s.settings.server, me, s.node.code, emit);
     } catch (err) {
       await s.node.setInternet(false).catch(() => {});
       throw cmdError('server', err.detail || String(err));
     }
+    // Se canceló mientras entraba: se sale.
+    if (gen !== s.joinGen) {
+      await lobby.leave();
+      return;
+    }
+    s.lobby = lobby;
   })().finally(() => (s.joining = null));
   return s.joining;
 }
@@ -245,8 +257,13 @@ function stopVoice() {
 function stopVideo() {
   const video = s.video;
   s.video = null;
-  if (video) s.talk.endVideo(video.peer);
+  if (!video) return;
+  s.talk.endVideo(video.peer);
+  video.wake?.();
 }
+
+/** Imágenes en cola como mucho: si no se recogen, sobran. */
+const VIDEO_QUEUE = 64;
 
 function stopWith(peer) {
   const same = (other) => s.net.parse(other) === s.net.parse(peer);
@@ -437,6 +454,7 @@ const commands = {
   },
   net_direct: () => reachInternet(),
   net_disconnect: async () => {
+    s.joinGen++;
     const lobby = s.lobby;
     s.lobby = null;
     await lobby?.leave();
@@ -495,14 +513,99 @@ const commands = {
   voice_speaker: () => {},
   voice_stop: () => stopVoice(),
   voice_stats: () => s.voice?.stats() ?? null,
-  video_start: async ({ peer, frames }) => {
+  video_start: async ({ peer }) => {
     stopVideo();
-    const sender = await s.talk.openVideo(peer, (frame) => frames.onmessage?.(frame));
-    s.video = { peer, sender };
+    const video = { peer, sender: null, queue: [], wake: null };
+    video.sender = await s.talk.openVideo(peer, (frame) => {
+      if (video.queue.length >= VIDEO_QUEUE) video.queue.shift();
+      video.queue.push(frame);
+      video.wake?.();
+    });
+    s.video = video;
+  },
+  // Como en la app: las imágenes que hayan llegado, cada una con su longitud
+  // delante. Espera hasta 1 s a la primera.
+  video_recv: async () => {
+    const video = s.video;
+    if (!video) throw cmdError('video_stopped');
+    if (!video.queue.length) {
+      await new Promise((resolve) => {
+        const timer = setTimeout(resolve, 1000);
+        video.wake = () => {
+          clearTimeout(timer);
+          resolve();
+        };
+      });
+      video.wake = null;
+    }
+    if (s.video !== video) throw cmdError('video_stopped');
+    const frames = video.queue.splice(0);
+    const out = new Uint8Array(frames.reduce((n, f) => n + 4 + f.length, 0));
+    const view = new DataView(out.buffer);
+    let at = 0;
+    for (const f of frames) {
+      view.setUint32(at, f.length);
+      out.set(f, at + 4);
+      at += 4 + f.length;
+    }
+    return out.buffer;
   },
   video_send: (bytes) => s.video?.sender.send(bytes) ?? false,
+
+  // Registro de cada llamada: en su chat y en las estadísticas por subir.
+  call_record: async ({ peer, record }) => {
+    const code = targetCode(peer);
+    const callId = String(record?.id || '').replace(/[^\w-]/g, '').slice(0, 80) || uuid();
+    const outgoing = record?.role === 'caller';
+    const message = {
+      id: `call-${callId}`, peer: code, outgoing, ts: Number(record?.started) || Date.now(), text: null, image: null,
+      status: outgoing ? 'delivered' : 'received', call: record,
+    };
+    await store.saveMessage(message);
+    const pending = (await store.kvGet('call_stats')) || [];
+    pending.push(statsFields(record));
+    await store.kvSet('call_stats', pending.slice(-1000));
+    return message;
+  },
+  stats_pending: async () => ((await store.kvGet('call_stats')) || []).length,
+  stats_upload: async () => {
+    const pending = (await store.kvGet('call_stats')) || [];
+    if (!pending.length) return 0;
+    if (!s.settings.server) throw cmdError('no_server');
+    let uploaded = 0;
+    for (let i = 0; i < pending.length; i += 100) {
+      const calls = pending.slice(i, i + 100);
+      let response;
+      try {
+        response = await fetch(`${s.settings.server}/api/stats`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ device: s.deviceId, platform: s.platform, version: VERSION, calls }),
+        });
+      } catch (err) {
+        throw cmdError('server', String(err?.message || err));
+      }
+      if (!response.ok) throw cmdError('server', `${response.status} ${await response.text().catch(() => '')}`.trim());
+      uploaded += calls.length;
+      // Se quitan las subidas, dejando las que se apuntaron mientras tanto.
+      const sent = new Set(calls.map((c) => c.id));
+      const left = ((await store.kvGet('call_stats')) || []).filter((c) => !sent.has(c.id));
+      await store.kvSet('call_stats', left);
+    }
+    return uploaded;
+  },
   video_stop: () => stopVideo(),
 };
+
+/** Lo que se sube de cada llamada: nada de con quién fue. */
+const STATS_FIELDS = [
+  'id', 'media', 'role', 'outcome', 'started', 'duration_ms', 'audio', 'video', 'sent', 'received', 'video_sent',
+  'video_received', 'lost', 'recovered',
+];
+
+function statsFields(record) {
+  return Object.fromEntries(STATS_FIELDS.filter((k) => record && k in record).map((k) => [k, record[k]]));
+}
 
 function lobbyOr() {
   if (!s.lobby) throw cmdError('not_online');
