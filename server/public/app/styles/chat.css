@@ -211,8 +211,7 @@
   position: fixed;
   z-index: 45;
   inset: 0;
-  display: grid;
-  place-items: center;
+  overflow: hidden;
   background: #000;
   -webkit-user-select: none;
   user-select: none;
@@ -220,7 +219,16 @@
   touch-action: none;
 }
 .once-viewer[hidden] { display: none; }
-.once-viewer img { max-width: 100%; max-height: 100%; object-fit: contain; pointer-events: none; -webkit-user-drag: none; }
+.once-viewer img {
+  /* Encajada en la ventana por once.js (como el visor de fotos), y desde ahí
+     se amplía y se mueve con transform. */
+  position: absolute;
+  transform-origin: 0 0;
+  will-change: transform;
+  pointer-events: none;
+  -webkit-user-drag: none;
+}
+.once-viewer.zoomed { cursor: grab; }
 /* Navegador: solo se ve mientras se mantiene pulsado. */
 .once-viewer.hold img, .once-viewer.hold .once-mark { visibility: hidden; }
 .once-viewer.hold.showing img, .once-viewer.hold.showing .once-mark { visibility: visible; }
