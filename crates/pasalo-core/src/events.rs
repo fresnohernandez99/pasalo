@@ -32,6 +32,11 @@ pub enum Event {
     TransferRequest {
         id: TransferId,
         peer: String,
+        /// Código de iroh del otro equipo, si llegó por iroh (por la LAN no
+        /// se sabe). Con él la interfaz sabe de qué chat es, aunque dos
+        /// equipos se llamen igual.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        code: Option<String>,
         roots: Vec<String>,
         files: usize,
         total_bytes: u64,
@@ -52,6 +57,9 @@ pub enum Event {
         id: TransferId,
         direction: Direction,
         peer: String,
+        /// Código de iroh del otro equipo, si va por iroh.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        code: Option<String>,
         /// Nombres de primer nivel de lo que se envía (archivos y carpetas).
         roots: Vec<String>,
         files: usize,

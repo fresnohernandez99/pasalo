@@ -184,7 +184,7 @@ async function sendOnce(net, id, code, entries, local, emit, job) {
       resumed += states[i].state === 'skip' ? e.item.size : Math.min(states[i].offset, e.item.size);
     });
     const roots = entries.filter((e) => !e.item.path.includes('/')).map((e) => e.item.path);
-    emit({ kind: 'transfer_started', id, direction: 'outgoing', peer, roots, files: files.length, total_bytes: total, resumed_bytes: resumed });
+    emit({ kind: 'transfer_started', id, direction: 'outgoing', peer, code, roots, files: files.length, total_bytes: total, resumed_bytes: resumed });
 
     const progress = new Progress(emit, id, resumed, total);
     let raw = 0;
@@ -327,7 +327,7 @@ export class Receiver {
     const [send, recv] = pair;
     const started = { id: null };
     try {
-      await this.session(conn, send, new Reader(recv), started);
+      await this.session(conn, send, new Reader(recv), started, conn.remote);
     } catch (err) {
       const e = asError(err);
       console.debug('recepción fallida', e);
@@ -342,7 +342,7 @@ export class Receiver {
     await timed(SHORT, conn.waitClosed()).catch(() => conn.close(0, ''));
   }
 
-  async session(conn, send, reader, started) {
+  async session(conn, send, reader, started, code) {
     const local = this.local();
     // Lo primero que manda cualquiera: pequeño.
     const first = await readMsg(reader, SHORT, 16 * 1024);
@@ -408,14 +408,14 @@ export class Receiver {
     if (slot.gen !== gen) throw new PasaloError('superseded');
     Object.assign(slot, { running: finished.promise, abort, conn });
     try {
-      await this.receive({ send, reader, items, rel, key, deviceId, peer, started, check: () => slot.gen === gen, abort });
+      await this.receive({ send, reader, items, rel, key, deviceId, peer, code, started, check: () => slot.gen === gen, abort });
     } finally {
       finished.resolve();
       if (slot.gen === gen) Object.assign(slot, { running: null, abort: null, conn: null });
     }
   }
 
-  async receive({ send, reader, items, rel, key, deviceId, peer, started, check, abort }) {
+  async receive({ send, reader, items, rel, key, deviceId, peer, code, started, check, abort }) {
     // Mismo id en todos los intentos de la misma transferencia.
     const id = parseInt(key.slice(0, 12), 16);
     const superseded = abort.promise.then(() => {
@@ -430,10 +430,10 @@ export class Receiver {
       const roots = [...new Set(rel.map((r) => r[0]))];
       const files = items.filter((i) => !i.is_dir).length;
       const total = items.reduce((n, i) => n + i.size, 0);
-      const answer = await this.ask(id, { kind: 'transfer_request', id, peer, roots, files, total_bytes: total }, reader, guard);
+      const answer = await this.ask(id, { kind: 'transfer_request', id, peer, code, roots, files, total_bytes: total }, reader, guard);
       if (answer === 'gone') {
         this.emit({ kind: 'request_closed', id, reason: 'cancelled' });
-        throw new PasaloError('io', 'el emisor se fue');
+        throw new PasaloError('io', 'sender left');
       }
       if (answer !== 'accepted') {
         if (answer === 'timeout') this.emit({ kind: 'request_closed', id, reason: 'timeout' });
@@ -483,7 +483,7 @@ export class Receiver {
     started.id = id;
     this.keys.set(id, key);
     this.emit({
-      kind: 'transfer_started', id, direction: 'incoming', peer, roots: Object.values(ledger.roots),
+      kind: 'transfer_started', id, direction: 'incoming', peer, code, roots: Object.values(ledger.roots),
       files: items.filter((i) => !i.is_dir).length, total_bytes: total, resumed_bytes: resumed,
     });
 

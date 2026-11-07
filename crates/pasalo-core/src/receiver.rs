@@ -6,6 +6,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::{Duration, Instant, UNIX_EPOCH};
 
+use iroh::EndpointId;
 use tokio::fs::{self, OpenOptions};
 use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncReadExt, AsyncSeekExt, AsyncWrite, AsyncWriteExt, BufReader, BufWriter};
 use tokio::net::TcpListener;
@@ -172,7 +173,7 @@ impl Receiver {
                     tokio::spawn(async move {
                         let _permit = permit;
                         let (rd, wr) = stream.into_split();
-                        this.handle(rd, wr, true).await
+                        this.handle(rd, wr, None).await
                     });
                 }
                 Err(e) => {
@@ -208,7 +209,7 @@ impl Receiver {
                 let Ok(Ok((mut send, mut recv))) = tokio::time::timeout(SHORT, conn.accept_bi()).await else {
                     return;
                 };
-                this.handle(&mut recv, &mut send, false).await;
+                this.handle(&mut recv, &mut send, Some(conn.remote_id())).await;
                 // Cerrar sin esperar puede perder la última respuesta: se
                 // termina el canal y se deja que el emisor cierre la conexión.
                 let _ = send.finish();
@@ -217,14 +218,15 @@ impl Receiver {
         }
     }
 
-    /// `lan`: llegó por TCP de la LAN (sin autenticar), no por iroh.
-    async fn handle<R, W>(&self, rd: R, wr: W, lan: bool)
+    /// `from`: el equipo, si llegó por iroh (autenticado por su clave);
+    /// `None` si llegó por TCP de la LAN.
+    async fn handle<R, W>(&self, rd: R, wr: W, from: Option<EndpointId>)
     where
         R: AsyncRead + Unpin,
         W: AsyncWrite + Unpin,
     {
         let mut started = None;
-        if let Err(e) = self.session(rd, wr, lan, &mut started).await {
+        if let Err(e) = self.session(rd, wr, from, &mut started).await {
             tracing::warn!("recepción fallida: {e}");
             if let Some(id) = started {
                 let _ = self.inner.events.send(Event::TransferFailed {
@@ -249,7 +251,13 @@ impl Receiver {
             .clone()
     }
 
-    async fn session<R, W>(&self, rd: R, wr: W, lan: bool, started: &mut Option<TransferId>) -> Result<(), Error>
+    async fn session<R, W>(
+        &self,
+        rd: R,
+        wr: W,
+        from: Option<EndpointId>,
+        started: &mut Option<TransferId>,
+    ) -> Result<(), Error>
     where
         R: AsyncRead + Unpin,
         W: AsyncWrite + Unpin,
@@ -265,7 +273,8 @@ impl Receiver {
         };
         let packed = features.iter().any(|f| f == compress::FEATURE);
         write_msg(&mut wr, &local.hello()).await?;
-        let busy = lan && inner.only.read().unwrap().is_some();
+        let busy = from.is_none() && inner.only.read().unwrap().is_some();
+        let code = from.map(|id| id.to_string());
         if busy {
             write_msg(&mut wr, &Message::Reject { reason: "busy".into() }).await?;
             return Err(Error::Rejected("busy".into()));
@@ -339,7 +348,8 @@ impl Receiver {
             }
             let files = items.iter().filter(|item| !item.is_dir).count();
             let total = items.iter().map(|item| item.size).sum();
-            let request = Event::TransferRequest { id, peer: peer.clone(), roots, files, total_bytes: total };
+            let request =
+                Event::TransferRequest { id, peer: peer.clone(), code: code.clone(), roots, files, total_bytes: total };
             let reason = match self.ask(id, request, &mut rd, &mut cancel).await? {
                 Answer::Accepted => None,
                 Answer::Declined => Some("declined"),
@@ -426,6 +436,7 @@ impl Receiver {
             id,
             direction: Direction::Incoming,
             peer: peer.clone(),
+            code: code.clone(),
             roots,
             files: items.iter().filter(|item| !item.is_dir).count(),
             total_bytes: total,

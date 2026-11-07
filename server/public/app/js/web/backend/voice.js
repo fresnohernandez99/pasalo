@@ -58,6 +58,9 @@ export class VoiceCall {
   }
 
   async open(talk, mode) {
+    // iOS (Safari 17+): sesión de audio de llamada, con micrófono y altavoz a
+    // la vez y la cancelación de eco del sistema.
+    if (navigator.audioSession) navigator.audioSession.type = 'play-and-record';
     const ctx = audioContext();
     // Sin un toque del usuario no arranca (y la promesa no termina): la
     // llamada sigue y el audio empieza en cuanto se toque la pantalla.
@@ -105,6 +108,7 @@ export class VoiceCall {
   }
 
   stop(talk) {
+    if (navigator.audioSession) navigator.audioSession.type = 'auto';
     talk.endVoice(this.peer);
     this.node?.port.postMessage('stop');
     this.source?.disconnect();

@@ -291,4 +291,9 @@ export default {
   'web.reload': "Reload",
   'web.collapse': "Hide",
   'web.expand': "Show",
+  'reason.busy': "it's connected with another device",
+  'reason.declined': "it was declined",
+  'reason.timeout': "nobody answered",
+  'reason.cancelled': "it was cancelled",
+  'reason.too_large': "it's too large",
 };

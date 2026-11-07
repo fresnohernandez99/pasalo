@@ -291,4 +291,9 @@ export default {
   'web.reload': "Volver a cargar",
   'web.collapse': "Ocultar",
   'web.expand': "Mostrar",
+  'reason.busy': "está conectado con otro equipo",
+  'reason.declined': "lo rechazó",
+  'reason.timeout': "nadie contestó",
+  'reason.cancelled': "se canceló",
+  'reason.too_large': "es demasiado grande",
 };

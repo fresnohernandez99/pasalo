@@ -220,6 +220,42 @@ function backGesture() {
   });
 }
 
+// ---------- versión nueva ----------
+
+// El service worker sirve la versión guardada; si al abrir hay una nueva, se
+// instala por detrás y toma el control. Entonces se recarga, pero nunca en
+// mitad de una llamada o de un envío: se espera a que acaben.
+function registerWorker() {
+  const hadWorker = !!navigator.serviceWorker.controller;
+  navigator.serviceWorker.register('sw.js').then(
+    (reg) => {
+      // Al volver a la app (el iPhone la deja abierta días), se mira si hay otra.
+      document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState === 'visible') reg.update().catch(() => {});
+      });
+    },
+    () => {},
+  );
+  navigator.serviceWorker.addEventListener('controllerchange', () => {
+    // La primera instalación también cambia de controlador: ahí no hay nada que recargar.
+    if (hadWorker) reloadWhenIdle();
+  });
+}
+
+function busy() {
+  const call = document.getElementById('call');
+  const live = document.querySelector('.tcard.request, .tcard.waiting, .tcard.connecting, .tcard.active, .tcard.retrying');
+  return (call && !call.hidden) || !!live;
+}
+
+function reloadWhenIdle() {
+  if (busy()) {
+    setTimeout(reloadWhenIdle, 10_000);
+    return;
+  }
+  location.reload();
+}
+
 // ---------- arranque ----------
 
 export function initWebUi(api) {
@@ -250,7 +286,7 @@ export function initWebUi(api) {
     const input = document.getElementById('manual-ip');
     if (input) input.dataset.i18nPlaceholder = 'peers.add_placeholder_web';
     if (input) input.placeholder = t('peers.add_placeholder_web');
-    if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
+    if ('serviceWorker' in navigator) registerWorker();
   };
   if (document.readyState === 'complete') loaded();
   else window.addEventListener('load', loaded, { once: true });

@@ -30,6 +30,19 @@ window.pasaloBack = () => {
 
 let unseen = 0;
 
+/**
+ * Lo que queda debajo de una pantalla encima (Ajustes, la llamada) no se
+ * puede tocar ni recorrer con el tabulador ni con un lector de pantalla.
+ * `focus` es lo que recibe el foco al abrirse una.
+ */
+export function updateLayers(focus) {
+  const call = !$('#call').hidden;
+  const settings = !$('#settings').hidden;
+  $('.app').inert = call || settings;
+  $('#settings').inert = call;
+  if (focus && !focus.hidden) focus.focus({ preventScroll: true });
+}
+
 export function showTab(tab) {
   document.body.dataset.tab = tab;
   for (const el of $$('.tab')) el.classList.toggle('on', el.dataset.tab === tab);

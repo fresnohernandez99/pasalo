@@ -209,10 +209,15 @@ async fn send_once(
         .sum();
     let roots: Vec<String> =
         entries.iter().filter(|e| !e.item.path.contains('/')).map(|e| e.item.path.clone()).collect();
+    let code = match target {
+        Target::Remote(_, id) => Some(id.to_string()),
+        Target::Lan(_) => None,
+    };
     let _ = events.send(Event::TransferStarted {
         id,
         direction: Direction::Outgoing,
         peer,
+        code,
         roots,
         files: files.count(),
         total_bytes: total,

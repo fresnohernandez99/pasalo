@@ -218,7 +218,9 @@ function bubbleHtml(m) {
   const tick = m.outgoing
     ? `<span class="tick ${pending ? 'pending' : ''}" title="${esc(t(pending ? 'chat.pending' : 'chat.delivered'))}">${icon(pending ? 'clock' : 'check')}</span>`
     : '';
-  const img = m.image ? `<button class="msg-img" type="button"><img data-path="${esc(m.image)}" alt=""></button>` : '';
+  const img = m.image
+    ? `<button class="msg-img" type="button" aria-label="${esc(t('chat.photo'))}"><img data-path="${esc(m.image)}" alt=""></button>`
+    : '';
   const text = m.text ? `<span class="msg-text">${esc(m.text)}</span>` : '';
   return `<div class="bubble">${img}${text}<span class="meta">${clock(m.ts)}${tick}</span></div>`;
 }
@@ -364,7 +366,7 @@ async function sendImage(file) {
 // ---------- transferencias con este equipo ----------
 
 function renderStrip() {
-  const live = chat.peer ? liveWith(chat.peer.name) : [];
+  const live = chat.peer ? liveWith(chat.peer) : [];
   const html = live
     .map((tr) => {
       const incoming = tr.direction === 'incoming';
