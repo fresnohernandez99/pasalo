@@ -149,8 +149,7 @@ function messageNode(m, first, last) {
     el.innerHTML = html;
     const img = el.querySelector('img[data-path]');
     if (img) loadImage(img);
-    const audio = el.querySelector('audio[data-path]');
-    if (audio) loadAudio(audio);
+
   }
   return el;
 }
@@ -242,8 +241,14 @@ function bubbleHtml(m) {
     : '';
   if (m.once) return `<div class="bubble">${onceHtml(m)}<span class="meta">${clock(m.ts)}${tick}</span></div>`;
   if (m.audio) {
-    return `<div class="bubble"><div class="voice-note">${icon('mic')}<audio controls preload="none" data-path="${esc(m.audio)}"></audio>
-      <span class="vn-time">${esc(noteTime(m.duration_ms))}</span></div><span class="meta">${clock(m.ts)}${tick}</span></div>`;
+    // Reproductor propio: el de serie no sabe la duración de lo grabado con
+    // MediaRecorder (sale «0:00 / 0:00») y ocupa media pantalla.
+    return `<div class="bubble"><div class="voice-note" data-ms="${Number(m.duration_ms) || 0}">
+      <button class="vn-play" type="button" aria-label="${esc(t('chat.voice_note'))}">${icon('play')}</button>
+      <div class="vn-track"><div class="vn-fill"></div></div>
+      <span class="vn-time">${esc(noteTime(m.duration_ms))}</span>
+      <audio preload="none" data-path="${esc(m.audio)}"></audio></div>
+      <span class="meta">${clock(m.ts)}${tick}</span></div>`;
   }
   const img = m.image
     ? `<button class="msg-img" type="button" aria-label="${esc(t('chat.photo'))}"><img data-path="${esc(m.image)}" alt=""></button>`
@@ -252,12 +257,54 @@ function bubbleHtml(m) {
   return `<div class="bubble">${img}${text}<span class="meta">${clock(m.ts)}${tick}</span></div>`;
 }
 
-async function loadAudio(audio) {
-  try {
-    audio.src = await invoke('chat_image', { path: audio.dataset.path });
-  } catch {
-    audio.closest('.voice-note')?.classList.add('broken');
+// ---------- notas de voz ----------
+
+let playing = null; // el <audio> que suena ahora
+
+async function toggleNote(note) {
+  const audio = note.querySelector('audio');
+  if (!audio.src) {
+    try {
+      audio.src = await invoke('chat_image', { path: audio.dataset.path });
+    } catch (err) {
+      note.classList.add('broken');
+      toast(errorText(err), true);
+      return;
+    }
+    bindNote(note, audio);
   }
+  if (!audio.paused) {
+    audio.pause();
+    return;
+  }
+  if (playing && playing !== audio) playing.pause();
+  playing = audio;
+  audio.play().catch((err) => toast(errorText(err), true));
+}
+
+function bindNote(note, audio) {
+  const total = (Number(note.dataset.ms) || 0) / 1000;
+  const button = note.querySelector('.vn-play');
+  const show = () => {
+    const length = Number.isFinite(audio.duration) && audio.duration > 0 ? audio.duration : total;
+    const pct = length ? Math.min(100, (audio.currentTime / length) * 100) : 0;
+    note.querySelector('.vn-fill').style.width = `${pct}%`;
+    note.querySelector('.vn-time').textContent = noteTime((audio.currentTime || 0) * 1000 || total * 1000);
+  };
+  audio.addEventListener('play', () => {
+    button.innerHTML = icon('pause');
+    note.classList.add('playing');
+  });
+  audio.addEventListener('pause', () => {
+    button.innerHTML = icon('play');
+    note.classList.remove('playing');
+  });
+  audio.addEventListener('timeupdate', show);
+  audio.addEventListener('ended', () => {
+    audio.currentTime = 0;
+    note.querySelector('.vn-fill').style.width = '0%';
+    note.querySelector('.vn-time').textContent = noteTime(total * 1000);
+  });
 }
 
 async function loadImage(img) {
@@ -288,6 +335,11 @@ async function loadImage(img) {
 }
 
 $('#chat-list').addEventListener('click', (ev) => {
+  const note = ev.target.closest('.vn-play')?.closest('.voice-note');
+  if (note) {
+    toggleNote(note);
+    return;
+  }
   const once = ev.target.closest('[data-once]');
   if (once && chat.peer) {
     openOnce(chat.peer.code, once.dataset.once);
