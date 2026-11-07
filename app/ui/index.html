@@ -128,13 +128,23 @@
             <button type="button" id="chat-attach" class="icon-btn" data-i18n-title="chat.attach"><span data-icon="plus"></span></button>
             <div id="attach-menu" class="menu" hidden>
               <button type="button" data-attach="photo"><span data-icon="image"></span><span data-i18n="chat.photo"></span></button>
+              <button type="button" data-attach="once"><span data-icon="shield"></span><span data-i18n="chat.once"></span></button>
               <button type="button" data-attach="files"><span data-icon="file"></span><span data-i18n="chat.files"></span></button>
               <button type="button" data-attach="folder" class="desktop-only"><span data-icon="folder"></span><span data-i18n="chat.folder"></span></button>
             </div>
           </div>
           <input type="file" id="chat-file" accept="image/*" multiple hidden>
+          <input type="file" id="chat-once-file" accept="image/*" hidden>
           <textarea id="chat-input" rows="1" data-i18n-placeholder="chat.placeholder" data-i18n-title="chat.placeholder"></textarea>
+          <button type="button" id="chat-mic" class="icon-btn" data-i18n-title="chat.voice_note"><span data-icon="mic"></span></button>
           <button type="submit" id="chat-send" class="send" disabled data-i18n-title="btn.send"><span data-icon="send"></span></button>
+          <div id="rec-bar" class="rec-bar" hidden>
+            <button type="button" id="rec-cancel" class="icon-btn subtle" data-i18n-title="btn.cancel"><span data-icon="close"></span></button>
+            <span class="rec-dot"></span>
+            <span id="rec-time" class="rec-time">0:00</span>
+            <span class="rec-label" data-i18n="rec.recording"></span>
+            <button type="button" id="rec-send" class="send" data-i18n-title="btn.send"><span data-icon="send"></span></button>
+          </div>
         </form>
       </section>
     </main>
@@ -258,6 +268,15 @@
   </section>
 
   <!-- Visor de fotos. -->
+  <!-- Foto de una sola vez: se ve aquí y se borra al cerrarla. Sin menú,
+       sin arrastrar y, donde el sistema lo permite, sin capturas. -->
+  <div id="once-viewer" class="once-viewer" hidden>
+    <img id="once-img" alt="" draggable="false">
+    <div id="once-mark" class="once-mark" aria-hidden="true"></div>
+    <p id="once-hint" class="once-hint"></p>
+    <button id="once-close" class="icon-btn once-close" type="button" data-i18n-title="viewer.close"><span data-icon="close"></span></button>
+  </div>
+
   <div id="viewer" class="viewer" hidden>
     <div class="viewer-bg"></div>
     <img id="viewer-img" alt="">

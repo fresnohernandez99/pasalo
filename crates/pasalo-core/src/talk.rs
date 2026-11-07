@@ -39,6 +39,10 @@ use crate::{Error, Event, EventSender, Remote};
 pub const TALK_ALPN: &[u8] = b"pasalo/talk/1";
 /// Tamaño máximo de una imagen del chat.
 pub const MAX_IMAGE: u64 = 25 * 1024 * 1024;
+/// Tamaño máximo de una nota de voz (unos 40 min en Opus a 32 kbps).
+pub const MAX_AUDIO: u64 = 10 * 1024 * 1024;
+/// Las fotos de una vez llevan este prefijo en disco: `chat_image` no las sirve.
+pub const ONCE_PREFIX: &str = "once-";
 const MAX_FRAME: usize = 256 * 1024;
 /// Primer reintento de un mensaje pendiente; cada fallo dobla la espera.
 const RETRY_FIRST: Duration = Duration::from_secs(20);
@@ -90,6 +94,42 @@ pub struct ChatMessage {
     /// chat como «Llamada de voz · 3:21» y sus detalles. Ver [`Talk::log_call`].
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub call: Option<serde_json::Value>,
+    /// Nota de voz guardada en disco.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub audio: Option<PathBuf>,
+    /// Lo que dura la nota de voz.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub duration_ms: Option<u64>,
+    /// Foto de una sola vez: solo se ve con [`Talk::open_once`], que la borra.
+    /// Quien la envía tampoco se queda con ella.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub once: bool,
+    /// Una foto de una vez que ya se vio (aquí o, si es nuestra, allí).
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub opened: bool,
+}
+
+fn is_false(value: &bool) -> bool {
+    !*value
+}
+
+impl ChatMessage {
+    fn new(id: String, peer: String, outgoing: bool, ts: u64, status: Status) -> Self {
+        Self {
+            id,
+            peer,
+            outgoing,
+            ts,
+            text: None,
+            image: None,
+            status,
+            call: None,
+            audio: None,
+            duration_ms: None,
+            once: false,
+            opened: false,
+        }
+    }
 }
 
 /// Señal de una llamada. El núcleo solo la transporta: qué significa cada
@@ -105,9 +145,33 @@ pub struct Signal {
 #[derive(Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 enum Frame {
-    Chat { id: String, ts: u64, name: String, text: Option<String>, image: Option<ImageMeta> },
+    /// Mensaje: texto, foto (`image`) o nota de voz (`audio`). Los bytes del
+    /// adjunto van detrás. Un equipo viejo ignora `audio` (no lo conoce).
+    Chat {
+        id: String,
+        ts: u64,
+        name: String,
+        text: Option<String>,
+        image: Option<ImageMeta>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        audio: Option<AudioMeta>,
+    },
+    /// Foto de una sola vez. Tipo aparte a propósito: un equipo que no lo
+    /// conoce no la acepta (no la confirma), en vez de guardarla como una
+    /// foto normal.
+    Once { id: String, ts: u64, name: String, image: ImageMeta },
+    /// La foto de una vez `id` ya se vio al otro lado.
+    Opened { id: String },
     Signal { name: String, signal: Signal },
     Ack,
+}
+
+#[derive(Serialize, Deserialize)]
+struct AudioMeta {
+    ext: String,
+    size: u64,
+    #[serde(default)]
+    duration_ms: u64,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -326,6 +390,76 @@ impl Talk {
         self.queue_with_id(id, peer, None, Some(path))
     }
 
+    /// Una nota de voz (`ext`: `webm`, `m4a`…; la interfaz la graba ya comprimida).
+    pub async fn send_audio(&self, peer: &str, audio: &[u8], ext: &str, duration_ms: u64) -> Result<ChatMessage, Error> {
+        if audio.len() as u64 > MAX_AUDIO {
+            return Err(Error::Protocol(format!("la nota de voz supera {} MB", MAX_AUDIO / 1024 / 1024)));
+        }
+        let code = parse_peer(peer)?.to_string();
+        let id = uuid::Uuid::new_v4().to_string();
+        let path = self.inner.store.media_path(&id, ext);
+        tokio::fs::create_dir_all(path.parent().expect("con carpeta")).await.map_err(Error::Local)?;
+        tokio::fs::write(&path, audio).await.map_err(Error::Local)?;
+        let mut message = ChatMessage::new(id, code, true, now_ms(), Status::Pending);
+        message.audio = Some(path);
+        message.duration_ms = Some(duration_ms);
+        self.enqueue(message)
+    }
+
+    /// Una foto de una sola vez: se borra de aquí al entregarla y del otro
+    /// lado al verla.
+    pub async fn send_once(&self, peer: &str, image: &[u8], ext: &str) -> Result<ChatMessage, Error> {
+        if image.len() as u64 > MAX_IMAGE {
+            return Err(Error::Protocol(format!("la imagen supera {} MB", MAX_IMAGE / 1024 / 1024)));
+        }
+        let code = parse_peer(peer)?.to_string();
+        let id = uuid::Uuid::new_v4().to_string();
+        let path = self.inner.store.once_path(&id, ext);
+        tokio::fs::create_dir_all(path.parent().expect("con carpeta")).await.map_err(Error::Local)?;
+        write_private(&path, image).await.map_err(Error::Local)?;
+        let mut message = ChatMessage::new(id, code, true, now_ms(), Status::Pending);
+        message.image = Some(path);
+        message.once = true;
+        self.enqueue(message)
+    }
+
+    /// Abre una foto de una vez recibida: devuelve sus bytes y su extensión y
+    /// la borra (ya no se puede volver a ver). Avisa al otro de que se vio.
+    pub async fn open_once(&self, peer: &str, id: &str) -> Result<(Vec<u8>, String), Error> {
+        let code = parse_peer(peer)?.to_string();
+        let message = self
+            .inner
+            .store
+            .history(&code)
+            .into_iter()
+            .find(|m| m.id == id && m.once && !m.outgoing && !m.opened)
+            .ok_or_else(|| Error::Protocol("esa foto ya se vio".into()))?;
+        let path = message.image.clone().filter(|p| self.inner.store.is_media(p)).ok_or_else(|| Error::Protocol("foto perdida".into()))?;
+        let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("jpg").to_string();
+        let bytes = tokio::fs::read(&path).await.map_err(Error::Local)?;
+        shred(&path).await;
+        let mut opened = message;
+        opened.image = None;
+        opened.opened = true;
+        self.inner.store.append(&opened).map_err(Error::Local)?;
+        let _ = self.inner.events.send(Event::Chat { message: opened, name: None });
+        // Que el otro sepa que se vio (si no se puede ahora, da igual).
+        let this = self.clone();
+        let id = id.to_string();
+        tokio::spawn(async move {
+            let Ok(target) = parse_peer(&code) else { return };
+            for _ in 0..3 {
+                if let Ok(conn) = this.connection(target).await
+                    && exchange(&conn, &Frame::Opened { id: id.clone() }, None).await.is_ok()
+                {
+                    return;
+                }
+                tokio::time::sleep(Duration::from_secs(5)).await;
+            }
+        });
+        Ok((bytes, ext))
+    }
+
     /// Deja en el historial de `peer` el registro de una llamada (`record`
     /// lo arma la interfaz: id, quién llamó, cómo acabó, duración, consumo…).
     /// Es solo local: cada lado guarda el suyo y no se envía.
@@ -339,16 +473,9 @@ impl Talk {
         let id = format!("call-{}", call_id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string()));
         let outgoing = record.get("role").and_then(|v| v.as_str()) == Some("caller");
         let ts = record.get("started").and_then(|v| v.as_u64()).filter(|t| *t > 0).unwrap_or_else(now_ms);
-        let message = ChatMessage {
-            id,
-            peer: normalize(peer),
-            outgoing,
-            ts,
-            text: None,
-            image: None,
-            status: if outgoing { Status::Delivered } else { Status::Received },
-            call: Some(record),
-        };
+        let mut message =
+            ChatMessage::new(id, normalize(peer), outgoing, ts, if outgoing { Status::Delivered } else { Status::Received });
+        message.call = Some(record);
         self.inner.store.append(&message).map_err(Error::Local)?;
         Ok(message)
     }
@@ -509,16 +636,14 @@ impl Talk {
         image: Option<PathBuf>,
     ) -> Result<ChatMessage, Error> {
         parse_peer(peer)?;
-        let message = ChatMessage {
-            id,
-            peer: normalize(peer),
-            outgoing: true,
-            ts: now_ms(),
-            text,
-            image,
-            status: Status::Pending,
-            call: None,
-        };
+        let mut message = ChatMessage::new(id, normalize(peer), true, now_ms(), Status::Pending);
+        message.text = text;
+        message.image = image;
+        self.enqueue(message)
+    }
+
+    /// Guarda un mensaje propio y lanza su entrega.
+    fn enqueue(&self, message: ChatMessage) -> Result<ChatMessage, Error> {
         self.inner.store.append(&message).map_err(Error::Local)?;
         self.inner.pending.lock().unwrap().insert(message.id.clone(), message.clone());
         self.spawn_delivery(message.clone());
@@ -638,34 +763,56 @@ impl Talk {
     async fn deliver(&self, mut message: ChatMessage) -> Result<(), Error> {
         let id = parse_peer(&message.peer)?;
         let conn = self.connection(id).await?;
-        let image = match &message.image {
-            Some(path) if !self.inner.store.is_media(path) => {
-                return Err(Error::Local(io::Error::other("la foto no está en la carpeta del chat")));
+        // El adjunto (foto o nota de voz), solo si está en la carpeta del chat.
+        let attachment = match (&message.image, &message.audio) {
+            (Some(path), _) | (None, Some(path)) => {
+                if !self.inner.store.is_media(path) {
+                    return Err(Error::Local(io::Error::other("el adjunto no está en la carpeta del chat")));
+                }
+                let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("bin").to_string();
+                let size = tokio::fs::metadata(path).await.map_err(Error::Local)?.len();
+                Some((ext, size, path.clone()))
             }
-            Some(path) => {
-                let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("jpg").to_string();
-                let size = std::fs::metadata(path).map_err(Error::Local)?.len();
-                Some((ImageMeta { ext, size }, path.clone()))
-            }
-            None => None,
+            (None, None) => None,
         };
-        let (meta, path) = match image {
-            Some((meta, path)) => (Some(meta), Some(path)),
-            None => (None, None),
+        let name = self.inner.name.read().unwrap().clone();
+        let frame = match (&attachment, message.once, message.audio.is_some()) {
+            (Some((ext, size, _)), true, _) => Frame::Once {
+                id: message.id.clone(),
+                ts: message.ts,
+                name,
+                image: ImageMeta { ext: ext.clone(), size: *size },
+            },
+            (Some((ext, size, _)), false, true) => Frame::Chat {
+                id: message.id.clone(),
+                ts: message.ts,
+                name,
+                text: message.text.clone(),
+                image: None,
+                audio: Some(AudioMeta { ext: ext.clone(), size: *size, duration_ms: message.duration_ms.unwrap_or(0) }),
+            },
+            (attachment, _, _) => Frame::Chat {
+                id: message.id.clone(),
+                ts: message.ts,
+                name,
+                text: message.text.clone(),
+                image: attachment.as_ref().map(|(ext, size, _)| ImageMeta { ext: ext.clone(), size: *size }),
+                audio: None,
+            },
         };
-        let frame = Frame::Chat {
-            id: message.id.clone(),
-            ts: message.ts,
-            name: self.inner.name.read().unwrap().clone(),
-            text: message.text.clone(),
-            image: meta,
-        };
-        if let Err(e) = exchange(&conn, &frame, path.as_deref()).await {
+        let body = attachment.as_ref().map(|(_, _, path)| path.as_path());
+        if let Err(e) = exchange(&conn, &frame, body).await {
             // El siguiente intento abre una conexión nueva en vez de insistir en esta.
             self.forget_connection(id, Some(&conn)).await;
             return Err(e);
         }
 
+        // Una foto de una vez no se queda aquí: entregada, se borra.
+        if message.once
+            && let Some(path) = message.image.take()
+        {
+            shred(&path).await;
+        }
         message.status = Status::Delivered;
         self.inner.store.append(&message).map_err(Error::Local)?;
         self.inner.pending.lock().unwrap().remove(&message.id);
@@ -765,6 +912,42 @@ impl Talk {
         }
     }
 
+    /// Recibe un adjunto de `size` bytes en `path` (por trozos, a un archivo
+    /// temporal). Si ya se tenía (`known`), se lee y se tira.
+    async fn receive_media(
+        &self,
+        recv: &mut iroh::endpoint::RecvStream,
+        from: EndpointId,
+        path: PathBuf,
+        size: u64,
+        max: u64,
+        known: bool,
+    ) -> Result<Option<PathBuf>, Error> {
+        if size > max {
+            return Err(Error::Protocol("adjunto demasiado grande".into()));
+        }
+        let _slot = ImageSlot::take(&self.inner.receiving, from)
+            .ok_or_else(|| Error::Protocol("demasiados adjuntos a la vez".into()))?;
+        // Ni 25 MB en memoria ni un adjunto a medias con su nombre final.
+        let part = path.with_extension("part");
+        tokio::fs::create_dir_all(path.parent().expect("con carpeta")).await?;
+        let mut file = create_private(&part).await?;
+        let mut limited = recv.take(size);
+        let copied = timed(LONG, tokio::io::copy(&mut limited, &mut file)).await;
+        drop(file);
+        if copied.as_ref().map_or(true, |n| *n != size) {
+            let _ = tokio::fs::remove_file(&part).await;
+            copied?;
+            return Err(Error::Protocol("adjunto incompleto".into()));
+        }
+        if known {
+            let _ = tokio::fs::remove_file(&part).await;
+            return Ok(None);
+        }
+        tokio::fs::rename(&part, &path).await?;
+        Ok(Some(path))
+    }
+
     async fn handle(
         &self,
         from: EndpointId,
@@ -773,40 +956,22 @@ impl Talk {
     ) -> Result<(), Error> {
         let peer = from.to_string();
         match read_frame(&mut recv, SHORT).await? {
-            Frame::Chat { id, ts, name, text, image } => {
-                // El id forma el nombre del archivo de la foto: solo un uuid
+            Frame::Chat { id, ts, name, text, image, audio } => {
+                // El id forma el nombre del archivo del adjunto: solo un uuid
                 // tal cual (nada de `../` ni rutas absolutas).
                 if !is_message_id(&id) {
                     return Err(Error::Protocol("id de mensaje no válido".into()));
                 }
                 let known = self.inner.store.knows(&peer, &id);
-                let mut saved = None;
+                let mut message = ChatMessage::new(id.clone(), peer.clone(), false, ts, Status::Received);
+                message.text = text;
                 if let Some(meta) = image {
-                    if meta.size > MAX_IMAGE {
-                        return Err(Error::Protocol("imagen demasiado grande".into()));
-                    }
-                    let _slot = ImageSlot::take(&self.inner.receiving, from)
-                        .ok_or_else(|| Error::Protocol("demasiadas fotos a la vez".into()))?;
                     let path = self.inner.store.media_path(&id, &meta.ext);
-                    // Por trozos a un archivo temporal: ni 25 MB en memoria ni
-                    // una foto a medias con su nombre final.
-                    let part = path.with_extension("part");
-                    tokio::fs::create_dir_all(path.parent().expect("con carpeta")).await?;
-                    let mut file = tokio::fs::File::create(&part).await?;
-                    let mut limited = (&mut recv).take(meta.size);
-                    let copied = timed(LONG, tokio::io::copy(&mut limited, &mut file)).await;
-                    drop(file);
-                    if copied.as_ref().map_or(true, |n| *n != meta.size) {
-                        let _ = tokio::fs::remove_file(&part).await;
-                        copied?;
-                        return Err(Error::Protocol("foto incompleta".into()));
-                    }
-                    if known {
-                        let _ = tokio::fs::remove_file(&part).await;
-                    } else {
-                        tokio::fs::rename(&part, &path).await?;
-                        saved = Some(path);
-                    }
+                    message.image = self.receive_media(&mut recv, from, path, meta.size, MAX_IMAGE, known).await?;
+                } else if let Some(meta) = audio {
+                    let path = self.inner.store.media_path(&id, &meta.ext);
+                    message.audio = self.receive_media(&mut recv, from, path, meta.size, MAX_AUDIO, known).await?;
+                    message.duration_ms = Some(meta.duration_ms);
                 }
                 write_frame(&mut send, &Frame::Ack).await?;
                 let _ = send.finish();
@@ -814,10 +979,36 @@ impl Talk {
                 if known {
                     return Ok(());
                 }
-                let message =
-                    ChatMessage { id, peer, outgoing: false, ts, text, image: saved, status: Status::Received, call: None };
                 self.inner.store.append(&message)?;
                 let _ = self.inner.events.send(Event::Chat { message, name: Some(name) });
+            }
+            Frame::Once { id, ts, name, image } => {
+                if !is_message_id(&id) {
+                    return Err(Error::Protocol("id de mensaje no válido".into()));
+                }
+                let known = self.inner.store.knows(&peer, &id);
+                let path = self.inner.store.once_path(&id, &image.ext);
+                let saved = self.receive_media(&mut recv, from, path, image.size, MAX_IMAGE, known).await?;
+                write_frame(&mut send, &Frame::Ack).await?;
+                let _ = send.finish();
+                if known {
+                    return Ok(());
+                }
+                let mut message = ChatMessage::new(id, peer, false, ts, Status::Received);
+                message.image = saved;
+                message.once = true;
+                self.inner.store.append(&message)?;
+                let _ = self.inner.events.send(Event::Chat { message, name: Some(name) });
+            }
+            Frame::Opened { id } => {
+                write_frame(&mut send, &Frame::Ack).await?;
+                let _ = send.finish();
+                let sent = self.inner.store.history(&peer).into_iter().find(|m| m.id == id && m.once && m.outgoing && !m.opened);
+                if let Some(mut message) = sent {
+                    message.opened = true;
+                    self.inner.store.append(&message)?;
+                    let _ = self.inner.events.send(Event::Chat { message, name: None });
+                }
             }
             Frame::Signal { name, signal } => {
                 write_frame(&mut send, &Frame::Ack).await?;
@@ -868,6 +1059,33 @@ async fn read_frame<R: AsyncRead + Unpin, T: DeserializeOwned>(r: &mut R, limit:
 
 fn parse_peer(peer: &str) -> Result<EndpointId, Error> {
     crate::parse_code(peer).ok_or_else(|| Error::Protocol(format!("código no válido: {peer}")))
+}
+
+/// Crea un archivo que solo puede leer este usuario (las fotos de una vez).
+async fn create_private(path: &Path) -> io::Result<tokio::fs::File> {
+    let mut options = tokio::fs::OpenOptions::new();
+    options.write(true).create(true).truncate(true);
+    #[cfg(unix)]
+    options.mode(0o600);
+    options.open(path).await
+}
+
+async fn write_private(path: &Path, data: &[u8]) -> io::Result<()> {
+    let mut file = create_private(path).await?;
+    file.write_all(data).await?;
+    file.flush().await
+}
+
+/// Borra un archivo pisando antes su contenido (lo que se pueda: en discos
+/// SSD y con copias del sistema no hay garantía).
+async fn shred(path: &Path) {
+    if let Ok(meta) = tokio::fs::metadata(path).await
+        && let Ok(mut file) = tokio::fs::OpenOptions::new().write(true).open(path).await
+    {
+        let _ = file.write_all(&vec![0u8; meta.len() as usize]).await;
+        let _ = file.sync_all().await;
+    }
+    let _ = tokio::fs::remove_file(path).await;
 }
 
 /// Un id de mensaje válido: un uuid en su forma de siempre (como los que se crean aquí).
@@ -939,6 +1157,12 @@ impl Store {
         self.media_dir().join(format!("{id}.{ext}"))
     }
 
+    fn once_path(&self, id: &str, ext: &str) -> PathBuf {
+        let path = self.media_path(id, ext);
+        let name = path.file_name().and_then(|n| n.to_str()).unwrap_or_default().to_string();
+        path.with_file_name(format!("{ONCE_PREFIX}{name}"))
+    }
+
     /// Si `path` es una foto de la carpeta del chat (y no otro archivo del equipo).
     fn is_media(&self, path: &Path) -> bool {
         let dir = self.media_dir();
@@ -985,6 +1209,7 @@ impl Store {
             })
             .filter(|m| m.outgoing && m.status == Status::Pending)
             .filter(|m| m.image.as_ref().is_none_or(|p| self.is_media(p)))
+            .filter(|m| m.audio.as_ref().is_none_or(|p| self.is_media(p)))
             .collect()
     }
 }

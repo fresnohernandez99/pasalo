@@ -85,6 +85,7 @@ export async function pendingMessages() {
 
 export const putMedia = (name, blob) => put('media', blob, name);
 export const getMedia = (name) => get('media', name);
+export const deleteMedia = (name) => del('media', name);
 
 // ---------- recepciones ----------
 

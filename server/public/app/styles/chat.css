@@ -176,3 +176,62 @@
 .menu button:hover { background: var(--surface-2); }
 .menu .i { color: var(--accent); }
 @keyframes pop { from { opacity: 0; transform: translateY(6px) scale(.98); } }
+
+/* ---------- notas de voz ---------- */
+
+/* Grabando: la barra sustituye a la caja de escribir. */
+.composer.recording > :not(.rec-bar) { display: none; }
+.rec-bar { flex: 1; display: flex; align-items: center; gap: 10px; min-height: var(--tap); }
+.rec-bar[hidden] { display: none; }
+.rec-dot { width: 10px; height: 10px; border-radius: 50%; background: var(--err); animation: rec-blink 1s infinite; }
+@keyframes rec-blink { 50% { opacity: .25; } }
+.rec-time { font-variant-numeric: tabular-nums; font-weight: 600; }
+.rec-label { flex: 1; color: var(--muted); font-size: 14px; }
+#chat-mic { color: var(--muted); }
+
+.voice-note { display: flex; align-items: center; gap: 8px; min-width: min(260px, 60vw); }
+.voice-note > .i { flex: none; width: 18px; height: 18px; opacity: .8; }
+.voice-note audio { flex: 1; min-width: 0; height: 36px; }
+.voice-note .vn-time { font-size: 12px; opacity: .75; font-variant-numeric: tabular-nums; }
+.voice-note.broken audio { display: none; }
+
+/* ---------- fotos de una vez ---------- */
+
+.once-chip { display: inline-flex; align-items: center; gap: 8px; padding: 6px 2px; font: inherit; color: inherit; background: none; border: 0; }
+.once-chip .i { width: 18px; height: 18px; }
+.once-chip.ready { cursor: pointer; font-weight: 600; }
+.msg.in .once-chip.ready { color: var(--accent); }
+
+.once-viewer {
+  position: fixed;
+  z-index: 45;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  background: #000;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+  touch-action: none;
+}
+.once-viewer[hidden] { display: none; }
+.once-viewer img { max-width: 100%; max-height: 100%; object-fit: contain; pointer-events: none; -webkit-user-drag: none; }
+/* Navegador: solo se ve mientras se mantiene pulsado. */
+.once-viewer.hold img, .once-viewer.hold .once-mark { visibility: hidden; }
+.once-viewer.hold.showing img, .once-viewer.hold.showing .once-mark { visibility: visible; }
+/* El nombre de quien la ve, por encima: una foto de la pantalla lo lleva. */
+.once-mark {
+  position: absolute;
+  inset: -50%;
+  transform: rotate(-24deg);
+  color: #fff;
+  opacity: .14;
+  font-size: 15px;
+  line-height: 3.2;
+  word-break: break-all;
+  overflow: hidden;
+  pointer-events: none;
+}
+.once-hint { position: absolute; bottom: calc(24px + var(--nav)); left: 16px; right: 16px; margin: 0; text-align: center; color: #fff; opacity: .7; font-size: 14px; pointer-events: none; }
+.once-viewer.hold.showing .once-hint { visibility: hidden; }
+.once-close { position: absolute; top: max(12px, var(--safe-top)); right: 12px; color: #fff; background: rgb(255 255 255 / .14); }

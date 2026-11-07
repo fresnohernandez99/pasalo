@@ -290,3 +290,46 @@ async fn image_id_cannot_escape_the_chat_folder() {
     assert!(!b._dir.path().join("escapado.txt").exists());
     attacker.close().await;
 }
+
+#[tokio::test]
+async fn voice_note_arrives_whole() {
+    let (mut a, mut b) = pair().await;
+    let note: Vec<u8> = (0..50_000u32).map(|i| (i * 3) as u8).collect();
+    a.talk.send_audio(&b.code, &note, "webm", 4200).await.unwrap();
+    let (got, _) = next_chat(&mut b.events).await;
+    assert_eq!(got.duration_ms, Some(4200));
+    assert_eq!(std::fs::read(got.audio.unwrap()).unwrap(), note);
+    let (delivered, _) = next_chat(&mut a.events).await;
+    assert_eq!(delivered.status, Status::Delivered);
+}
+
+/// Una foto de una vez: se ve una sola vez, no se queda en ningún lado y
+/// quien la envió se entera de que se vio.
+#[tokio::test]
+async fn view_once_photo() {
+    let (mut a, mut b) = pair().await;
+    let photo: Vec<u8> = (0..30_000u32).map(|i| (i * 11) as u8).collect();
+    let sent = a.talk.send_once(&b.code, &photo, "jpg").await.unwrap();
+    assert!(sent.once);
+
+    let (got, _) = next_chat(&mut b.events).await;
+    assert!(got.once && !got.opened);
+    let stored = got.image.clone().unwrap();
+    assert!(stored.file_name().unwrap().to_str().unwrap().starts_with(pasalo_core::ONCE_PREFIX));
+
+    // Entregada: el que la mandó ya no la tiene.
+    let (delivered, _) = next_chat(&mut a.events).await;
+    assert_eq!(delivered.status, Status::Delivered);
+    assert!(delivered.image.is_none());
+    assert!(!sent.image.unwrap().exists());
+
+    let (bytes, ext) = b.talk.open_once(&a.code, &got.id).await.unwrap();
+    assert_eq!((bytes, ext.as_str()), (photo, "jpg"));
+    assert!(!stored.exists());
+    assert!(b.talk.open_once(&a.code, &got.id).await.is_err());
+    assert!(b.talk.history(&a.code).iter().all(|m| m.image.is_none()));
+
+    // Al que la mandó le llega que se vio.
+    let (opened, _) = next_chat(&mut a.events).await;
+    assert!(opened.opened && opened.outgoing);
+}

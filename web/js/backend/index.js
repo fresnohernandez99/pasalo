@@ -14,7 +14,7 @@ import { VERSION } from '../version.js';
 import { Lobby } from './lobby.js';
 import { ALPN, Receiver, forgetReceived, manifest, probe, receivedFile, sendEntries, sendText } from './files.js';
 import * as store from './store.js';
-import { TALK_ALPN, Talk } from './talk.js';
+import { ONCE_PREFIX, TALK_ALPN, Talk } from './talk.js';
 import { PasaloError, SHORT, asError, cmdError, cmdFrom, mimeFor, sleep, timed, uuid } from './util.js';
 import { VoiceCall } from './voice.js';
 
@@ -492,8 +492,29 @@ const commands = {
     const bytes = Uint8Array.from(atob(data), (c) => c.charCodeAt(0));
     return s.talk.sendImage(peer, bytes, ext);
   },
+  chat_send_audio: ({ peer, data, ext, durationMs }) => {
+    const bytes = Uint8Array.from(atob(data), (c) => c.charCodeAt(0));
+    return s.talk.sendAudio(peer, bytes, ext, durationMs);
+  },
+  chat_send_once: ({ peer, data, ext }) => {
+    const bytes = Uint8Array.from(atob(data), (c) => c.charCodeAt(0));
+    return s.talk.sendOnce(peer, bytes, ext);
+  },
+  // Como data URL y no como blob: URL, que se quedaría abierta para quien la copie.
+  chat_once_open: async ({ peer, id }) => {
+    const blob = await s.talk.openOnce(peer, id);
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result);
+      reader.onerror = () => reject(reader.error);
+      reader.readAsDataURL(blob);
+    });
+  },
+  // El navegador no deja impedir las capturas (ver once.js en la interfaz).
+  secure_view: () => {},
   chat_image: async ({ path }) => {
     if (s.images.has(path)) return s.images.get(path);
+    if (String(path).startsWith(`media:${ONCE_PREFIX}`)) throw cmdError('other', 'not available');
     const blob = String(path).startsWith('media:') ? await store.getMedia(path.slice(6)) : null;
     if (!blob) throw cmdError('other', 'imagen no encontrada');
     const url = URL.createObjectURL(blob);

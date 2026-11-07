@@ -444,3 +444,23 @@ Informe completo en coTs (`code-notes/261107-1552`).
   siguen en español.
 - La LAN por TCP sigue sin cifrar (diseño).
 - Versión 1.0.2 (tag `v1.0.2`): todo lo de hoy (web, vídeo, seguridad, estadísticas).
+
+## Sesión 2026-11-07 (noche) — Notas de voz y fotos de una vez (para la 1.0.3)
+
+- **Notas de voz**: se graban con MediaRecorder (Opus a 24 kbps; AAC en
+  Safari), hasta 5 min, y viajan como adjunto del mensaje (`audio` en el
+  `Frame::Chat`; un equipo viejo lo ignora y ve una burbuja vacía).
+- **Fotos de una vez**: tipo de mensaje aparte (`Frame::Once`) para que un
+  equipo viejo no la acepte como foto normal (se queda pendiente). Quien la
+  envía la borra al entregarla; quien la recibe la abre una vez
+  (`open_once`: se lee, se pisa y se borra) y el otro recibe `Frame::Opened`.
+  En disco van con prefijo `once-` y permisos 0600; `chat_image` no las sirve.
+- **Capturas**: mientras se ve, `secure_view` pone FLAG_SECURE en Android y
+  la ventana protegida en macOS y Windows (salen en negro). En Linux y en el
+  navegador no se puede: en la web solo se ve mientras se mantiene pulsada,
+  se cierra si la página pierde el foco, y lleva el nombre de quien la ve.
+- **Compresión de fotos**: todas (normales y de una vez) pasan por
+  `lib/images.js`: 1600 px (1440 las de una vez), WebP si el equipo lo sabe
+  hacer o JPEG, lo que pese menos, y sin metadatos (EXIF, ubicación).
+- Probado en Chrome (web ↔ web) y con tests del núcleo; sin probar aún en
+  Android, macOS ni iPhone.

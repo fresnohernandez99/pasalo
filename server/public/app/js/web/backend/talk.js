@@ -14,6 +14,9 @@ import * as store from './store.js';
 
 export const TALK_ALPN = 'pasalo/talk/1';
 const MAX_IMAGE = 25 * 1024 * 1024;
+const MAX_AUDIO = 10 * 1024 * 1024;
+/** Las fotos de una vez llevan este prefijo: `chat_image` no las sirve. */
+export const ONCE_PREFIX = 'once-';
 const MAX_FRAME = 256 * 1024;
 const RETRY_FIRST = 20_000;
 const RETRY_MAX = 600_000;
@@ -133,6 +136,59 @@ export class Talk {
     return this.queue(id, peer, null, `media:${name}`);
   }
 
+  /** Nota de voz, ya comprimida por la interfaz. */
+  async sendAudio(peer, bytes, ext, durationMs) {
+    if (bytes.length > MAX_AUDIO) throw protocolError(`la nota de voz supera ${MAX_AUDIO / 1024 / 1024} MB`);
+    const id = uuid();
+    const name = mediaName(id, ext);
+    await store.putMedia(name, new Blob([bytes], { type: audioType(name) }));
+    const code = this.parsePeer(peer);
+    const message = {
+      id, peer: code, outgoing: true, ts: Date.now(), text: null, image: null, audio: `media:${name}`,
+      duration_ms: Math.round(durationMs) || 0, status: 'pending',
+    };
+    return this.enqueue(message);
+  }
+
+  /** Foto de una vez: se borra de aquí al entregarla y del otro lado al verla. */
+  async sendOnce(peer, bytes, ext) {
+    if (bytes.length > MAX_IMAGE) throw protocolError(`la imagen supera ${MAX_IMAGE / 1024 / 1024} MB`);
+    const id = uuid();
+    const name = ONCE_PREFIX + mediaName(id, ext);
+    await store.putMedia(name, new Blob([bytes], { type: imageType(name) }));
+    const code = this.parsePeer(peer);
+    const message = { id, peer: code, outgoing: true, ts: Date.now(), text: null, image: `media:${name}`, once: true, status: 'pending' };
+    return this.enqueue(message);
+  }
+
+  /** Abre una foto de una vez recibida: la devuelve (Blob) y la borra. */
+  async openOnce(peer, id) {
+    const code = this.parsePeer(peer);
+    const message = await store.getMessage(id);
+    if (!message || message.peer !== code || !message.once || message.outgoing || message.opened || !message.image) {
+      throw protocolError('esa foto ya se vio');
+    }
+    const name = message.image.replace(/^media:/, '');
+    const blob = await store.getMedia(name);
+    await store.deleteMedia(name);
+    const opened = { ...message, image: null, opened: true };
+    await store.saveMessage(opened);
+    this.emit({ kind: 'chat', message: opened, name: null });
+    // Que el otro sepa que se vio (si no se puede ahora, da igual).
+    (async () => {
+      for (let i = 0; i < 3; i++) {
+        try {
+          await exchange(await this.connection(code), { type: 'opened', id });
+          return;
+        } catch {
+          await sleep(5000);
+        }
+      }
+    })();
+    if (!blob) throw protocolError('foto perdida');
+    return blob;
+  }
+
   /** Envía una señal y espera la confirmación. No se reintenta. */
   async signal(peer, signal) {
     const code = this.parsePeer(peer);
@@ -236,9 +292,12 @@ export class Talk {
 
   async queue(id, peer, text, image) {
     const code = this.parsePeer(peer);
-    const message = { id, peer: code, outgoing: true, ts: Date.now(), text, image, status: 'pending' };
+    return this.enqueue({ id, peer: code, outgoing: true, ts: Date.now(), text, image, status: 'pending' });
+  }
+
+  async enqueue(message) {
     await store.saveMessage(message);
-    this.pending.set(id, message);
+    this.pending.set(message.id, message);
     this.spawnDelivery(message);
     return message;
   }
@@ -298,15 +357,23 @@ export class Talk {
   async deliver(message) {
     const conn = await this.connection(message.peer);
     let body = null;
-    let image = null;
-    if (message.image) {
-      const name = message.image.replace(/^media:/, '');
+    let meta = null;
+    const attachment = message.image || message.audio;
+    if (attachment) {
+      const name = attachment.replace(/^media:/, '');
       const blob = await store.getMedia(name);
-      if (!blob) throw new PasaloError('local', 'foto perdida');
+      if (!blob) throw new PasaloError('local', 'attachment lost');
       body = new Uint8Array(await blob.arrayBuffer());
-      image = { ext: name.split('.').pop() || 'jpg', size: body.length };
+      meta = { ext: name.split('.').pop() || 'jpg', size: body.length };
     }
-    const frame = { type: 'chat', id: message.id, ts: message.ts, name: this.name, text: message.text, image };
+    let frame;
+    if (message.once) frame = { type: 'once', id: message.id, ts: message.ts, name: this.name, image: meta };
+    else if (message.audio) {
+      frame = {
+        type: 'chat', id: message.id, ts: message.ts, name: this.name, text: null, image: null,
+        audio: { ...meta, duration_ms: message.duration_ms || 0 },
+      };
+    } else frame = { type: 'chat', id: message.id, ts: message.ts, name: this.name, text: message.text, image: meta };
     try {
       await exchange(conn, frame, body);
     } catch (err) {
@@ -315,6 +382,11 @@ export class Talk {
     }
     if (!this.pending.has(message.id)) return;
     const delivered = { ...message, status: 'delivered' };
+    // Una foto de una vez no se queda aquí: entregada, se borra.
+    if (message.once && message.image) {
+      await store.deleteMedia(message.image.replace(/^media:/, ''));
+      delivered.image = null;
+    }
     await store.saveMessage(delivered);
     this.pending.delete(message.id);
     this.emit({ kind: 'chat', message: delivered, name: null });
@@ -393,28 +465,42 @@ export class Talk {
       await send.write(frameBytes({ type: 'ack' }), SHORT);
       send.finish();
     };
-    if (frame.type === 'chat') {
-      // El id forma el nombre de la foto: solo un uuid.
+    if (frame.type === 'chat' || frame.type === 'once') {
+      // El id forma el nombre del adjunto: solo un uuid.
       if (!UUID.test(String(frame.id))) throw protocolError('id de mensaje no válido');
       const before = await store.getMessage(frame.id);
       const known = before && before.peer === code;
-      let image = null;
-      if (frame.image) {
-        if (frame.image.size > MAX_IMAGE) throw protocolError('imagen demasiado grande');
-        const bytes = await reader.exact(frame.image.size, LONG);
+      const once = frame.type === 'once';
+      const audio = !once && frame.audio && !frame.image ? frame.audio : null;
+      const meta = frame.image || audio;
+      let saved = null;
+      if (meta) {
+        if (!Number.isSafeInteger(meta.size) || meta.size > (audio ? MAX_AUDIO : MAX_IMAGE)) throw protocolError('adjunto demasiado grande');
+        const bytes = await reader.exact(meta.size, LONG);
         if (!known) {
-          const name = mediaName(frame.id, frame.image.ext);
-          await store.putMedia(name, new Blob([bytes], { type: imageType(name) }));
-          image = `media:${name}`;
+          const name = (once ? ONCE_PREFIX : '') + mediaName(frame.id, meta.ext);
+          await store.putMedia(name, new Blob([bytes], { type: audio ? audioType(name) : imageType(name) }));
+          saved = `media:${name}`;
         }
       }
       await ack();
       if (known) return;
       const message = {
-        id: frame.id, peer: code, outgoing: false, ts: frame.ts, text: frame.text ?? null, image, status: 'received',
+        id: frame.id, peer: code, outgoing: false, ts: frame.ts, text: once ? null : frame.text ?? null,
+        image: audio ? null : saved, status: 'received',
       };
+      if (audio) Object.assign(message, { audio: saved, duration_ms: audio.duration_ms || 0 });
+      if (once) message.once = true;
       await store.saveMessage(message);
       this.emit({ kind: 'chat', message, name: frame.name });
+    } else if (frame.type === 'opened') {
+      await ack();
+      const sent = await store.getMessage(String(frame.id));
+      if (sent && sent.peer === code && sent.once && sent.outgoing && !sent.opened) {
+        const opened = { ...sent, opened: true };
+        await store.saveMessage(opened);
+        this.emit({ kind: 'chat', message: opened, name: null });
+      }
     } else if (frame.type === 'signal') {
       await ack();
       this.emit({ kind: 'signal', peer: code, name: frame.name, signal: frame.signal });
@@ -428,6 +514,11 @@ function mediaName(id, ext) {
   let clean = String(ext || '').replace(/[^a-z0-9]/gi, '').slice(0, 5).toLowerCase();
   if (!clean) clean = 'bin';
   return `${id}.${clean}`;
+}
+
+function audioType(name) {
+  const ext = name.split('.').pop();
+  return { webm: 'audio/webm', ogg: 'audio/ogg', opus: 'audio/ogg' }[ext] || 'audio/mp4';
 }
 
 function imageType(name) {

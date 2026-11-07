@@ -107,10 +107,11 @@ export function findPeerByCode(code) {
 // ---------- lista ----------
 
 export function renderPeers() {
-  // La pareja, si además está en la LAN, sale una sola vez (como pareja).
+  // La pareja, si además está en la LAN (o se añadió antes por enlace), sale
+  // una sola vez (como pareja).
   const partner = peers.get('partner')?.addr;
   const list = [...peers.values()]
-    .filter((p) => p.platform === 'partner' || !partner || p.code !== partner)
+    .filter((p) => p.platform === 'partner' || !partner || (p.code !== partner && p.addr !== partner))
     .sort((a, b) => (b.platform === 'partner') - (a.platform === 'partner') || a.name.localeCompare(b.name));
   const html = list.length
     ? list.map(peerRow).join('')

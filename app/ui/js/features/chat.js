@@ -14,6 +14,9 @@ import { onBack, setPaneOpen } from './nav.js';
 import { avatar, ensureRemotePeer, findPeerByCode, peerCode } from './peers.js';
 import { act, items, liveWith, sendPaths } from './transfers.js';
 import { openViewer } from './viewer.js';
+import { compressImage } from '../lib/images.js';
+import { openOnce } from './once.js';
+import { isRecording, startRecording } from './recorder.js';
 
 const chat = {
   peer: null, // { code, name, os, platform, addr }
@@ -139,13 +142,15 @@ function messageNode(m, first, last) {
     nodes.set(m.id, el);
   }
   const call = m.call ? ` call-msg${BAD_OUTCOMES.includes(m.call.outcome) ? ' bad' : ''}` : '';
-  el.className = `msg ${m.outgoing ? 'out' : 'in'}${first ? ' first' : ''}${last ? ' last' : ''}${m.image && !m.text ? ' photo' : ''}${call}`;
+  el.className = `msg ${m.outgoing ? 'out' : 'in'}${first ? ' first' : ''}${last ? ' last' : ''}${m.image && !m.text && !m.once ? ' photo' : ''}${call}${m.once ? ' once-msg' : ''}`;
   const html = bubbleHtml(m);
   if (el.dataset.html !== html) {
     el.dataset.html = html;
     el.innerHTML = html;
     const img = el.querySelector('img[data-path]');
     if (img) loadImage(img);
+    const audio = el.querySelector('audio[data-path]');
+    if (audio) loadAudio(audio);
   }
   return el;
 }
@@ -215,17 +220,44 @@ function openCallDetails(m) {
 
 $('#call-details-close').addEventListener('click', () => $('#call-details').close());
 
+/** Foto de una vez: no se enseña aquí; se abre (y se borra) al tocarla. */
+function onceHtml(m) {
+  const label = m.outgoing ? t(m.opened ? 'once.seen' : 'once.sent') : t(m.opened ? 'once.opened' : 'once.view');
+  const inner = `${icon('shield')}<span>${esc(label)}</span>`;
+  if (!m.outgoing && !m.opened) return `<button type="button" class="once-chip ready" data-once="${esc(m.id)}">${inner}</button>`;
+  return `<span class="once-chip">${inner}</span>`;
+}
+
+/** «0:42» de una nota de voz. */
+function noteTime(ms) {
+  const s = Math.round((ms || 0) / 1000);
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+}
+
 function bubbleHtml(m) {
   if (m.call) return callBubble(m);
   const pending = m.outgoing && m.status === 'pending';
   const tick = m.outgoing
     ? `<span class="tick ${pending ? 'pending' : ''}" title="${esc(t(pending ? 'chat.pending' : 'chat.delivered'))}">${icon(pending ? 'clock' : 'check')}</span>`
     : '';
+  if (m.once) return `<div class="bubble">${onceHtml(m)}<span class="meta">${clock(m.ts)}${tick}</span></div>`;
+  if (m.audio) {
+    return `<div class="bubble"><div class="voice-note">${icon('mic')}<audio controls preload="none" data-path="${esc(m.audio)}"></audio>
+      <span class="vn-time">${esc(noteTime(m.duration_ms))}</span></div><span class="meta">${clock(m.ts)}${tick}</span></div>`;
+  }
   const img = m.image
     ? `<button class="msg-img" type="button" aria-label="${esc(t('chat.photo'))}"><img data-path="${esc(m.image)}" alt=""></button>`
     : '';
   const text = m.text ? `<span class="msg-text">${esc(m.text)}</span>` : '';
   return `<div class="bubble">${img}${text}<span class="meta">${clock(m.ts)}${tick}</span></div>`;
+}
+
+async function loadAudio(audio) {
+  try {
+    audio.src = await invoke('chat_image', { path: audio.dataset.path });
+  } catch {
+    audio.closest('.voice-note')?.classList.add('broken');
+  }
 }
 
 async function loadImage(img) {
@@ -256,6 +288,11 @@ async function loadImage(img) {
 }
 
 $('#chat-list').addEventListener('click', (ev) => {
+  const once = ev.target.closest('[data-once]');
+  if (once && chat.peer) {
+    openOnce(chat.peer.code, once.dataset.once);
+    return;
+  }
   const call = ev.target.closest('[data-call]');
   if (call) {
     const m = (chat.messages.get(chat.peer?.code) || []).find((x) => x.id === call.dataset.call);
@@ -330,6 +367,8 @@ $('#attach-menu').addEventListener('click', async (ev) => {
   const peer = chat.peer;
   if (what === 'photo') {
     $('#chat-file').click();
+  } else if (what === 'once') {
+    $('#chat-once-file').click();
   } else if (what === 'files') {
     sendPaths(peer, await call('pick_files'));
   } else if (what === 'folder') {
@@ -344,19 +383,13 @@ $('#chat-file').addEventListener('change', async (ev) => {
   for (const file of files) await sendImage(file);
 });
 
-// Las fotos del móvil pesan varios MB: se reducen a 1600 px en JPEG antes de
-// enviarlas (unos 200-400 KB), que con mala señal es lo que importa.
+// Las fotos del móvil pesan varios MB: todas pasan por compressImage (1600 px,
+// WebP o JPEG, sin metadatos) antes de enviarlas, unos 150-400 KB.
 async function sendImage(file) {
   if (!chat.peer) return;
   try {
-    const bitmap = await createImageBitmap(file);
-    const scale = Math.min(1, 1600 / Math.max(bitmap.width, bitmap.height));
-    const canvas = document.createElement('canvas');
-    canvas.width = Math.round(bitmap.width * scale);
-    canvas.height = Math.round(bitmap.height * scale);
-    canvas.getContext('2d').drawImage(bitmap, 0, 0, canvas.width, canvas.height);
-    const data = canvas.toDataURL('image/jpeg', 0.8).split(',')[1];
-    const m = await tryCall('chat_send_image', { peer: chat.peer.code, data, ext: 'jpg' });
+    const { data, ext } = await compressImage(file);
+    const m = await tryCall('chat_send_image', { peer: chat.peer.code, data, ext });
     if (m) {
       upsertMessage(m);
       renderChat(true);
@@ -365,6 +398,36 @@ async function sendImage(file) {
     toast(errorText(err), true);
   }
 }
+
+// Foto de una vez: igual de comprimida, y sin quedarse en este equipo.
+$('#chat-once-file').addEventListener('change', async (ev) => {
+  const file = ev.target.files[0];
+  ev.target.value = '';
+  if (!file || !chat.peer) return;
+  try {
+    const { data, ext } = await compressImage(file, 1440);
+    const m = await tryCall('chat_send_once', { peer: chat.peer.code, data, ext });
+    if (m) {
+      upsertMessage(m);
+      renderChat(true);
+    }
+  } catch (err) {
+    toast(errorText(err), true);
+  }
+});
+
+// Nota de voz.
+$('#chat-mic').addEventListener('click', () => {
+  const peer = chat.peer;
+  if (!peer || isRecording()) return;
+  startRecording(async ({ data, ext, durationMs }) => {
+    const m = await tryCall('chat_send_audio', { peer: peer.code, data, ext, durationMs });
+    if (m && chat.peer?.code === peer.code) {
+      upsertMessage(m);
+      renderChat(true);
+    }
+  });
+});
 
 // ---------- transferencias con este equipo ----------
 
@@ -423,7 +486,7 @@ export function onChatEvent({ message, name }) {
       chat.unread.set(message.peer, unreadCount(message.peer) + 1);
       emit('chat:unread');
     }
-  } else if (!message.outgoing) {
+  } else if (!message.outgoing && !message.opened) {
     chat.unread.set(message.peer, unreadCount(message.peer) + 1);
     emit('chat:unread');
     toast(t('toast.message_from', { name: name || shortCode(message.peer) }));

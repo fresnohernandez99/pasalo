@@ -45,6 +45,15 @@ impl Android {
 
     /// Modo de llamada de Android: suena por el auricular (o el altavoz) y el
     /// sistema aplica su cancelación de eco.
+    /// Sin capturas de pantalla mientras `on` (ver `secure` en PasaloPlugin.kt).
+    pub async fn secure(&self, on: bool) {
+        #[derive(serde::Serialize)]
+        struct Args {
+            on: bool,
+        }
+        let _ = self.0.run_mobile_plugin_async::<serde_json::Value>("secure", Args { on }).await;
+    }
+
     pub fn call_audio(&self, on: bool, speaker: bool) {
         let _ = self.0.run_mobile_plugin::<serde_json::Value>("callAudio", CallAudio { on, speaker });
     }

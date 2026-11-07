@@ -35,6 +35,11 @@ import java.io.File
  * Lo que la parte en Rust no puede hacer sola en Android (ver `src/android.rs`).
  */
 @InvokeArg
+class SecureArgs {
+  var on: Boolean = false
+}
+
+@InvokeArg
 class CallAudioArgs {
   var on: Boolean = false
   var speaker: Boolean = false
@@ -134,6 +139,20 @@ class PasaloPlugin(private val activity: Activity) : Plugin(activity) {
   fun audioPermissionResult(invoke: Invoke) {
     val granted = ContextCompat.checkSelfPermission(activity, android.Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
     invoke.resolve(JSObject().put("granted", granted))
+  }
+
+  /**
+   * Pantalla protegida mientras se ve una foto de una sola vez: sin capturas
+   * ni grabación de pantalla, y en negro en las apps recientes.
+   */
+  @Command
+  fun secure(invoke: Invoke) {
+    val args = invoke.parseArgs(SecureArgs::class.java)
+    activity.runOnUiThread {
+      val flag = android.view.WindowManager.LayoutParams.FLAG_SECURE
+      if (args.on) activity.window.addFlags(flag) else activity.window.clearFlags(flag)
+      invoke.resolve()
+    }
   }
 
   /**
