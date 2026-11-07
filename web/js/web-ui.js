@@ -5,56 +5,14 @@
 //   inicio: así funciona como una app y el sistema no borra lo guardado.
 // - Arrastrar y soltar archivos (en escritorio), como los eventos de Tauri.
 // - El audio: iOS solo deja sonar lo que empezó con un toque.
+// - El teclado del iPhone y el gesto Atrás del navegador.
 // - El service worker, para abrir sin conexión y como app instalada.
 
-import { currentLang } from '../i18n/index.js';
+import { t } from '../i18n/index.js';
+import { on } from '../lib/bus.js';
 import { bytes } from '../lib/format.js';
 import { toast } from '../lib/toast.js';
 import { audioContext, unlockAudio } from './backend/voice.js';
-
-const TEXT = {
-  es: {
-    received: 'Recibido',
-    save: 'Guardar',
-    save_all: 'Guardar todo',
-    discard: 'Descartar',
-    saved: 'Guardado',
-    from: 'de {peer}',
-    install_title: 'Instala Pasalo en el iPhone',
-    install_body: 'Pulsa Compartir y luego «Añadir a pantalla de inicio». Así se abre como una app y no se pierden tus chats.',
-    install_ok: 'Entendido',
-    keep_open: 'Mantén Pasalo abierto: si bloqueas el teléfono o cambias de app, la conexión se pausa.',
-  },
-  en: {
-    received: 'Received',
-    save: 'Save',
-    save_all: 'Save all',
-    discard: 'Discard',
-    saved: 'Saved',
-    from: 'from {peer}',
-    install_title: 'Install Pasalo on your iPhone',
-    install_body: 'Tap Share and then “Add to Home Screen”. It opens like an app and your chats are kept.',
-    install_ok: 'Got it',
-    keep_open: 'Keep Pasalo open: locking the phone or switching apps pauses the connection.',
-  },
-  ru: {
-    received: 'Получено',
-    save: 'Сохранить',
-    save_all: 'Сохранить всё',
-    discard: 'Удалить',
-    saved: 'Сохранено',
-    from: 'от {peer}',
-    install_title: 'Установите Pasalo на iPhone',
-    install_body: 'Нажмите «Поделиться», затем «На экран „Домой“». Так Pasalo откроется как приложение и чаты сохранятся.',
-    install_ok: 'Понятно',
-    keep_open: 'Не закрывайте Pasalo: при блокировке телефона или переходе в другое приложение соединение приостанавливается.',
-  },
-};
-
-function tx(key, params = {}) {
-  const text = (TEXT[currentLang()] || TEXT.en)[key] ?? TEXT.en[key];
-  return text.replace(/\{(\w+)\}/g, (_, k) => params[k] ?? '');
-}
 
 const isIos = () => /iPhone|iPad|iPod/.test(navigator.userAgent) || (/Macintosh/.test(navigator.userAgent) && navigator.maxTouchPoints > 1);
 const standalone = () => matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
@@ -75,6 +33,7 @@ function el(tag, attrs = {}, ...children) {
 /** id → { meta, file (File, ya preparado para poder compartirlo al tocar) } */
 const ready = new Map();
 let sheet = null;
+let collapsed = false;
 let backend = null;
 
 async function offer(files) {
@@ -83,6 +42,7 @@ async function offer(files) {
     const file = await backend.receivedAsFile(meta.id).catch(() => null);
     if (file) ready.set(meta.id, { meta, file });
   }
+  collapsed = false;
   render();
 }
 
@@ -92,27 +52,45 @@ function render() {
     document.body.append(sheet);
   }
   sheet.hidden = ready.size === 0;
-  if (!ready.size) return;
+  document.body.classList.toggle('has-received', ready.size > 0);
+  if (!ready.size) {
+    document.documentElement.style.setProperty('--sheet-h', '0px');
+    return;
+  }
   const rows = [...ready.values()].map(({ meta }) =>
     el(
       'div',
       { class: 'web-received-row' },
       el('div', { class: 'web-received-info' },
         el('div', { class: 'web-received-name' }, meta.path || meta.name),
-        el('div', { class: 'sub' }, `${bytes(meta.size)} · ${tx('from', { peer: meta.peer || '' })}`)),
-      el('button', { class: 'icon-btn subtle', type: 'button', title: tx('discard'), 'aria-label': tx('discard'), onclick: () => discard(meta.id) }, '×'),
-      el('button', { class: 'primary small', type: 'button', onclick: () => save([meta.id]) }, tx('save')),
+        el('div', { class: 'sub' }, `${bytes(meta.size)} · ${t('web.from', { peer: meta.peer || '' })}`)),
+      el('button', { class: 'icon-btn small subtle', type: 'button', title: t('web.discard'), 'aria-label': t('web.discard'), onclick: () => discard([meta.id]) }, '×'),
+      el('button', { class: 'primary small', type: 'button', onclick: () => save([meta.id]) }, t('btn.save')),
     ),
   );
-  const head = el('div', { class: 'web-received-head' }, el('strong', {}, `${tx('received')} (${ready.size})`));
-  if (ready.size > 1) head.append(el('button', { class: 'ghost small', type: 'button', onclick: () => save([...ready.keys()]) }, tx('save_all')));
-  sheet.replaceChildren(head, el('div', { class: 'web-received-list' }, ...rows));
+  const toggle = el(
+    'button',
+    { class: 'ghost small', type: 'button', 'aria-expanded': String(!collapsed), onclick: () => ((collapsed = !collapsed), render()) },
+    t(collapsed ? 'web.expand' : 'web.collapse'),
+  );
+  const head = el('div', { class: 'web-received-head' }, el('strong', {}, `${t('web.received')} (${ready.size})`), toggle);
+  const actions = el('div', { class: 'web-received-actions' });
+  if (ready.size > 1) {
+    actions.append(
+      el('button', { class: 'ghost small', type: 'button', onclick: () => discard([...ready.keys()]) }, t('web.discard_all')),
+      el('button', { class: 'primary small', type: 'button', onclick: () => save([...ready.keys()]) }, t('web.save_all')),
+    );
+  }
+  const body = collapsed ? [] : [el('div', { class: 'web-received-list' }, ...rows), actions];
+  sheet.replaceChildren(head, ...body);
+  // Lo de debajo (la lista, el botón +) deja sitio a la hoja.
+  requestAnimationFrame(() => document.documentElement.style.setProperty('--sheet-h', `${sheet.offsetHeight + 12}px`));
 }
 
-async function discard(id) {
-  ready.delete(id);
+async function discard(ids) {
+  for (const id of ids) ready.delete(id);
   render();
-  await backend.forgetFile(id).catch(() => {});
+  for (const id of ids) await backend.forgetFile(id).catch(() => {});
 }
 
 /** Guarda: con el menú de compartir si se puede (iPhone, Android) o descargándolo. */
@@ -133,7 +111,7 @@ async function save(ids) {
   }
   for (const id of ids) ready.delete(id);
   render();
-  toast(tx('saved'));
+  toast(t('web.saved'));
   // Un poco después, por si la descarga todavía lee del archivo.
   setTimeout(() => ids.forEach((id) => backend.forgetFile(id).catch(() => {})), 60_000);
 }
@@ -151,6 +129,7 @@ function download(files) {
 
 // ---------- instalar en el iPhone ----------
 
+// Dentro de la lista y no flotando: no tapa la cabecera ni los botones.
 function installHint() {
   if (!isIos() || standalone()) return;
   try {
@@ -165,11 +144,11 @@ function installHint() {
   const box = el(
     'div',
     { class: 'web-install' },
-    el('strong', {}, tx('install_title')),
-    el('p', {}, tx('install_body')),
-    el('button', { class: 'primary small', type: 'button', onclick: close }, tx('install_ok')),
+    el('strong', { 'data-i18n': 'web.install_title' }, t('web.install_title')),
+    el('p', { 'data-i18n': 'web.install_body' }, t('web.install_body')),
+    el('button', { class: 'primary small', type: 'button', 'data-i18n': 'web.install_ok', onclick: close }, t('web.install_ok')),
   );
-  document.body.append(box);
+  (document.querySelector('.home-body') || document.body).prepend(box);
 }
 
 // ---------- arrastrar y soltar ----------
@@ -202,6 +181,45 @@ function dragAndDrop(emitRaw, remember) {
   });
 }
 
+// ---------- teclado y Atrás ----------
+
+// En el iPhone el teclado no encoge la página: se mide con visualViewport y
+// se le dice a la interfaz con `--kb` (como hace el plugin de Android).
+function keyboard() {
+  const vv = window.visualViewport;
+  if (!vv) return;
+  const update = () => {
+    const kb = Math.max(0, window.innerHeight - vv.height - vv.offsetTop);
+    const root = document.documentElement.style;
+    root.setProperty('--kb', `${kb}px`);
+    // Con el teclado fuera, la zona de la barra de inicio no hace falta.
+    root.setProperty('--nav', kb > 0 ? '0px' : 'env(safe-area-inset-bottom, 0px)');
+  };
+  vv.addEventListener('resize', update);
+  vv.addEventListener('scroll', update);
+  update();
+}
+
+// El gesto Atrás (Android, o Safari fuera de la app instalada) cerraba la
+// página entera. Se deja una entrada de historial de reserva: Atrás cierra lo
+// que esté abierto (chat, ajustes, foto…) como en la app de Android; si no
+// hay nada, se sale de verdad.
+function backGesture() {
+  history.replaceState({ pasalo: 'base' }, '');
+  history.pushState({ pasalo: 'top' }, '');
+  window.addEventListener('popstate', () => {
+    if (window.pasaloBack?.()) {
+      history.pushState({ pasalo: 'top' }, '');
+    } else {
+      history.back();
+    }
+  });
+  // Escape en escritorio, igual (los diálogos ya se cierran solos con él).
+  window.addEventListener('keydown', (ev) => {
+    if (ev.key === 'Escape' && !document.querySelector('dialog[open]')) window.pasaloBack?.();
+  });
+}
+
 // ---------- arranque ----------
 
 export function initWebUi(api) {
@@ -211,6 +229,7 @@ export function initWebUi(api) {
   backend.onSave((id) => save([id]));
   backend.pendingFiles().then(offer, () => {});
   dragAndDrop(backend.emitRaw, backend.rememberFiles);
+  keyboard();
 
   // El timbre de la interfaz crea su propio AudioContext: se le da el de la
   // página, que ya se desbloqueó con el primer toque.
@@ -226,16 +245,24 @@ export function initWebUi(api) {
 
   const loaded = () => {
     installHint();
+    backGesture();
+    // Sin red local, añadir es por código o enlace.
+    const input = document.getElementById('manual-ip');
+    if (input) input.dataset.i18nPlaceholder = 'peers.add_placeholder_web';
+    if (input) input.placeholder = t('peers.add_placeholder_web');
     if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
   };
   if (document.readyState === 'complete') loaded();
   else window.addEventListener('load', loaded, { once: true });
 
-  // En el móvil, la primera vez que se sale a internet: la página tiene que seguir abierta.
+  on('lang', render);
+
+  // En el móvil, la primera vez que se sale a internet: la página tiene que
+  // seguir abierta. Un poco después, para que no lo pisen los avisos de conectar.
   let warned = false;
   backend.listen('net_step', ({ payload }) => {
     if (payload !== 'relay' || warned || !isIos()) return;
     warned = true;
-    toast(tx('keep_open'));
+    setTimeout(() => toast(t('web.keep_open')), 4000);
   });
 }

@@ -44,7 +44,7 @@ body.pane-open .pane { transform: none; visibility: visible; transition: transfo
   gap: 8px;
   padding: 12px 12px 4px 16px;
 }
-.mobile .topbar { padding-top: max(12px, env(safe-area-inset-top)); }
+.mobile .topbar { padding-top: max(12px, var(--safe-top)); }
 .me { flex: 1; min-width: 0; display: flex; align-items: center; gap: 12px; }
 .me-avatar { border-radius: 50%; }
 .me-text { flex: 1; min-width: 0; display: flex; flex-direction: column; align-items: flex-start; }
@@ -206,7 +206,7 @@ body.pane-open .pane { transform: none; visibility: visible; transition: transfo
 body[data-tab="transfers"] .fab { display: none; }
 /* En Transferencias no hace falta este equipo ni la conexión: solo la lista. */
 body[data-tab="transfers"] :is(.topbar, .netbar) { display: none; }
-.mobile[data-tab="transfers"] .home-body { padding-top: max(8px, env(safe-area-inset-top)); }
+.mobile[data-tab="transfers"] .home-body { padding-top: max(8px, var(--safe-top)); }
 
 .tabbar {
   display: flex;

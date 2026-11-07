@@ -9,7 +9,7 @@ import { basename, bytes, clock, duration, label } from '../lib/format.js';
 import { icon } from '../lib/icons.js';
 import { call, invoke } from '../lib/tauri.js';
 import { toast } from '../lib/toast.js';
-import { isMobile } from '../state.js';
+import { app, isMobile } from '../state.js';
 import { noteTransfer } from './nav.js';
 
 /** clave → transferencia o texto */
@@ -70,8 +70,9 @@ $('#text-form').addEventListener('submit', async (ev) => {
   ev.preventDefault();
   const text = $('#text-body').value;
   if (!text.trim() || !textPeer) return;
-  $('#text-dialog').close();
+  // El diálogo se cierra cuando sale: si falla, lo escrito sigue ahí.
   await call('send_text', { target: textPeer.addr, text });
+  $('#text-dialog').close();
   toast(t('toast.text_sent', { name: textPeer.name }));
 });
 
@@ -121,7 +122,9 @@ function actionsFor(tr) {
   if (!incoming && ['paused', 'error'].includes(s)) a.push(['resume', t('btn.resume'), 'primary']);
   if (!incoming && LIVE.concat('error').includes(s) && s !== 'request') a.push(['cancel', t('btn.cancel'), 'danger']);
   if (incoming && ['connecting', 'active'].includes(s)) a.push(['cancel', t('btn.cancel'), 'danger']);
-  if (incoming && s === 'done' && tr.saved.length && !isMobile()) a.push(['reveal', t('btn.reveal')]);
+  // En la web «mostrar» es guardar (no hay carpeta), también en el móvil.
+  const web = !!app.settings?.web;
+  if (incoming && s === 'done' && tr.saved.length && (web || !isMobile())) a.push(['reveal', t(web ? 'btn.save' : 'btn.reveal')]);
   if (FINISHED.includes(s)) a.push(['remove', t('btn.remove')]);
   return a;
 }
@@ -245,11 +248,20 @@ export async function act(item, action) {
       Object.assign(item, { status: 'paused', speed: 0, autoPaused: false });
       update(item);
       break;
-    case 'resume':
+    case 'resume': {
+      const before = { status: item.status, error: item.error };
       Object.assign(item, { status: 'connecting', error: null, autoPaused: false });
       update(item);
-      await call('resume', { id: item.id });
+      try {
+        await call('resume', { id: item.id });
+      } catch (err) {
+        // Si no arrancó, la tarjeta vuelve a como estaba (con sus botones).
+        Object.assign(item, before);
+        update(item);
+        throw err;
+      }
       break;
+    }
     case 'cancel':
       if (item.direction === 'incoming') await call('cancel_incoming', { id: item.id });
       else await call('forget', { id: item.id });

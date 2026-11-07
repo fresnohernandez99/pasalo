@@ -6,7 +6,7 @@ use std::path::PathBuf;
 use std::sync::Mutex;
 
 use pasalo_core::protocol::{DISCOVERY_PORT, TRANSFER_PORT};
-use pasalo_core::{Discovery, EventSender, Lobby, LocalInfo, Partner, Receiver, Remote, SendOptions, Talk, Target, TransferId};
+use pasalo_core::{CallStats, Discovery, EventSender, Lobby, LocalInfo, Partner, Receiver, Remote, SendOptions, Talk, Target, TransferId};
 use tokio::task::JoinHandle;
 
 use crate::error::{CmdError, CmdResult};
@@ -37,6 +37,8 @@ pub struct AppState {
     /// El otro equipo, tras aceptar una conexión.
     pub partner: Mutex<Option<Partner>>,
     pub chat_dir: PathBuf,
+    /// Llamadas terminadas, para subir sus estadísticas cuando el usuario lo pida.
+    pub call_stats: CallStats,
     pub voice: Mutex<Option<call::VoiceCall>>,
     pub video: Mutex<Option<call::VideoCall>>,
     pub events: EventSender,

@@ -95,6 +95,13 @@ struct Accepted {
     partner: Option<Partner>,
 }
 
+/// Id para entrar en el server: uno nuevo en cada sesión, para que el server
+/// (que se lo enseña a todos los conectados) no exponga el `device_id`
+/// permanente del equipo.
+pub fn session_id() -> String {
+    uuid::Uuid::new_v4().to_string()
+}
+
 impl Lobby {
     /// Entra en el server `base` (p. ej. `https://pasalo.vercel.app`) como
     /// `me`, y se queda escuchando hasta [`Lobby::leave`] o hasta emparejarse.

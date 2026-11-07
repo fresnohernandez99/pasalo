@@ -18,23 +18,25 @@ const RING_TIMEOUT = 45_000;
 // Sin recibir nada por la conexión en este tiempo (iroh manda un keep-alive
 // cada 5 s aunque nadie hable), el otro lado ya no está.
 const LINK_TIMEOUT = 15_000;
-const DEFAULTS = { voiceMode: 'normal', videoAudioMode: 'low', videoQuality: 'normal' };
+const DEFAULTS = { voiceMode: 'normal', videoAudioMode: 'low', videoQuality: 'normal', blur: false, enhance: true };
 
 import { errorText, t } from '../i18n/index.js';
 import { on } from '../lib/bus.js';
 import { $, esc } from '../lib/dom.js';
 import { initials } from '../lib/format.js';
-import { Channel, invoke } from '../lib/tauri.js';
+import { invoke } from '../lib/tauri.js';
 import { toast } from '../lib/toast.js';
-import { isMobile } from '../state.js';
-import { activePeer } from './chat.js';
+import { app, isMobile } from '../state.js';
+import { activePeer, onChatEvent } from './chat.js';
 import { keepCall } from './keepalive.js';
 import { onHello, onUnpair } from './lobby.js';
 import { onBack } from './nav.js';
 import { ensureRemotePeer } from './peers.js';
+import { BackgroundBlur, loadSegmenter } from './blur.js';
 import { VIDEO_MODES, VideoReceiver, VideoSender, decodableCodecs, pickCodec } from './video.js';
 
 let live = null;
+let starting = false;
 
 // ---------- ajustes ----------
 
@@ -58,6 +60,15 @@ export function fillCallSettings() {
   fillAudioModes($('#set-voice-mode'), s.voiceMode);
   fillAudioModes($('#set-video-audio-mode'), s.videoAudioMode);
   fillVideoModes($('#set-video-quality'), s.videoQuality);
+  $('#set-blur').checked = s.blur;
+  $('#set-enhance').checked = s.enhance;
+}
+
+for (const [id, key] of [
+  ['#set-blur', 'blur'],
+  ['#set-enhance', 'enhance'],
+]) {
+  $(id).addEventListener('change', (ev) => saveCallSettings({ [key]: ev.target.checked }));
 }
 
 for (const [id, key] of [
@@ -87,22 +98,67 @@ function setQualityMenu(open) {
 
 // ---------- señales ----------
 
+// Solo estas señales avisan si fallan: el resto (pedir una imagen clave,
+// cambiar de calidad, apagar la cámara…) se reintenta o da igual, y por un
+// relay lento los avisos se acumulaban justo cuando peor iba la llamada.
+const LOUD_SIGNALS = ['invite', 'accept'];
+
 function signal(kind, data = null) {
   if (!live) return Promise.resolve();
   return invoke('call_signal', { peer: live.peer.code, call: live.id, kind, data }).catch((err) => {
-    if (kind !== 'hangup') toast(errorText(err), true);
+    if (LOUD_SIGNALS.includes(kind)) toast(errorText(err), true);
     throw err;
   });
+}
+
+/** Una imagen comprimida en base64 (en Android la IPC no lleva binario). */
+function base64(bytes) {
+  let text = '';
+  for (let i = 0; i < bytes.length; i += 0x8000) text += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+  return btoa(text);
+}
+
+/** En la app de Android el binario cruza la IPC como JSON: mejor en base64. */
+const sendFrame = (bytes) =>
+  invoke('video_send', app.settings?.mobile && !app.settings?.web ? { b64: base64(bytes) } : bytes);
+
+/** Recoge lo que llega del vídeo mientras dure esta llamada (ver `video_recv`). */
+async function pollVideo(c) {
+  while (c === live && c.receiver) {
+    let buffer;
+    try {
+      buffer = await invoke('video_recv');
+    } catch (err) {
+      if (err?.code === 'video_stopped') return;
+      await new Promise((resolve) => setTimeout(resolve, 500));
+      continue;
+    }
+    const bytes = new Uint8Array(buffer || []);
+    const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+    for (let at = 0; at + 4 <= bytes.length; ) {
+      const len = view.getUint32(at);
+      c.receiver?.push(bytes.subarray(at + 4, at + 4 + len));
+      at += 4 + len;
+    }
+  }
 }
 
 /** `to` es `{ code, name }`. */
 export async function startCall(to, media) {
   if (!to?.code) return;
-  if (live) {
+  if (live || starting) {
     toast(t('call.busy_self'), true);
     return;
   }
-  const codecs = media === 'video' ? await decodableCodecs() : [];
+  // Un doble toque no puede mandar dos invitaciones.
+  starting = true;
+  let codecs;
+  try {
+    codecs = media === 'video' ? await decodableCodecs() : [];
+  } finally {
+    starting = false;
+  }
+  if (live) return;
   if (media === 'video' && !codecs.length) {
     toast(t('call.no_video'), true);
     return;
@@ -121,14 +177,14 @@ export async function startCall(to, media) {
   try {
     await signal('invite', { media, mode: live.audio, video: live.video, codecs });
   } catch {
-    endCall();
+    endCall(null, 'failed');
     return;
   }
   live.ringTimer = setTimeout(() => hangup('no_answer'), RING_TIMEOUT);
 }
 
 function newCall(fields) {
-  return { muted: false, speaker: false, camOff: false, remoteCamOff: false, theirCodecs: [], facing: 'user', ...fields };
+  return { createdAt: Date.now(), muted: false, speaker: false, camOff: false, remoteCamOff: false, theirCodecs: [], facing: 'user', blur: callSettings().blur, ...fields };
 }
 
 export function onSignal({ peer, name, signal: s }) {
@@ -141,27 +197,33 @@ export function onSignal({ peer, name, signal: s }) {
     return;
   }
   if (s.kind === 'invite') {
+    const media = s.data?.media === 'video' ? 'video' : 'voice';
     if (live) {
       invoke('call_signal', { peer, call: s.call, kind: 'busy', data: null }).catch(() => {});
+      // Como en WhatsApp: queda como perdida.
+      ensureRemotePeer(peer, name);
+      logCall({ id: s.call, peer: { code: peer, name }, media, role: 'callee', createdAt: Date.now() }, 'missed');
       return;
     }
     ensureRemotePeer(peer, name);
-    const media = s.data?.media === 'video' ? 'video' : 'voice';
+    // Un diálogo abierto (añadir equipo, un enlace…) deja el resto de la
+    // pantalla inerte: no se podría contestar.
+    for (const dialog of document.querySelectorAll('dialog[open]')) dialog.close();
     live = newCall({
       id: s.call,
       peer: { code: peer, name },
       media,
       role: 'callee',
       state: 'incoming',
-      audio: s.data?.mode || 'normal',
-      video: VIDEO_MODES[s.data?.video] ? s.data.video : callSettings().videoQuality,
+      audio: VOICE_MODES.some(([m]) => m === s.data?.mode) ? s.data.mode : 'normal',
+      video: Object.hasOwn(VIDEO_MODES, s.data?.video ?? '') ? s.data.video : callSettings().videoQuality,
       theirCodecs: s.data?.codecs || [],
     });
     showCall();
     startRinging();
     // Si la señal de colgar no llega (el otro se quedó sin conexión), no se
     // sigue sonando para siempre.
-    live.ringTimer = setTimeout(() => endCall(t('call.missed')), RING_TIMEOUT + 5000);
+    live.ringTimer = setTimeout(() => endCall(t('call.missed'), 'missed'), RING_TIMEOUT + 5000);
     return;
   }
   if (!live || s.call !== live.id || peer !== live.peer.code) return;
@@ -173,9 +235,15 @@ export function onSignal({ peer, name, signal: s }) {
       break;
     case 'decline':
     case 'busy':
-    case 'hangup':
-      endCall(t(`call.ended_${s.kind}`));
+    case 'hangup': {
+      let outcome = 'completed';
+      if (live.state !== 'active') {
+        if (live.role === 'callee') outcome = 'missed';
+        else outcome = s.kind === 'decline' ? 'declined' : s.kind === 'busy' ? 'busy' : 'cancelled';
+      }
+      endCall(t(`call.ended_${s.kind}`), outcome);
       break;
+    }
     case 'mode':
       // La otra persona cambió la calidad del audio: se usa la misma en los dos sentidos.
       if (VOICE_MODES.some(([m]) => m === s.data?.mode)) {
@@ -185,7 +253,7 @@ export function onSignal({ peer, name, signal: s }) {
       }
       break;
     case 'video_mode':
-      if (VIDEO_MODES[s.data?.video]) {
+      if (Object.hasOwn(VIDEO_MODES, s.data?.video ?? '')) {
         live.video = s.data.video;
         $('#call-vmode').value = live.video;
         live.sender?.setMode(live.video);
@@ -196,6 +264,7 @@ export function onSignal({ peer, name, signal: s }) {
       break;
     case 'cam':
       live.remoteCamOff = s.data?.on === false;
+      live.receiver?.setExpecting(!live.remoteCamOff);
       showCall();
       break;
   }
@@ -203,27 +272,33 @@ export function onSignal({ peer, name, signal: s }) {
 
 async function acceptCall() {
   stopRinging();
-  if (!live) return;
+  // Un doble toque no contesta dos veces (dos voces, dos relojes).
+  if (!live || live.state !== 'incoming') return;
+  live.state = 'answering';
+  $('#call-accept').disabled = true;
   clearTimeout(live.ringTimer);
   const data = live.media === 'video' ? { codecs: await decodableCodecs() } : null;
   try {
     await signal('accept', data);
   } catch {
-    endCall();
+    endCall(null, 'failed');
     return;
   }
+  $('#call-accept').disabled = false;
   startMedia();
 }
 
 function declineCall() {
   stopRinging();
   signal('decline').catch(() => {});
-  endCall();
+  endCall(null, 'declined');
 }
 
-function hangup(reason) {
+/** Cuelga. `reason` (`no_answer`) se avisa en pantalla. */
+function hangup(reason, outcome) {
   signal('hangup').catch(() => {});
-  endCall(reason ? t(`call.ended_${reason}`) : null);
+  const result = outcome || (reason === 'no_answer' ? 'no_answer' : live?.state === 'active' ? 'completed' : 'cancelled');
+  endCall(reason ? t(`call.ended_${reason}`) : null, result);
 }
 
 // ---------- audio y vídeo ----------
@@ -246,6 +321,10 @@ async function startMedia() {
     }
     c.voiceOn = true;
     if (c.speaker) invoke('voice_speaker', { speaker: true });
+    // Silenciado mientras sonaba: la voz arranca ya silenciada.
+    if (c.muted) invoke('voice_mute', { muted: true });
+    // Lo que ya llevaba la conexión al empezar: el consumo de la llamada es lo de después.
+    c.first = await invoke('voice_stats').catch(() => null);
     c.last = null;
     c.heardAt = Date.now();
     c.statsTimer = setInterval(updateStats, 1000);
@@ -253,7 +332,7 @@ async function startMedia() {
   } catch (err) {
     if (c !== live) return;
     toast(errorText(err), true);
-    hangup();
+    hangup(null, 'failed');
   }
 }
 
@@ -262,6 +341,7 @@ async function startVideo(c) {
   c.videoDown = 0;
   c.receiver = new VideoReceiver({
     canvas: $('#call-remote'),
+    enhance: callSettings().enhance,
     needKey: () => signal('key').catch(() => {}),
     onBytes: (n) => (c.videoDown += n),
     onFrame: () => {
@@ -271,13 +351,13 @@ async function startVideo(c) {
       }
     },
   });
-  const frames = new Channel();
-  frames.onmessage = (buffer) => c.receiver?.push(buffer);
-  await invoke('video_start', { peer: c.peer.code, frames });
+  c.receiver.setExpecting(!c.remoteCamOff);
+  await invoke('video_start', { peer: c.peer.code });
   if (c !== live) {
     invoke('video_stop').catch(() => {});
     return;
   }
+  pollVideo(c);
 
   try {
     c.stream = await camera(c.facing);
@@ -300,12 +380,23 @@ async function startVideo(c) {
     stream: c.stream,
     codec,
     mode: c.video,
-    send: (bytes) => invoke('video_send', bytes),
+    send: sendFrame,
     onBytes: (n) => (c.videoUp += n),
     onCameraLost: () => recoverCamera(c),
+    onBlurSlow: () => blurOff(c, 'call.blur_slow'),
+    onBlurFailed: () => blurOff(c, 'call.blur_failed'),
+    // La red no da abasto: se baja la calidad, también la del otro lado.
+    onDegrade: (mode) => {
+      if (c !== live) return;
+      c.video = mode;
+      $('#call-vmode').value = mode;
+      signal('video_mode', { video: mode }).catch(() => {});
+      toast(t('call.video_lowered'));
+    },
   });
   c.sender.setPaused(c.camOff);
   await c.sender.start();
+  if (c.blur) setBlur(c, true);
 }
 
 function camera(facing) {
@@ -313,6 +404,58 @@ function camera(facing) {
     audio: false,
     video: { facingMode: facing, width: { ideal: 640 }, height: { ideal: 480 } },
   });
+}
+
+function blurOff(c, message) {
+  if (c !== live || !c.blur) return;
+  c.blur = false;
+  showLocal(c);
+  $('#call-blur').checked = false;
+  toast(t(message), true);
+}
+
+/** En la miniatura: lo que se envía si va con el fondo desenfocado, si no la cámara tal cual. */
+function showLocal(c) {
+  $('#call-local').srcObject = c.blur && c.sender ? c.sender.preview() : c.stream;
+}
+
+/**
+ * Activa o quita el fondo desenfocado. La primera vez se carga el modelo (un
+ * segundo, más o menos): mientras tanto el vídeo sale como siempre.
+ */
+async function setBlur(c, on) {
+  c.blur = on;
+  $('#call-blur').checked = on;
+  if (!on) {
+    c.sender?.setBlur(null);
+    showLocal(c);
+    return;
+  }
+  let segmenter;
+  // Mientras carga el modelo no sale vídeo: si no, se vería el fondo que se
+  // quería tapar.
+  const loading = !!c.sender;
+  if (loading) {
+    c.sender.setPaused(true);
+    toast(t('call.blur_loading'));
+  }
+  try {
+    segmenter = await loadSegmenter();
+  } catch (err) {
+    if (c === live && loading) c.sender?.setPaused(c.camOff);
+    console.warn('desenfoque', err);
+    if (c === live) {
+      c.blur = false;
+      $('#call-blur').checked = false;
+      toast(t('call.blur_failed'), true);
+    }
+    return;
+  }
+  if (c === live && loading) c.sender?.setPaused(c.camOff);
+  // Se quitó (o se colgó) mientras cargaba.
+  if (c !== live || !c.blur || !c.sender) return;
+  c.sender.setBlur(new BackgroundBlur(segmenter));
+  showLocal(c);
 }
 
 /** La cámara se cortó a mitad de llamada: se pide otra vez hasta que vuelva. */
@@ -326,8 +469,8 @@ async function recoverCamera(c) {
       }
       c.stream?.getTracks().forEach((track) => track.stop());
       c.stream = stream;
-      $('#call-local').srcObject = stream;
       await c.sender.setStream(stream);
+      showLocal(c);
       return;
     } catch {
       // Otra app la tiene todavía: se reintenta en un momento.
@@ -355,9 +498,9 @@ async function flipCamera() {
   const old = c.stream;
   c.stream = stream;
   c.facing = facing;
-  $('#call-local').srcObject = stream;
   $('#call').classList.toggle('rear', facing !== 'user');
   await c.sender?.setStream(stream);
+  showLocal(c);
   old.getTracks().forEach((track) => track.stop());
 }
 
@@ -370,10 +513,17 @@ function stopVideo(c) {
   if (c.media === 'video') invoke('video_stop').catch(() => {});
 }
 
-function endCall(message) {
+/**
+ * Termina la llamada en pantalla. `outcome` es cómo acabó (`completed`,
+ * `missed`, `no_answer`, `declined`, `busy`, `cancelled`, `failed`, `lost`):
+ * queda en el chat y en las estadísticas.
+ */
+function endCall(message, outcome) {
   if (!live) return;
   const c = live;
   live = null;
+  logCall(c, outcome || (c.state === 'active' ? 'completed' : 'failed'));
+  $('#call-accept').disabled = false;
   keepCall(null);
   stopRinging();
   clearTimeout(c.ringTimer);
@@ -391,12 +541,39 @@ function endCall(message) {
 export function endCallWith(code, reason = 'lost') {
   if (!live || live.peer.code !== code) return;
   signal('hangup').catch(() => {});
-  endCall(t(`call.ended_${reason}`));
+  const outcome = live.state !== 'active' ? 'failed' : reason === 'lost' ? 'lost' : 'completed';
+  endCall(t(`call.ended_${reason}`), outcome);
 }
 
 /** El núcleo vio caerse la conexión de la llamada (ya paró la voz y el vídeo). */
 export function onTalkLost({ peer }) {
-  if (live?.peer.code === peer) endCall(t('call.ended_lost'));
+  if (live?.peer.code === peer) endCall(t('call.ended_lost'), live.state === 'active' ? 'lost' : 'failed');
+}
+
+/** Deja la llamada en su chat (con su consumo y duración) y en las estadísticas. */
+function logCall(c, outcome) {
+  const first = c.first || { sent: 0, received: 0, lost: 0, recovered: 0 };
+  const last = c.last || first;
+  const record = {
+    id: String(c.id || '').replace(/[^\w-]/g, '').slice(0, 80) || crypto.randomUUID(),
+    media: c.media,
+    role: c.role,
+    outcome,
+    started: c.createdAt || Date.now(),
+    duration_ms: c.started && c.state === 'active' ? Date.now() - c.started : 0,
+    audio: c.audio || null,
+    video: c.media === 'video' ? c.video || null : null,
+    sent: Math.max(0, (last.sent || 0) - (first.sent || 0)),
+    received: Math.max(0, (last.received || 0) - (first.received || 0)),
+    video_sent: c.videoUp || 0,
+    video_received: c.videoDown || 0,
+    lost: Math.max(0, (last.lost || 0) - (first.lost || 0)),
+    recovered: Math.max(0, (last.recovered || 0) - (first.recovered || 0)),
+  };
+  invoke('call_record', { peer: c.peer.code, record }).then(
+    (message) => onChatEvent({ message, name: null }),
+    (err) => console.warn('registro de llamada', err),
+  );
 }
 
 // Consumo medido de la conexión (voz, vídeo y todo lo demás) y, aparte, el vídeo.
@@ -452,11 +629,14 @@ function showCall() {
   $('#call-cam').hidden = !video;
   $('#call-flip').hidden = !video || !isMobile() || c.camOff;
   $('#call-vmode-btn').hidden = !video;
+  $('#call-blur-row').hidden = !video;
+  $('#call-blur').checked = !!c.blur;
   fillAudioModes($('#call-mode'), c.audio);
   fillVideoModes($('#call-vmode'), c.video);
-  $('#call-mute').classList.toggle('on', c.muted);
-  $('#call-speaker').classList.toggle('on', c.speaker);
-  $('#call-cam').classList.toggle('on', c.camOff);
+  for (const [id, on] of [['#call-mute', c.muted], ['#call-speaker', c.speaker], ['#call-cam', c.camOff]]) {
+    $(id).classList.toggle('on', on);
+    $(id).setAttribute('aria-pressed', String(on));
+  }
   $('#call-cam-label').textContent = t(c.camOff ? 'call.camera_on' : 'call.camera');
   updateCallState();
 }
@@ -489,6 +669,7 @@ $('#call-mute').addEventListener('click', () => {
   if (!live) return;
   live.muted = !live.muted;
   $('#call-mute').classList.toggle('on', live.muted);
+  $('#call-mute').setAttribute('aria-pressed', String(live.muted));
   invoke('voice_mute', { muted: live.muted });
 });
 
@@ -496,6 +677,7 @@ $('#call-speaker').addEventListener('click', () => {
   if (!live) return;
   live.speaker = !live.speaker;
   $('#call-speaker').classList.toggle('on', live.speaker);
+  $('#call-speaker').setAttribute('aria-pressed', String(live.speaker));
   invoke('voice_speaker', { speaker: live.speaker });
 });
 
@@ -503,6 +685,11 @@ $('#call-cam').addEventListener('click', () => setCamera(!!live?.camOff));
 $('#call-flip').addEventListener('click', flipCamera);
 
 $('#call-quality-btn').addEventListener('click', () => setQualityMenu($('#call-quality-menu').hidden));
+$('#call-blur').addEventListener('change', (ev) => {
+  if (!live) return;
+  saveCallSettings({ blur: ev.target.checked });
+  setBlur(live, ev.target.checked);
+});
 
 // En una videollamada, tocar la miniatura cambia de sitio las dos imágenes;
 // tocar la grande esconde los botones y los datos (para verla entera) y otro

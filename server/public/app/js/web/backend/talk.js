@@ -19,11 +19,12 @@ const RETRY_FIRST = 20_000;
 const RETRY_MAX = 600_000;
 const MAX_VIDEO_FRAME = 1024 * 1024;
 const STREAM_VIDEO = 1;
-const VIDEO_MAX_LAG = 700;
+const VIDEO_MAX_LAG = 1000;
 const VIDEO_TIMEOUT = 10_000;
 /** Sin mensajes ni llamada en este tiempo, la conexión se cierra. */
 const IDLE = 90_000;
 const HOLD_RETRY = 2000;
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
 /** Envía `frame` (y `body`) en un stream nuevo y espera el acuse. */
 async function exchange(conn, frame, body) {
@@ -54,8 +55,9 @@ class VideoSender {
     const seq = this.next++;
     this.inFlight.set(seq, performance.now());
     (async () => {
+      let stream = null;
       try {
-        const stream = await this.conn.openUni(VIDEO_TIMEOUT);
+        stream = await this.conn.openUni(VIDEO_TIMEOUT);
         stream.setPriority(-1);
         const data = new Uint8Array(frame.length + 1);
         data[0] = STREAM_VIDEO;
@@ -64,7 +66,9 @@ class VideoSender {
         stream.finish();
         await stream.stopped(VIDEO_TIMEOUT);
       } catch {
-        // Imagen sin entregar: el otro lado pedirá una clave si le hace falta.
+        // Una imagen vieja ya no sirve: se cancela para que no siga gastando
+        // red. El otro lado pedirá una clave si le hace falta.
+        stream?.reset();
       } finally {
         this.inFlight.delete(seq);
       }
@@ -136,7 +140,8 @@ export class Talk {
     try {
       await exchange(conn, { type: 'signal', name: this.name, signal });
     } catch (err) {
-      this.forgetConnection(code, conn);
+      // En plena llamada no se abre otra conexión por una señal que no llegó.
+      if (!this.voice.has(code) && !this.video.has(code)) this.forgetConnection(code, conn);
       throw err;
     }
   }
@@ -389,6 +394,8 @@ export class Talk {
       send.finish();
     };
     if (frame.type === 'chat') {
+      // El id forma el nombre de la foto: solo un uuid.
+      if (!UUID.test(String(frame.id))) throw protocolError('id de mensaje no válido');
       const before = await store.getMessage(frame.id);
       const known = before && before.peer === code;
       let image = null;

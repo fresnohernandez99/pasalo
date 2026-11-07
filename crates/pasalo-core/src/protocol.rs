@@ -115,12 +115,21 @@ pub(crate) async fn write_msg<W: AsyncWrite + Unpin>(w: &mut W, msg: &Message) -
 }
 
 pub(crate) async fn read_msg<R: AsyncRead + Unpin>(r: &mut R, limit: Duration) -> Result<Message, Error> {
+    read_msg_max(r, limit, MAX_FRAME).await
+}
+
+/// Como [`read_msg`], con un tope propio de tamaño.
+pub(crate) async fn read_msg_max<R: AsyncRead + Unpin>(r: &mut R, limit: Duration, max: usize) -> Result<Message, Error> {
     let len = timed(limit, r.read_u32()).await? as usize;
-    if len > MAX_FRAME {
+    if len > max {
         return Err(Error::Protocol(format!("mensaje demasiado grande ({len} bytes)")));
     }
-    let mut buf = vec![0; len];
-    timed(SHORT, r.read_exact(&mut buf)).await?;
+    // Se reserva a medida que llega: anunciar 64 MB no basta para gastarlos.
+    let mut buf = Vec::with_capacity(len.min(64 * 1024));
+    let read = timed(SHORT, (&mut *r).take(len as u64).read_to_end(&mut buf)).await?;
+    if read != len {
+        return Err(Error::Io(std::io::ErrorKind::UnexpectedEof.into()));
+    }
     serde_json::from_slice(&buf).map_err(|e| Error::Protocol(e.to_string()))
 }
 

@@ -9,8 +9,9 @@
   --accent: #2f6bff;
   --accent-text: #ffffff;
   --accent-soft: #e6eeff;
-  --ok: #16a34a;
-  --warn: #c27a00;
+  /* Oscuros para que el texto pequeño se lea sobre blanco (contraste AA). */
+  --ok: #12803a;
+  --warn: #9a6100;
   --err: #d92d20;
   --bubble-out: #2f6bff;
   --bubble-out-text: #ffffff;
@@ -23,9 +24,11 @@
   --tap: 44px;
   --font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
   --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  /* Las pone el plugin de Android: teclado y barra de navegación. */
+  /* Las pone el plugin de Android: teclado, barra de navegación y barra de
+     estado (--sys-top: donde el WebView no da la zona segura de arriba). */
   --kb: 0px;
   --nav: env(safe-area-inset-bottom, 0px);
+  --safe-top: max(env(safe-area-inset-top, 0px), var(--sys-top, 0px));
   color-scheme: light;
 }
 

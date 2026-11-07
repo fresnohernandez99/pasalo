@@ -16,7 +16,7 @@ use crate::events::Progress;
 use crate::ledger::{LEDGER_DIR, Ledger, transfer_key};
 use crate::paths::{part_path, split_safe, unique_name};
 use crate::protocol::{
-    ASK, CHUNK, ItemState, LONG, Message, PROTOCOL_VERSION, SHORT, configure_stream, hash_prefix, read_msg,
+    ASK, CHUNK, ItemState, LONG, Message, PROTOCOL_VERSION, SHORT, configure_stream, hash_prefix, read_msg, read_msg_max,
     timed, unexpected, write_msg,
 };
 use crate::{Direction, Error, Event, EventSender, LocalInfo, Remote, TALK_ALPN, Talk, TransferId};
@@ -35,8 +35,12 @@ struct Inner {
     events: EventSender,
     slots: Mutex<HashMap<String, Arc<Slot>>>,
     ask: AtomicBool,
-    /// Con pareja, el `device_id` del único equipo del que se recibe.
+    /// Con pareja: solo se recibe por iroh (donde `Remote::set_only` deja
+    /// pasar únicamente a la pareja, autenticada por su clave). Por la LAN,
+    /// donde el `device_id` lo declara cualquiera, no se recibe nada.
     only: RwLock<Option<String>>,
+    /// Sesiones de la LAN abiertas ahora (ver [`MAX_LAN_SESSIONS`]).
+    lan_sessions: Arc<tokio::sync::Semaphore>,
     /// Peticiones esperando respuesta del usuario.
     decisions: Mutex<HashMap<TransferId, oneshot::Sender<bool>>>,
     /// Clave de cada transferencia que ha empezado, para poder cancelarla.
@@ -89,6 +93,7 @@ impl Receiver {
                 decisions: Mutex::default(),
                 keys: Mutex::default(),
                 cancelled: Mutex::default(),
+                lan_sessions: Arc::new(tokio::sync::Semaphore::new(MAX_LAN_SESSIONS)),
             }),
         }
     }
@@ -111,8 +116,8 @@ impl Receiver {
         self.inner.ask.store(ask, Ordering::Relaxed);
     }
 
-    /// Solo recibe (archivos y textos, por la LAN o por iroh) del equipo con
-    /// este `device_id`; a los demás les contesta `busy`. `None`, de todos.
+    /// Con pareja (`Some`), solo recibe de ella por iroh y a la LAN le
+    /// contesta `busy`. `None`, de todos.
     pub fn set_only(&self, device_id: Option<String>) {
         *self.inner.only.write().unwrap() = device_id;
     }
@@ -138,7 +143,7 @@ impl Receiver {
             // Cuando la sesión suelta el candado ya no escribe nada.
             let _lock = slot.lock.lock().await;
             let ledger_path = dest.join(LEDGER_DIR).join(format!("{key}.json"));
-            for name in Ledger::load(&ledger_path).map(|l| l.roots.into_values().collect::<Vec<_>>()).unwrap_or_default() {
+            for name in load_ledger(&ledger_path).map(|l| l.roots.into_values().collect::<Vec<_>>()).unwrap_or_default() {
                 let path = dest.join(&name);
                 let _ = fs::remove_dir_all(&path).await;
                 let _ = fs::remove_file(&path).await;
@@ -158,11 +163,16 @@ impl Receiver {
         loop {
             match listener.accept().await {
                 Ok((stream, _)) => {
+                    // Cualquiera de la LAN puede abrir conexiones: hay un tope.
+                    let Ok(permit) = self.inner.lan_sessions.clone().try_acquire_owned() else {
+                        continue;
+                    };
                     configure_stream(&stream);
                     let this = self.clone();
                     tokio::spawn(async move {
+                        let _permit = permit;
                         let (rd, wr) = stream.into_split();
-                        this.handle(rd, wr).await
+                        this.handle(rd, wr, true).await
                     });
                 }
                 Err(e) => {
@@ -198,7 +208,7 @@ impl Receiver {
                 let Ok(Ok((mut send, mut recv))) = tokio::time::timeout(SHORT, conn.accept_bi()).await else {
                     return;
                 };
-                this.handle(&mut recv, &mut send).await;
+                this.handle(&mut recv, &mut send, false).await;
                 // Cerrar sin esperar puede perder la última respuesta: se
                 // termina el canal y se deja que el emisor cierre la conexión.
                 let _ = send.finish();
@@ -207,13 +217,14 @@ impl Receiver {
         }
     }
 
-    async fn handle<R, W>(&self, rd: R, wr: W)
+    /// `lan`: llegó por TCP de la LAN (sin autenticar), no por iroh.
+    async fn handle<R, W>(&self, rd: R, wr: W, lan: bool)
     where
         R: AsyncRead + Unpin,
         W: AsyncWrite + Unpin,
     {
         let mut started = None;
-        if let Err(e) = self.session(rd, wr, &mut started).await {
+        if let Err(e) = self.session(rd, wr, lan, &mut started).await {
             tracing::warn!("recepción fallida: {e}");
             if let Some(id) = started {
                 let _ = self.inner.events.send(Event::TransferFailed {
@@ -238,7 +249,7 @@ impl Receiver {
             .clone()
     }
 
-    async fn session<R, W>(&self, rd: R, wr: W, started: &mut Option<TransferId>) -> Result<(), Error>
+    async fn session<R, W>(&self, rd: R, wr: W, lan: bool, started: &mut Option<TransferId>) -> Result<(), Error>
     where
         R: AsyncRead + Unpin,
         W: AsyncWrite + Unpin,
@@ -249,12 +260,12 @@ impl Receiver {
         let mut rd = BufReader::with_capacity(CHUNK, rd);
         let mut wr = BufWriter::new(wr);
 
-        let Message::Hello { version, device_id, name: peer, features, .. } = read_msg(&mut rd, SHORT).await? else {
+        let Message::Hello { version, device_id, name: peer, features, .. } = read_msg_max(&mut rd, SHORT, MAX_HELLO).await? else {
             return Err(unexpected("hello"));
         };
         let packed = features.iter().any(|f| f == compress::FEATURE);
         write_msg(&mut wr, &local.hello()).await?;
-        let busy = inner.only.read().unwrap().as_ref().is_some_and(|only| *only != device_id);
+        let busy = lan && inner.only.read().unwrap().is_some();
         if busy {
             write_msg(&mut wr, &Message::Reject { reason: "busy".into() }).await?;
             return Err(Error::Rejected("busy".into()));
@@ -272,6 +283,10 @@ impl Receiver {
             _ => return Err(unexpected("offer")),
         };
         if let Some(text) = text {
+            if text.len() > MAX_TEXT {
+                write_msg(&mut wr, &Message::Reject { reason: "too_large".into() }).await?;
+                return Err(Error::Rejected("too_large".into()));
+            }
             write_msg(&mut wr, &Message::Accept { items: Vec::new() }).await?;
             let _ = inner.events.send(Event::TextReceived { from: peer, text });
             let Message::Done = read_msg(&mut rd, SHORT).await? else {
@@ -281,7 +296,11 @@ impl Receiver {
         }
 
         let rel = items.iter().map(|item| split_safe(&item.path)).collect::<Option<Vec<_>>>();
-        let Some(rel) = rel.filter(|_| items.len() <= u32::MAX as usize) else {
+        // Nada puede ir a parar a la carpeta de los registros de reanudación,
+        // y la suma de los tamaños no puede dar la vuelta (enseñaría «1 KB»).
+        let total = items.iter().try_fold(0u64, |sum, item| sum.checked_add(item.size));
+        let rel = rel.filter(|rel| rel.iter().all(|comps| comps[0] != LEDGER_DIR) && total.is_some());
+        let Some(rel) = rel.filter(|_| items.len() <= MAX_ITEMS) else {
             let reason = "la oferta contiene rutas no válidas".to_string();
             write_msg(&mut wr, &Message::Reject { reason: reason.clone() }).await?;
             return Err(Error::Rejected(reason));
@@ -308,7 +327,7 @@ impl Receiver {
         // número de JavaScript).
         let id = u64::from_str_radix(&key[..12], 16).expect("la clave es hexadecimal");
         let ledger_path = dest.join(LEDGER_DIR).join(format!("{key}.json"));
-        let previous = Ledger::load(&ledger_path);
+        let previous = load_ledger(&ledger_path);
         let resuming = previous.is_some();
         // Lo que ya se aceptó (hay registro en disco) sigue sin preguntar.
         if !resuming && inner.ask.load(Ordering::Relaxed) {
@@ -518,6 +537,23 @@ impl Receiver {
 }
 
 const LEDGER_EVERY: Duration = Duration::from_secs(1);
+/// Conexiones de la LAN atendiéndose a la vez.
+const MAX_LAN_SESSIONS: usize = 16;
+/// Lo más grande que puede ser el `Hello` (lo primero que manda cualquiera).
+const MAX_HELLO: usize = 16 * 1024;
+/// Archivos y carpetas de una oferta.
+const MAX_ITEMS: usize = 1_000_000;
+/// Un texto suelto (los demás, por el chat).
+const MAX_TEXT: usize = 64 * 1024;
+
+/// Lee un registro de reanudación, solo si sus nombres son de verdad nombres
+/// sueltos dentro de la carpeta de destino (no rutas, ni `..`, ni la carpeta
+/// de los registros).
+fn load_ledger(path: &Path) -> Option<Ledger> {
+    let ledger = Ledger::load(path)?;
+    let safe = |name: &String| split_safe(name).is_some_and(|c| c.len() == 1 && c[0] == *name && c[0] != LEDGER_DIR);
+    ledger.roots.iter().all(|(offered, chosen)| safe(offered) && safe(chosen)).then_some(ledger)
+}
 const SYNC_FROM: u64 = 8 * 1024 * 1024;
 
 /// Recibe el resto de un archivo en `part` y devuelve el hash del archivo

@@ -101,10 +101,18 @@ class PasaloPlugin(private val activity: Activity) : Plugin(activity) {
       val density = view.resources.displayMetrics.density
       val ime = insets.getInsets(WindowInsetsCompat.Type.ime()).bottom / density
       val nav = insets.getInsets(WindowInsetsCompat.Type.navigationBars()).bottom / density
+      // La barra de estado: en algunos equipos (Android 16 de borde a borde)
+      // el WebView no da `env(safe-area-inset-top)` y lo de arriba (p. ej. el
+      // botón de calidad de la llamada) quedaba debajo de ella. Si el WebView
+      // ya empieza por debajo (margen de Tauri), se descuenta.
+      val location = IntArray(2)
+      webView.getLocationInWindow(location)
+      val status = insets.getInsets(WindowInsetsCompat.Type.statusBars()).top / density
+      val top = maxOf(0f, status - location[1] / density)
       webView.evaluateJavascript(
         // Puede llegar antes de que exista la página: entonces no hace nada.
         "if(document.documentElement){var s=document.documentElement.style;s.setProperty('--kb','${ime}px');" +
-          "s.setProperty('--nav','${if (ime > 0) 0f else nav}px');}",
+          "s.setProperty('--nav','${if (ime > 0) 0f else nav}px');s.setProperty('--sys-top','${top}px');}",
         null,
       )
       insets

@@ -13,6 +13,7 @@ pub mod protocol;
 mod receiver;
 mod remote;
 mod sender;
+mod stats;
 mod talk;
 pub mod update;
 
@@ -23,9 +24,10 @@ pub use discovery::{Discovery, Peer};
 pub use error::Error;
 pub use events::{Direction, Event, EventSender, TransferId, new_transfer_id};
 pub use iroh::EndpointId;
-pub use lobby::{Lobby, LobbyUser, Partner};
+pub use lobby::{Lobby, LobbyUser, Partner, session_id};
 pub use receiver::Receiver;
 pub use remote::{ALPN, Remote, parse_code};
+pub use stats::CallStats;
 pub use sender::{Greeting, SendOptions, probe, send_paths, send_text};
 pub use talk::{ChatMessage, IDLE, MAX_IMAGE, Signal, Status, TALK_ALPN, Talk, VideoLink, VideoSender, VoiceLink, VoiceSender};
 

@@ -18,6 +18,8 @@ export const WAIT_MS = 20_000;
 const POLL_MS = 1_500;
 /** Solicitudes sin contestar que puede tener abiertas un equipo. */
 const MAX_PENDING = 5;
+/** Equipos nuevos por IP y minuto. */
+const MAX_JOINS_PER_IP = 10;
 
 export class HttpError extends Error {
   constructor(status, message) {
@@ -67,6 +69,17 @@ export async function handle(db, action, body, { now = () => new Date(), sleep =
 
   switch (action) {
     case 'join': {
+      // Nadie entra con el id de otro que sigue conectado (con otro token):
+      // si no, cualquiera que viera la lista podría hacerse pasar por él.
+      const existing = await users.findOne({ _id: id });
+      if (existing && existing.token !== token && existing.seen >= new Date(now().getTime() - ONLINE_MS)) {
+        throw new HttpError(409, 'id en uso');
+      }
+      // Tope de equipos nuevos por IP y minuto: una sola máquina no llena la lista.
+      if (!existing && body.ipHash) {
+        const recent = await users.countDocuments({ ip: body.ipHash, joined: { $gte: new Date(now().getTime() - 60_000) } });
+        if (recent >= MAX_JOINS_PER_IP) throw new HttpError(429, 'demasiadas entradas');
+      }
       const user = {
         token,
         name: text(body.name, 64, 'name'),
@@ -74,6 +87,8 @@ export async function handle(db, action, body, { now = () => new Date(), sleep =
         code: text(body.code, 64, 'code'),
         seen: now(),
         paired: false,
+        ...(body.ipHash ? { ip: body.ipHash } : {}),
+        ...(existing ? {} : { joined: now() }),
       };
       await users.updateOne({ _id: id }, { $set: user }, { upsert: true });
       return { ok: true };

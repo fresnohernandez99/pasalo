@@ -8,7 +8,7 @@
   background: var(--surface);
   border-bottom: 1px solid var(--border);
 }
-.mobile .chat-head { padding-top: max(8px, env(safe-area-inset-top)); }
+.mobile .chat-head { padding-top: max(8px, var(--safe-top)); }
 @media (min-width: 860px) { .chat-head { padding-left: 16px; } }
 .chat-who { flex: 1; min-width: 0; }
 .chat-name { font-weight: 650; font-size: 16px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -105,6 +105,22 @@
   color: #fff;
   opacity: 1;
 }
+
+/* Registro de una llamada: como un mensaje, con los detalles al tocarlo. */
+.msg.call-msg .bubble { padding: 0; cursor: pointer; }
+.call-log { display: flex; align-items: center; gap: 10px; padding: 8px 12px 8px 10px; color: inherit; text-align: left; font: inherit; background: none; border: 0; cursor: pointer; }
+.call-log .call-icon { display: grid; place-items: center; width: 34px; height: 34px; border-radius: 50%; background: rgb(127 127 127 / .16); flex: none; }
+.call-log .call-icon .i { width: 18px; height: 18px; }
+.call-log .call-body { display: flex; flex-direction: column; min-width: 0; }
+.call-log .call-title { font-weight: 600; }
+.call-log .call-sub { font-size: 12px; opacity: .75; font-variant-numeric: tabular-nums; }
+.call-log .meta { float: none; align-self: flex-end; margin: 0 0 0 6px; }
+.msg.call-msg.bad .call-icon { background: color-mix(in srgb, var(--err) 18%, transparent); color: var(--err); }
+.msg.out.call-msg.bad .call-icon { background: rgb(255 255 255 / .2); color: inherit; }
+
+.call-details dl { display: grid; grid-template-columns: auto 1fr; gap: 6px 14px; margin: 0; }
+.call-details dt { color: var(--muted); }
+.call-details dd { margin: 0; text-align: right; font-variant-numeric: tabular-nums; }
 
 /* ---------- escribir ---------- */
 

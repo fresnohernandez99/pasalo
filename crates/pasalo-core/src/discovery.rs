@@ -21,6 +21,14 @@ use crate::{Event, EventSender, LocalInfo};
 const MAGIC: &str = "pasalo";
 const ANNOUNCE_EVERY: Duration = Duration::from_secs(5);
 const EXPIRE_AFTER: Duration = Duration::from_secs(16);
+/// Mientras un equipo se anunció hace menos de esto, nadie más puede ocupar
+/// su `device_id` desde otra IP o con otro código.
+const TRUST_FOR: Duration = Duration::from_secs(12);
+/// Equipos que se recuerdan a la vez (una red llena de anuncios falsos no
+/// puede llenar la memoria ni la lista).
+const MAX_PEERS: usize = 256;
+/// Respuestas a anuncios: como mucho una por este tiempo.
+const REPLY_EVERY: Duration = Duration::from_secs(1);
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Peer {
@@ -166,6 +174,7 @@ async fn announce_loop(socket: Arc<UdpSocket>, local: LocalInfo, port: u16) {
 
 async fn recv_loop(socket: Arc<UdpSocket>, local: LocalInfo, port: u16, peers: PeerMap, events: EventSender) {
     let mut buf = vec![0u8; 4096];
+    let mut last_reply: Option<Instant> = None;
     loop {
         let (n, from) = match socket.recv_from(&mut buf).await {
             Ok(received) => received,
@@ -180,7 +189,13 @@ async fn recv_loop(socket: Arc<UdpSocket>, local: LocalInfo, port: u16, peers: P
             continue;
         }
         if let Kind::Bye = b.kind {
-            if peers.lock().unwrap().remove(&b.device_id).is_some() {
+            // Solo se despide el propio equipo (desde su IP), no cualquiera en su nombre.
+            let gone = {
+                let mut map = peers.lock().unwrap();
+                let same = map.get(&b.device_id).is_some_and(|(known, _)| known.addr.ip() == from.ip());
+                same && map.remove(&b.device_id).is_some()
+            };
+            if gone {
                 let _ = events.send(Event::PeerLost { device_id: b.device_id });
             }
             continue;
@@ -195,6 +210,15 @@ async fn recv_loop(socket: Arc<UdpSocket>, local: LocalInfo, port: u16, peers: P
         };
         let is_new = {
             let mut map = peers.lock().unwrap();
+            // Los anuncios no van firmados: mientras un equipo sigue
+            // anunciándose, otro que diga ser él (otra IP u otro código) no lo
+            // sustituye. Si deja de anunciarse (cambió de red), sí.
+            let impostor = map.get(&b.device_id).is_some_and(|(known, seen)| {
+                (known.addr.ip() != peer.addr.ip() || known.code != peer.code) && seen.elapsed() < TRUST_FOR
+            });
+            if impostor || (!map.contains_key(&b.device_id) && map.len() >= MAX_PEERS) {
+                continue;
+            }
             let changed = map.get(&b.device_id).is_none_or(|(known, _)| *known != peer);
             map.insert(b.device_id, (peer.clone(), Instant::now()));
             changed
@@ -203,7 +227,12 @@ async fn recv_loop(socket: Arc<UdpSocket>, local: LocalInfo, port: u16, peers: P
             let _ = events.send(Event::PeerFound(peer));
             // Respuesta por broadcast y no unicast: con varias instancias en el
             // mismo equipo compartiendo puerto, el unicast solo llega a una.
-            if let Kind::Announce = b.kind {
+            // Como mucho una cada poco, para que una avalancha de anuncios no
+            // se convierta en otra.
+            if let Kind::Announce = b.kind
+                && last_reply.is_none_or(|at: Instant| at.elapsed() >= REPLY_EVERY)
+            {
+                last_reply = Some(Instant::now());
                 broadcast(&socket, &beacon(&local, Kind::Reply), port).await;
             }
         }

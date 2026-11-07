@@ -11,6 +11,7 @@ mod links;
 mod net;
 mod settings;
 mod state;
+mod stats;
 
 use std::sync::Mutex;
 
@@ -72,6 +73,7 @@ fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
             talk,
             lobby: Default::default(),
             partner: Default::default(),
+            call_stats: pasalo_core::CallStats::new(config_dir.join("call_stats.jsonl")),
             chat_dir,
             voice: Mutex::new(None),
             video: Mutex::new(None),
@@ -138,8 +140,9 @@ pub fn run() {
             net::net_connect, net::net_direct, net::net_disconnect,
             links::link_take, links::link_parse, links::link_mine, net::lobby_request, net::lobby_cancel, net::lobby_answer,
             chat::chat_history, chat::chat_send, chat::chat_send_image, chat::chat_image,
+            stats::call_record, stats::stats_pending, stats::stats_upload,
             call::call_signal, call::voice_start, call::voice_mode, call::voice_mute, call::voice_speaker,
-            call::voice_stop, call::voice_stats, call::video_start, call::video_send, call::video_stop
+            call::voice_stop, call::voice_stats, call::video_start, call::video_recv, call::video_send, call::video_stop
         ])
         .run(tauri::generate_context!())
         .expect("error al iniciar Pasalo");

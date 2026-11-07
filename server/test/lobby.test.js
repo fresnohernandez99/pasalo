@@ -177,3 +177,27 @@ test('token equivocado', async () => {
   await assert.rejects(call('sync', { id: 'ana', token: 'otro', v: '' }), { status: 401 });
   await assert.rejects(call('sync', { id: 'ana' }), { status: 400 });
 });
+
+test('nadie entra con el id de otro que sigue conectado', async () => {
+  const opts = { now, sleep };
+  await handle(db, 'join', { id: 'victima', token: 't1', name: 'Ana', platform: 'ios', code: 'c1' }, opts);
+  await assert.rejects(
+    handle(db, 'join', { id: 'victima', token: 'otro', name: 'Ana', platform: 'ios', code: 'c2' }, opts),
+    (err) => err.status === 409,
+  );
+  // El mismo token (reentrar) sí, y cuando el otro ya se fue, también.
+  await handle(db, 'join', { id: 'victima', token: 't1', name: 'Ana', platform: 'ios', code: 'c1' }, opts);
+  clock += ONLINE_MS + 1000;
+  await handle(db, 'join', { id: 'victima', token: 'otro', name: 'Ana', platform: 'ios', code: 'c2' }, opts);
+});
+
+test('tope de entradas por IP', async () => {
+  const opts = { now, sleep };
+  for (let i = 0; i < 10; i++) {
+    await handle(db, 'join', { id: `ip-${i}`, token: 't', name: 'x', platform: 'ios', code: 'c', ipHash: 'h' }, opts);
+  }
+  await assert.rejects(
+    handle(db, 'join', { id: 'ip-10', token: 't', name: 'x', platform: 'ios', code: 'c', ipHash: 'h' }, opts),
+    (err) => err.status === 429,
+  );
+});

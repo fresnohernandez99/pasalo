@@ -2,10 +2,10 @@
 // se recibe de él. Todo va por el canal de iroh con el código de cada equipo
 // (ver `pasalo_core::Talk`); el historial lo guarda Rust.
 
-import { t } from '../i18n/index.js';
+import { errorText, t } from '../i18n/index.js';
 import { emit, on } from '../lib/bus.js';
 import { $, esc, setHtml } from '../lib/dom.js';
-import { clock, dayKey, dayLabel, shortCode } from '../lib/format.js';
+import { bytes, clock, dayKey, dayLabel, shortCode } from '../lib/format.js';
 import { icon } from '../lib/icons.js';
 import { call, invoke, tryCall } from '../lib/tauri.js';
 import { toast } from '../lib/toast.js';
@@ -20,7 +20,9 @@ const chat = {
   messages: new Map(), // código → [mensaje]
   unread: new Map(), // código → número
 };
-const imageCache = new Map(); // ruta → data URL
+// ruta → data URL (o URL de un blob en la web). Las fotos pesan: solo las últimas.
+const imageCache = new Map();
+const IMAGE_CACHE_MAX = 60;
 // Mensajes seguidos del mismo lado con menos de esto entre ellos van juntos.
 const GROUP_MS = 5 * 60_000;
 
@@ -46,7 +48,7 @@ export async function openChat(peer) {
   try {
     chat.messages.set(code, await invoke('chat_history', { peer: code }));
   } catch (err) {
-    toast(String(err?.detail || err), true);
+    toast(errorText(err), true);
   }
   renderChat(true);
   // En el móvil, el teclado solo sale al tocar el campo.
@@ -136,7 +138,8 @@ function messageNode(m, first, last) {
     el = document.createElement('div');
     nodes.set(m.id, el);
   }
-  el.className = `msg ${m.outgoing ? 'out' : 'in'}${first ? ' first' : ''}${last ? ' last' : ''}${m.image && !m.text ? ' photo' : ''}`;
+  const call = m.call ? ` call-msg${BAD_OUTCOMES.includes(m.call.outcome) ? ' bad' : ''}` : '';
+  el.className = `msg ${m.outgoing ? 'out' : 'in'}${first ? ' first' : ''}${last ? ' last' : ''}${m.image && !m.text ? ' photo' : ''}${call}`;
   const html = bubbleHtml(m);
   if (el.dataset.html !== html) {
     el.dataset.html = html;
@@ -147,7 +150,70 @@ function messageNode(m, first, last) {
   return el;
 }
 
+// ---------- llamadas ----------
+
+// Llamadas que no llegaron a hablarse: van en rojo, como en WhatsApp.
+const BAD_OUTCOMES = ['missed', 'no_answer', 'declined', 'busy', 'cancelled', 'failed'];
+
+/** «3:21» o «1:02:03». */
+function callTime(ms) {
+  const s = Math.round((ms || 0) / 1000);
+  const mm = String(Math.floor((s % 3600) / 60));
+  const ss = String(s % 60).padStart(2, '0');
+  return s >= 3600 ? `${Math.floor(s / 3600)}:${mm.padStart(2, '0')}:${ss}` : `${mm}:${ss}`;
+}
+
+const callTotal = (c) => (c.sent || 0) + (c.received || 0);
+
+function callTitle(c) {
+  const video = c.media === 'video';
+  if (c.outcome === 'completed' || c.outcome === 'lost' && c.duration_ms) return t(video ? 'log.video' : 'log.voice');
+  if (c.outcome === 'missed') return t(video ? 'log.missed_video' : 'log.missed_voice');
+  return t(`log.${c.outcome}`);
+}
+
+function callBubble(m) {
+  const c = m.call;
+  const talked = c.duration_ms > 0;
+  const sub = talked ? `${callTime(c.duration_ms)} · ${bytes(callTotal(c))}` : t(c.media === 'video' ? 'log.video' : 'log.voice');
+  return `<div class="bubble"><button class="call-log" type="button" data-call="${esc(m.id)}">
+    <span class="call-icon">${icon(c.media === 'video' ? 'video' : 'phone')}</span>
+    <span class="call-body"><span class="call-title">${esc(callTitle(c))}</span><span class="call-sub">${esc(sub)}</span></span>
+    <span class="meta">${clock(m.ts)}</span></button></div>`;
+}
+
+/** Los detalles de una llamada, en un diálogo. */
+function openCallDetails(m) {
+  const c = m.call;
+  const seconds = (c.duration_ms || 0) / 1000;
+  const rows = [
+    [t('details.direction'), t(c.role === 'caller' ? 'details.outgoing' : 'details.incoming')],
+    [t('details.result'), t(`result.${c.outcome}`)],
+    [t('details.started'), new Date(c.started || m.ts).toLocaleString()],
+  ];
+  if (c.duration_ms > 0) {
+    rows.push(
+      [t('details.duration'), callTime(c.duration_ms)],
+      [t('details.total'), bytes(callTotal(c))],
+      [t('details.sent'), bytes(c.sent || 0)],
+      [t('details.received'), bytes(c.received || 0)],
+    );
+    if (c.media === 'video') {
+      rows.push([t('details.video'), t('details.updown', { up: bytes(c.video_sent || 0), down: bytes(c.video_received || 0) })]);
+    }
+    if (seconds >= 1) rows.push([t('details.avg'), `${((callTotal(c) * 8) / 1000 / seconds).toFixed(1)} kbps`]);
+    if (c.audio) rows.push([t('details.audio_q'), t(`voice.${c.audio}`, { kbps: '' }).replace(/\s*·\s*~?\s*kbps$/, '')]);
+    if (c.video) rows.push([t('details.video_q'), t(`video.${c.video}`, { kbps: '' }).replace(/\s*·\s*~?\s*kbps$/, '')]);
+    if (c.lost || c.recovered) rows.push([t('details.loss'), t('details.loss_value', { lost: c.lost || 0, recovered: c.recovered || 0 })]);
+  }
+  setHtml($('#call-details-list'), rows.map(([k, v]) => `<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`).join(''));
+  $('#call-details').showModal();
+}
+
+$('#call-details-close').addEventListener('click', () => $('#call-details').close());
+
 function bubbleHtml(m) {
+  if (m.call) return callBubble(m);
   const pending = m.outgoing && m.status === 'pending';
   const tick = m.outgoing
     ? `<span class="tick ${pending ? 'pending' : ''}" title="${esc(t(pending ? 'chat.pending' : 'chat.delivered'))}">${icon(pending ? 'clock' : 'check')}</span>`
@@ -162,6 +228,11 @@ async function loadImage(img) {
   if (!imageCache.has(path)) {
     try {
       imageCache.set(path, await invoke('chat_image', { path }));
+      while (imageCache.size > IMAGE_CACHE_MAX) {
+        const [oldest, url] = imageCache.entries().next().value;
+        imageCache.delete(oldest);
+        if (url.startsWith('blob:')) URL.revokeObjectURL(url);
+      }
     } catch {
       return;
     }
@@ -180,6 +251,12 @@ async function loadImage(img) {
 }
 
 $('#chat-list').addEventListener('click', (ev) => {
+  const call = ev.target.closest('[data-call]');
+  if (call) {
+    const m = (chat.messages.get(chat.peer?.code) || []).find((x) => x.id === call.dataset.call);
+    if (m?.call) openCallDetails(m);
+    return;
+  }
   const img = ev.target.closest('.msg-img')?.querySelector('img');
   if (img?.src) openViewer(img);
 });
@@ -206,6 +283,10 @@ $('#chat-form').addEventListener('submit', async (ev) => {
   if (m) {
     upsertMessage(m);
     renderChat(true);
+  } else if (!input.value) {
+    // No salió: lo escrito no se pierde.
+    input.value = text;
+    autosize();
   }
 });
 
@@ -276,7 +357,7 @@ async function sendImage(file) {
       renderChat(true);
     }
   } catch (err) {
-    toast(String(err?.message || err), true);
+    toast(errorText(err), true);
   }
 }
 
@@ -331,6 +412,12 @@ export function onChatEvent({ message, name }) {
   upsertMessage(message);
   if (chat.peer?.code === message.peer) {
     renderChat();
+  } else if (message.call) {
+    // De las llamadas solo avisan las perdidas (el resto ya se vio en pantalla).
+    if (message.call.outcome === 'missed') {
+      chat.unread.set(message.peer, unreadCount(message.peer) + 1);
+      emit('chat:unread');
+    }
   } else if (!message.outgoing) {
     chat.unread.set(message.peer, unreadCount(message.peer) + 1);
     emit('chat:unread');

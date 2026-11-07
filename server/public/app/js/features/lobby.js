@@ -114,9 +114,9 @@ export function renderHeader() {
     state === 'paired' ? t('net.paired', { name: partner.name }) : t(state === 'offline' ? 'net.local' : `net.${state}`);
   $('#net-dot').className = `dot ${state === 'direct' ? 'online' : state}`;
   const toggle = $('#net-toggle');
-  toggle.textContent = t(state === 'offline' ? 'net.connect' : 'net.disconnect');
+  toggle.textContent = t(state === 'offline' ? 'net.connect' : state === 'connecting' ? 'btn.cancel' : 'net.disconnect');
   toggle.className = state === 'offline' ? 'primary small' : 'ghost small';
-  toggle.disabled = state === 'connecting';
+  toggle.disabled = false;
   // Sin server ni pareja no hay nada de qué desconectarse; sin server
   // configurado, tampoco a qué conectarse.
   toggle.hidden = state === 'offline' && !s.code;
@@ -162,15 +162,27 @@ function renderLobby() {
   );
 }
 
+// Cada intento de conectar tiene su número: si se cancela, lo que conteste
+// después ya no cambia nada.
+let attempt = 0;
+
 $('#net-toggle').addEventListener('click', async () => {
   if (net.state === 'offline') {
+    const mine = ++attempt;
     startConnecting(STEPS_SERVER);
     try {
       await call('net_connect');
-      setNetState('online');
+      if (mine === attempt) setNetState('online');
     } catch {
-      setNetState('offline');
+      if (mine === attempt) setNetState('offline');
     }
+    return;
+  }
+  if (net.state === 'connecting') {
+    // Cancelar mientras conecta: se vuelve a solo red local.
+    attempt++;
+    setNetState('offline');
+    invoke('net_disconnect').catch(() => {});
     return;
   }
   partnerGone('hangup');
@@ -197,9 +209,16 @@ $('#lobby-list').addEventListener('click', async (ev) => {
       if (request) await call('lobby_cancel', { request });
     } else if (act === 'accept' || act === 'decline') {
       const request = row.dataset.request;
+      const from = net.incoming.get(request);
       net.incoming.delete(request);
       // Al aceptar, el resto llega con el evento `lobby_paired`.
-      await call('lobby_answer', { request, accept: act === 'accept' });
+      try {
+        await call('lobby_answer', { request, accept: act === 'accept' });
+      } catch (err) {
+        // Que se pueda volver a intentar.
+        if (from) net.incoming.set(request, from);
+        throw err;
+      }
     }
   } catch {
     // call() ya mostró el error.
@@ -334,17 +353,23 @@ let opening = null;
  * una pantalla de carga enseña cómo se conecta, y solo con iroh listo se
  * añade al otro, se le avisa y se abre su chat.
  */
-export async function openLink({ code, name }) {
+export async function openLink({ code, name }, { ask = false } = {}) {
   if (code === app.settings?.code) {
     toast(t('toast.link_self'), true);
     return;
   }
   const label = name || shortCode(code);
+  // Un enlace que llega de fuera (una web, un mensaje) no conecta solo: el
+  // usuario tiene que querer. Si no, cualquier página podría sacar este
+  // equipo a internet y presentarlo a quien quiera.
+  if (ask && !(await confirmLink(label))) return;
   const ready = net.state !== 'offline' && net.state !== 'connecting';
   const job = { name: label, steps: [...(ready ? [] : STEPS_DIRECT), 'peer'], step: ready ? 'peer' : 'internet' };
   opening = job;
   const still = () => opening === job;
   $('#link-title').textContent = t('link.opening', { name: label });
+  $('#link-hint').hidden = true;
+  $('#link-go').hidden = true;
   renderSteps();
   if (!$('#link-dialog').open) $('#link-dialog').showModal();
 
@@ -369,6 +394,27 @@ export async function openLink({ code, name }) {
   toast(t(reached ? 'toast.link_added' : 'toast.link_unreachable', { name: peer?.name || label }), !reached);
 }
 
+/** Pregunta antes de abrir un enlace que llegó de fuera. */
+function confirmLink(label) {
+  return new Promise((resolve) => {
+    const dialog = $('#link-dialog');
+    $('#link-title').textContent = t('link.confirm', { name: label });
+    $('#link-hint').hidden = false;
+    $('#link-go').hidden = false;
+    setHtml($('#link-steps'), '');
+    const done = (ok) => {
+      $('#link-go').removeEventListener('click', yes);
+      dialog.removeEventListener('close', no);
+      resolve(ok);
+    };
+    const yes = () => done(true);
+    const no = () => done(false);
+    $('#link-go').addEventListener('click', yes, { once: true });
+    dialog.addEventListener('close', no, { once: true });
+    if (!dialog.open) dialog.showModal();
+  });
+}
+
 // Cancelar deja de esperar; el equipo queda en la lista por si contesta luego.
 $('#link-cancel').addEventListener('click', () => {
   opening = null;
@@ -388,7 +434,7 @@ export function onHello(peer, name) {
 /** El enlace con que se abrió la app (o que llegó con ella abierta). */
 export async function takeLink() {
   const link = await invoke('link_take').catch(() => null);
-  if (link) await openLink(link);
+  if (link) await openLink(link, { ask: true });
 }
 
 $('#copy-code').addEventListener('click', copyMyLink);

@@ -176,6 +176,9 @@ async fn bind(key: &SecretKey) -> io::Result<Endpoint> {
         .receive_window(VarInt::from_u32(2 * STREAM_WINDOW))
         .send_window(2 * STREAM_WINDOW as u64)
         .ack_frequency_config(Some(acks))
+        // Las imágenes del vídeo (un stream cada una, misma prioridad) salen
+        // en orden: si se reparte la red entre todas, todas llegan tarde.
+        .send_fairness(false)
         .build();
     // Sin relays (la lista vacía deja poner los de n0 luego), sin DNS y sin
     // sondear el router: nada sale de la LAN hasta pasar a modo internet.
@@ -200,6 +203,8 @@ fn load_or_create_key(path: &Path) -> io::Result<SecretKey> {
     if let Ok(saved) = std::fs::read_to_string(path)
         && let Ok(key) = saved.trim().parse()
     {
+        // Las versiones viejas la dejaban legible un momento: se corrige.
+        private(path);
         return Ok(key);
     }
     let key = SecretKey::generate();
@@ -207,12 +212,26 @@ fn load_or_create_key(path: &Path) -> io::Result<SecretKey> {
         std::fs::create_dir_all(parent)?;
     }
     let hex: String = key.to_bytes().iter().map(|b| format!("{b:02x}")).collect();
-    std::fs::write(path, hex)?;
-    // Quien tenga la clave se hace pasar por este equipo.
+    // Quien tenga la clave se hace pasar por este equipo: se crea ya solo
+    // legible por el usuario, sin un instante abierta.
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create(true).truncate(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    use std::io::Write;
+    options.open(path)?.write_all(hex.as_bytes())?;
+    private(path);
+    Ok(key)
+}
+
+fn private(path: &Path) {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))?;
+        let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600));
     }
-    Ok(key)
+    let _ = path;
 }

@@ -2,13 +2,19 @@
 //! (`pasalo-call`); el vídeo lo comprime la interfaz con WebCodecs y aquí solo
 //! se lleva y se trae por la conexión de iroh, como la voz. Las señales
 //! (invitar, contestar, colgar…) van por `call_signal`.
+//!
+//! Las imágenes que llegan las recoge la interfaz con `video_recv`, cada vez
+//! las que haya. Antes iban por un `Channel` de Tauri, que entrega en orden:
+//! si un solo mensaje se perdía (pasa con los grandes, que van aparte), todos
+//! los siguientes se quedaban esperando y el vídeo se congelaba para siempre
+//! mientras la voz seguía.
 
 use std::sync::Arc;
 
 use pasalo_call::Mode;
 use pasalo_core::Signal;
 use serde::Serialize;
-use tauri::ipc::{Channel, InvokeBody, InvokeResponseBody, Request};
+use tauri::ipc::{InvokeBody, Request, Response};
 use tauri::{AppHandle, State};
 use tokio::task::JoinHandle;
 
@@ -28,8 +34,12 @@ pub struct VoiceCall {
 pub struct VideoCall {
     peer: String,
     sender: pasalo_core::VideoSender,
-    pump: JoinHandle<()>,
+    /// Lo que llega, hasta que la interfaz lo recoge.
+    rx: Arc<tokio::sync::Mutex<tokio::sync::mpsc::Receiver<bytes::Bytes>>>,
 }
+
+/// Lo que espera `video_recv` a que llegue algo antes de contestar vacío.
+const VIDEO_POLL: std::time::Duration = std::time::Duration::from_millis(1000);
 
 #[tauri::command]
 pub async fn call_signal(
@@ -179,25 +189,40 @@ pub fn voice_stats(state: State<'_, AppState>) -> Option<VoiceStats> {
     })
 }
 
-/// Empieza a llevar vídeo con `peer`: lo que llegue sale por `frames`, una
-/// imagen comprimida por mensaje, tal cual la mandó el otro lado.
+/// Empieza a llevar vídeo con `peer`. Lo que llegue se recoge con `video_recv`.
 #[tauri::command]
-pub async fn video_start(
-    state: State<'_, AppState>,
-    peer: String,
-    frames: Channel<InvokeResponseBody>,
-) -> CmdResult<()> {
+pub async fn video_start(state: State<'_, AppState>, peer: String) -> CmdResult<()> {
     stop_video(&state);
-    let mut link = state.talk()?.video(&peer).await.map_err(CmdError::core)?;
-    let pump = tokio::spawn(async move {
-        while let Some(frame) = link.rx.recv().await {
-            if frames.send(InvokeResponseBody::Raw(frame.to_vec())).is_err() {
-                break;
-            }
-        }
-    });
-    *state.video.lock().unwrap() = Some(VideoCall { peer, sender: link.sender, pump });
+    let link = state.talk()?.video(&peer).await.map_err(CmdError::core)?;
+    let rx = Arc::new(tokio::sync::Mutex::new(link.rx));
+    *state.video.lock().unwrap() = Some(VideoCall { peer, sender: link.sender, rx });
     Ok(())
+}
+
+/// Las imágenes que han llegado, en binario: cada una con su longitud
+/// (`u32` big-endian) delante. Espera hasta 1 s a la primera; vacío si no
+/// llegó nada. Error `video_stopped` si ya no hay vídeo.
+#[tauri::command]
+pub async fn video_recv(state: State<'_, AppState>) -> CmdResult<Response> {
+    let rx = state.video.lock().unwrap().as_ref().map(|v| v.rx.clone());
+    let Some(rx) = rx else { return Err(CmdError::new("video_stopped", "")) };
+    // Solo una recogida a la vez; si hay otra en marcha, esta contesta vacío.
+    let Ok(mut rx) = rx.try_lock() else { return Ok(Response::new(Vec::new())) };
+    let mut out = Vec::new();
+    match tokio::time::timeout(VIDEO_POLL, rx.recv()).await {
+        Ok(Some(frame)) => push_frame(&mut out, &frame),
+        Ok(None) => return Err(CmdError::new("video_stopped", "")),
+        Err(_) => return Ok(Response::new(out)),
+    }
+    while let Ok(frame) = rx.try_recv() {
+        push_frame(&mut out, &frame);
+    }
+    Ok(Response::new(out))
+}
+
+fn push_frame(out: &mut Vec<u8>, frame: &[u8]) {
+    out.extend_from_slice(&(frame.len() as u32).to_be_bytes());
+    out.extend_from_slice(frame);
 }
 
 /// Manda una imagen (el cuerpo de la petición, en binario). `false` si se
@@ -206,8 +231,16 @@ pub async fn video_start(
 pub async fn video_send(state: State<'_, AppState>, request: Request<'_>) -> CmdResult<bool> {
     let frame = match request.body() {
         InvokeBody::Raw(frame) => bytes::Bytes::copy_from_slice(frame),
-        // En Android la IPC va por postMessage y el binario llega como JSON.
-        InvokeBody::Json(json) => json_bytes(json).ok_or_else(|| CmdError::other("imagen no válida"))?.into(),
+        // En Android la IPC va por postMessage y el binario llega como JSON:
+        // la interfaz lo manda en base64 (`{ "b64": "…" }`), que ocupa mucho
+        // menos que un array de números.
+        InvokeBody::Json(json) => match json.get("b64").and_then(|v| v.as_str()) {
+            Some(b64) => {
+                use base64::Engine;
+                base64::engine::general_purpose::STANDARD.decode(b64).map_err(CmdError::other)?.into()
+            }
+            None => json_bytes(json).ok_or_else(|| CmdError::other("imagen no válida"))?.into(),
+        },
     };
     let video = state.video.lock().unwrap();
     let Some(video) = video.as_ref() else { return Ok(false) };
@@ -230,10 +263,9 @@ pub fn video_stop(state: State<'_, AppState>) {
 }
 
 fn stop_video(state: &AppState) {
-    if let Some(video) = state.video.lock().unwrap().take() {
-        video.pump.abort();
-        if let Some(talk) = &state.talk {
-            talk.end_video(&video.peer);
-        }
+    // Al soltar `VideoCall` se cierra su cola: un `video_recv` en espera termina.
+    let video = state.video.lock().unwrap().take();
+    if let (Some(video), Some(talk)) = (video, &state.talk) {
+        talk.end_video(&video.peer);
     }
 }

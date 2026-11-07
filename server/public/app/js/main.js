@@ -1,6 +1,6 @@
 // Arranque de la interfaz y reparto de los eventos del núcleo.
 
-import { applyStatic, errorText } from './i18n/index.js';
+import { applyStatic, errorText, t } from './i18n/index.js';
 import { applyIcons } from './lib/icons.js';
 import { invoke, listen } from './lib/tauri.js';
 import { toast } from './lib/toast.js';
@@ -15,11 +15,18 @@ import './features/settings.js';
 import { onTransferEvent } from './features/transfers.js';
 
 // En el móvil no hay consola a mano: un error de JavaScript se ve como aviso.
-window.addEventListener('error', (ev) => toast(`JS: ${ev.message}`, true));
+// Sin jerga de programador: se enseña un aviso traducido y el detalle va a la consola.
+window.addEventListener('error', (ev) => {
+  console.error(ev.error || ev.message);
+  toast(t('error.unexpected', { detail: ev.message }), true);
+});
 window.addEventListener('unhandledrejection', (ev) => {
   const reason = ev.reason;
   if (reason && typeof reason === 'object' && 'code' in reason) return; // ya lo mostró call()
-  toast(`JS: ${errorText(reason)}`, true);
+  // El portapapeles sin permiso no es un fallo de la app.
+  if (reason?.name === 'NotAllowedError') return;
+  console.error(reason);
+  toast(t('error.unexpected', { detail: errorText(reason) }), true);
 });
 
 listen('pasalo', ({ payload: e }) => {

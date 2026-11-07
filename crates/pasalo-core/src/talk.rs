@@ -49,7 +49,13 @@ const MAX_VIDEO_FRAME: usize = 1024 * 1024;
 const STREAM_VIDEO: u8 = 1;
 /// Si la imagen más vieja sin confirmar lleva esto en camino, la red no da
 /// abasto: se descartan imágenes hasta que se ponga al día.
-const VIDEO_MAX_LAG: Duration = Duration::from_millis(700);
+const VIDEO_MAX_LAG: Duration = Duration::from_millis(1000);
+/// Imágenes por recibir en cola: si la interfaz no las recoge, sobran.
+const VIDEO_QUEUE: usize = 64;
+/// Paquetes de voz en cola (unos 10 s en el modo de más paquetes).
+const VOICE_QUEUE: usize = 256;
+/// Fotos del chat que se reciben a la vez de un mismo equipo.
+const IMAGES_AT_ONCE: usize = 2;
 /// Una imagen que no llega en este tiempo ya no sirve.
 const VIDEO_TIMEOUT: Duration = Duration::from_secs(10);
 /// Tiempo sin mensajes ni voz tras el que se cierra una conexión.
@@ -80,6 +86,10 @@ pub struct ChatMessage {
     /// Imagen guardada en disco.
     pub image: Option<PathBuf>,
     pub status: Status,
+    /// Registro de una llamada (solo local, no se envía): lo que muestra el
+    /// chat como «Llamada de voz · 3:21» y sus detalles. Ver [`Talk::log_call`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub call: Option<serde_json::Value>,
 }
 
 /// Señal de una llamada. El núcleo solo la transporta: qué significa cada
@@ -109,7 +119,7 @@ struct ImageMeta {
 /// Canal de voz con un equipo: datagramas QUIC, no fiables y sin reenvíos.
 pub struct VoiceLink {
     pub sender: VoiceSender,
-    pub rx: mpsc::UnboundedReceiver<Bytes>,
+    pub rx: mpsc::Receiver<Bytes>,
 }
 
 /// Lado de envío de un [`VoiceLink`]; se puede clonar y usar desde otro hilo.
@@ -141,7 +151,7 @@ impl VoiceSender {
 /// los mensajes del chat.
 pub struct VideoLink {
     pub sender: VideoSender,
-    pub rx: mpsc::UnboundedReceiver<Bytes>,
+    pub rx: mpsc::Receiver<Bytes>,
 }
 
 /// Lado de envío de un [`VideoLink`].
@@ -169,10 +179,16 @@ impl VideoSender {
         };
         let (conn, in_flight) = (self.conn.clone(), self.in_flight.clone());
         tokio::spawn(async move {
+            let mut stream = match tokio::time::timeout(VIDEO_TIMEOUT, conn.open_uni()).await {
+                Ok(Ok(stream)) => stream,
+                _ => {
+                    in_flight.lock().unwrap().remove(&seq);
+                    return;
+                }
+            };
+            // Por detrás de los mensajes y las señales, que pesan poco.
+            let _ = stream.set_priority(-1);
             let sent = async {
-                let mut stream = conn.open_uni().await.map_err(io::Error::other)?;
-                // Por detrás de los mensajes y las señales, que pesan poco.
-                let _ = stream.set_priority(-1);
                 stream.write_all(&[STREAM_VIDEO]).await.map_err(io::Error::other)?;
                 stream.write_all(&frame).await.map_err(io::Error::other)?;
                 stream.finish().map_err(io::Error::other)?;
@@ -183,7 +199,12 @@ impl VideoSender {
             match tokio::time::timeout(VIDEO_TIMEOUT, sent).await {
                 Ok(Ok(())) => {}
                 Ok(Err(e)) => tracing::debug!("imagen de vídeo sin entregar: {e}"),
-                Err(_) => tracing::debug!("imagen de vídeo sin confirmar a tiempo"),
+                Err(_) => {
+                    // Una imagen vieja ya no sirve: si no se cancela, QUIC la
+                    // sigue enviando y reenviando y le quita red a las nuevas.
+                    let _ = stream.reset(0u32.into());
+                    tracing::debug!("imagen de vídeo sin confirmar a tiempo");
+                }
             }
             in_flight.lock().unwrap().remove(&seq);
         });
@@ -211,19 +232,21 @@ struct Inner {
     lan: Mutex<HashMap<EndpointId, SocketAddr>>,
     /// Equipos cuya conexión se mantiene abierta aunque no se use (ver [`Talk::hold`]).
     pinned: Mutex<HashSet<EndpointId>>,
-    voice: Mutex<HashMap<EndpointId, mpsc::UnboundedSender<Bytes>>>,
-    video: Mutex<HashMap<EndpointId, mpsc::UnboundedSender<Bytes>>>,
+    voice: Mutex<HashMap<EndpointId, mpsc::Sender<Bytes>>>,
+    video: Mutex<HashMap<EndpointId, mpsc::Sender<Bytes>>>,
     /// Mensajes salientes sin entregar, por id.
     pending: Mutex<HashMap<String, ChatMessage>>,
     /// Entregas en curso, para no lanzar dos a la vez del mismo mensaje.
     delivering: Mutex<HashMap<String, (u64, tokio::task::AbortHandle)>>,
     attempts: std::sync::atomic::AtomicU64,
+    /// Fotos recibiéndose ahora, por equipo (ver [`IMAGES_AT_ONCE`]).
+    receiving: Mutex<HashMap<EndpointId, usize>>,
 }
 
 impl Talk {
     /// `dir` guarda el historial (un `.jsonl` por equipo) y las imágenes.
     pub fn new(remote: Remote, name: impl Into<String>, dir: impl Into<PathBuf>, events: EventSender) -> Self {
-        let store = Store { dir: dir.into() };
+        let store = Store { dir: dir.into(), known: Default::default() };
         let pending = store.pending().into_iter().map(|m| (m.id.clone(), m)).collect();
         let talk = Self {
             inner: Arc::new(Inner {
@@ -241,6 +264,7 @@ impl Talk {
                 pending: Mutex::new(pending),
                 delivering: Default::default(),
                 attempts: Default::default(),
+                receiving: Default::default(),
             }),
         };
         let ticking = talk.clone();
@@ -297,9 +321,36 @@ impl Talk {
         }
         let id = uuid::Uuid::new_v4().to_string();
         let path = self.inner.store.media_path(&id, ext);
-        std::fs::create_dir_all(path.parent().expect("con carpeta")).map_err(Error::Local)?;
-        std::fs::write(&path, image).map_err(Error::Local)?;
+        tokio::fs::create_dir_all(path.parent().expect("con carpeta")).await.map_err(Error::Local)?;
+        tokio::fs::write(&path, image).await.map_err(Error::Local)?;
         self.queue_with_id(id, peer, None, Some(path))
+    }
+
+    /// Deja en el historial de `peer` el registro de una llamada (`record`
+    /// lo arma la interfaz: id, quién llamó, cómo acabó, duración, consumo…).
+    /// Es solo local: cada lado guarda el suyo y no se envía.
+    pub fn log_call(&self, peer: &str, record: serde_json::Value) -> Result<ChatMessage, Error> {
+        parse_peer(peer)?;
+        let call_id: Option<String> = record
+            .get("id")
+            .and_then(|v| v.as_str())
+            .map(|id| id.chars().filter(|c| c.is_ascii_alphanumeric() || *c == '-').take(80).collect())
+            .filter(|id: &String| !id.is_empty());
+        let id = format!("call-{}", call_id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string()));
+        let outgoing = record.get("role").and_then(|v| v.as_str()) == Some("caller");
+        let ts = record.get("started").and_then(|v| v.as_u64()).filter(|t| *t > 0).unwrap_or_else(now_ms);
+        let message = ChatMessage {
+            id,
+            peer: normalize(peer),
+            outgoing,
+            ts,
+            text: None,
+            image: None,
+            status: if outgoing { Status::Delivered } else { Status::Received },
+            call: Some(record),
+        };
+        self.inner.store.append(&message).map_err(Error::Local)?;
+        Ok(message)
     }
 
     /// Envía una señal de llamada y espera a que el otro la confirme. No se
@@ -309,7 +360,11 @@ impl Talk {
         let name = self.inner.name.read().unwrap().clone();
         let conn = self.connection(id).await?;
         let sent = exchange(&conn, &Frame::Signal { name, signal }, None).await;
-        if sent.is_err() {
+        // En plena llamada la conexión lleva la voz: una señal que no llega
+        // (p. ej. pedir una imagen clave por un relay lento) no es motivo para
+        // abrir otra.
+        let in_call = self.inner.voice.lock().unwrap().contains_key(&id) || self.inner.video.lock().unwrap().contains_key(&id);
+        if sent.is_err() && !in_call {
             self.forget_connection(id, Some(&conn)).await;
         }
         sent
@@ -320,7 +375,7 @@ impl Talk {
     pub async fn voice(&self, peer: &str) -> Result<VoiceLink, Error> {
         let id = parse_peer(peer)?;
         let conn = self.connection(id).await?;
-        let (tx, rx) = mpsc::unbounded_channel();
+        let (tx, rx) = mpsc::channel(VOICE_QUEUE);
         self.inner.voice.lock().unwrap().insert(id, tx);
         Ok(VoiceLink { sender: VoiceSender(conn), rx })
     }
@@ -337,7 +392,7 @@ impl Talk {
     pub async fn video(&self, peer: &str) -> Result<VideoLink, Error> {
         let id = parse_peer(peer)?;
         let conn = self.connection(id).await?;
-        let (tx, rx) = mpsc::unbounded_channel();
+        let (tx, rx) = mpsc::channel(VIDEO_QUEUE);
         self.inner.video.lock().unwrap().insert(id, tx);
         let sender = VideoSender { conn, in_flight: Default::default(), next: Default::default() };
         Ok(VideoLink { sender, rx })
@@ -462,6 +517,7 @@ impl Talk {
             text,
             image,
             status: Status::Pending,
+            call: None,
         };
         self.inner.store.append(&message).map_err(Error::Local)?;
         self.inner.pending.lock().unwrap().insert(message.id.clone(), message.clone());
@@ -583,6 +639,9 @@ impl Talk {
         let id = parse_peer(&message.peer)?;
         let conn = self.connection(id).await?;
         let image = match &message.image {
+            Some(path) if !self.inner.store.is_media(path) => {
+                return Err(Error::Local(io::Error::other("la foto no está en la carpeta del chat")));
+            }
             Some(path) => {
                 let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("jpg").to_string();
                 let size = std::fs::metadata(path).map_err(Error::Local)?.len();
@@ -652,8 +711,9 @@ impl Talk {
             let conn = conn.clone();
             async move {
                 while let Ok(packet) = conn.read_datagram().await {
+                    // Si la cola está llena (no se recoge), el paquete sobra.
                     if let Some(tx) = this.inner.voice.lock().unwrap().get(&id) {
-                        let _ = tx.send(packet);
+                        let _ = tx.try_send(packet);
                     }
                 }
             }
@@ -681,7 +741,7 @@ impl Talk {
                         return;
                     }
                     if let Some(tx) = this.inner.video.lock().unwrap().get(&id) {
-                        let _ = tx.send(Bytes::from(data).slice(1..));
+                        let _ = tx.try_send(Bytes::from(data).slice(1..));
                     }
                 });
             }
@@ -714,18 +774,37 @@ impl Talk {
         let peer = from.to_string();
         match read_frame(&mut recv, SHORT).await? {
             Frame::Chat { id, ts, name, text, image } => {
-                let known = self.inner.store.history(&peer).iter().any(|m| m.id == id);
+                // El id forma el nombre del archivo de la foto: solo un uuid
+                // tal cual (nada de `../` ni rutas absolutas).
+                if !is_message_id(&id) {
+                    return Err(Error::Protocol("id de mensaje no válido".into()));
+                }
+                let known = self.inner.store.knows(&peer, &id);
                 let mut saved = None;
                 if let Some(meta) = image {
                     if meta.size > MAX_IMAGE {
                         return Err(Error::Protocol("imagen demasiado grande".into()));
                     }
-                    let mut bytes = vec![0; meta.size as usize];
-                    timed(LONG, AsyncReadExt::read_exact(&mut recv, &mut bytes)).await?;
-                    if !known {
-                        let path = self.inner.store.media_path(&id, &meta.ext);
-                        std::fs::create_dir_all(path.parent().expect("con carpeta"))?;
-                        std::fs::write(&path, &bytes)?;
+                    let _slot = ImageSlot::take(&self.inner.receiving, from)
+                        .ok_or_else(|| Error::Protocol("demasiadas fotos a la vez".into()))?;
+                    let path = self.inner.store.media_path(&id, &meta.ext);
+                    // Por trozos a un archivo temporal: ni 25 MB en memoria ni
+                    // una foto a medias con su nombre final.
+                    let part = path.with_extension("part");
+                    tokio::fs::create_dir_all(path.parent().expect("con carpeta")).await?;
+                    let mut file = tokio::fs::File::create(&part).await?;
+                    let mut limited = (&mut recv).take(meta.size);
+                    let copied = timed(LONG, tokio::io::copy(&mut limited, &mut file)).await;
+                    drop(file);
+                    if copied.as_ref().map_or(true, |n| *n != meta.size) {
+                        let _ = tokio::fs::remove_file(&part).await;
+                        copied?;
+                        return Err(Error::Protocol("foto incompleta".into()));
+                    }
+                    if known {
+                        let _ = tokio::fs::remove_file(&part).await;
+                    } else {
+                        tokio::fs::rename(&part, &path).await?;
                         saved = Some(path);
                     }
                 }
@@ -735,7 +814,8 @@ impl Talk {
                 if known {
                     return Ok(());
                 }
-                let message = ChatMessage { id, peer, outgoing: false, ts, text, image: saved, status: Status::Received };
+                let message =
+                    ChatMessage { id, peer, outgoing: false, ts, text, image: saved, status: Status::Received, call: None };
                 self.inner.store.append(&message)?;
                 let _ = self.inner.events.send(Event::Chat { message, name: Some(name) });
             }
@@ -790,6 +870,41 @@ fn parse_peer(peer: &str) -> Result<EndpointId, Error> {
     crate::parse_code(peer).ok_or_else(|| Error::Protocol(format!("código no válido: {peer}")))
 }
 
+/// Un id de mensaje válido: un uuid en su forma de siempre (como los que se crean aquí).
+fn is_message_id(id: &str) -> bool {
+    uuid::Uuid::parse_str(id).is_ok_and(|u| u.hyphenated().to_string() == id)
+}
+
+/// Una foto recibiéndose: cuenta para el límite por equipo mientras dura.
+struct ImageSlot<'a> {
+    map: &'a Mutex<HashMap<EndpointId, usize>>,
+    id: EndpointId,
+}
+
+impl<'a> ImageSlot<'a> {
+    fn take(map: &'a Mutex<HashMap<EndpointId, usize>>, id: EndpointId) -> Option<Self> {
+        let mut map_guard = map.lock().unwrap();
+        let n = map_guard.entry(id).or_default();
+        if *n >= IMAGES_AT_ONCE {
+            return None;
+        }
+        *n += 1;
+        Some(Self { map, id })
+    }
+}
+
+impl Drop for ImageSlot<'_> {
+    fn drop(&mut self) {
+        let mut map = self.map.lock().unwrap();
+        if let Some(n) = map.get_mut(&self.id) {
+            *n -= 1;
+            if *n == 0 {
+                map.remove(&self.id);
+            }
+        }
+    }
+}
+
 /// El código siempre en hex minúsculas, para que el historial no se parta.
 fn normalize(peer: &str) -> String {
     crate::parse_code(peer).map_or_else(|| peer.to_string(), |id| id.to_string())
@@ -803,6 +918,9 @@ fn now_ms() -> u64 {
 /// Un cambio de estado es otra línea con el mismo id; al leer gana la última.
 struct Store {
     dir: PathBuf,
+    /// Ids que ya hay en el historial de cada equipo, para descartar los
+    /// repetidos sin releer el archivo entero con cada mensaje.
+    known: Mutex<HashMap<String, HashSet<String>>>,
 }
 
 impl Store {
@@ -810,10 +928,23 @@ impl Store {
         self.dir.join(format!("{}.jsonl", normalize(peer)))
     }
 
+    fn media_dir(&self) -> PathBuf {
+        self.dir.join("media")
+    }
+
     fn media_path(&self, id: &str, ext: &str) -> PathBuf {
+        let id: String = id.chars().filter(|c| c.is_ascii_alphanumeric() || *c == '-').take(64).collect();
         let ext: String = ext.chars().filter(char::is_ascii_alphanumeric).take(5).collect();
         let ext = if ext.is_empty() { "bin".to_string() } else { ext.to_lowercase() };
-        self.dir.join("media").join(format!("{id}.{ext}"))
+        self.media_dir().join(format!("{id}.{ext}"))
+    }
+
+    /// Si `path` es una foto de la carpeta del chat (y no otro archivo del equipo).
+    fn is_media(&self, path: &Path) -> bool {
+        let dir = self.media_dir();
+        path.parent() == Some(dir.as_path())
+            && path.file_name().and_then(|n| n.to_str()).is_some_and(|n| !n.starts_with('.') && !n.contains(".."))
+            && std::fs::symlink_metadata(path).is_ok_and(|m| m.is_file())
     }
 
     fn append(&self, message: &ChatMessage) -> io::Result<()> {
@@ -821,7 +952,21 @@ impl Store {
         std::fs::create_dir_all(&self.dir)?;
         let mut line = serde_json::to_vec(message)?;
         line.push(b'\n');
-        std::fs::OpenOptions::new().create(true).append(true).open(self.file(&message.peer))?.write_all(&line)
+        std::fs::OpenOptions::new().create(true).append(true).open(self.file(&message.peer))?.write_all(&line)?;
+        if let Some(ids) = self.known.lock().unwrap().get_mut(&normalize(&message.peer)) {
+            ids.insert(message.id.clone());
+        }
+        Ok(())
+    }
+
+    /// Si el historial de `peer` ya tiene el mensaje `id`.
+    fn knows(&self, peer: &str, id: &str) -> bool {
+        let peer = normalize(peer);
+        let mut known = self.known.lock().unwrap();
+        let ids = known
+            .entry(peer.clone())
+            .or_insert_with(|| read_history(&self.file(&peer)).into_iter().map(|m| m.id).collect());
+        ids.contains(id)
     }
 
     fn history(&self, peer: &str) -> Vec<ChatMessage> {
@@ -833,8 +978,13 @@ impl Store {
         entries
             .flatten()
             .filter(|e| e.path().extension().is_some_and(|x| x == "jsonl"))
-            .flat_map(|e| read_history(&e.path()))
+            .flat_map(|e| {
+                // Solo los historiales de verdad: `<código>.jsonl` con mensajes de ese equipo.
+                let stem = e.path().file_stem().and_then(|s| s.to_str()).map(str::to_string);
+                read_history(&e.path()).into_iter().filter(move |m| stem.as_deref() == Some(m.peer.as_str()))
+            })
             .filter(|m| m.outgoing && m.status == Status::Pending)
+            .filter(|m| m.image.as_ref().is_none_or(|p| self.is_media(p)))
             .collect()
     }
 }

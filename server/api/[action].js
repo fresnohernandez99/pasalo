@@ -1,8 +1,12 @@
-// Única función del server: POST /api/<acción> con un JSON. Ver lib/lobby.js.
-// GET /api/health comprueba que llega a la base de datos.
+// Única función del server: POST /api/<acción> con un JSON. Ver lib/lobby.js
+// y, para las estadísticas de llamadas, lib/stats.js.
+// GET /api/health comprueba que llega a la base de datos; GET /api/stats da
+// el resumen de las estadísticas.
 
+import { createHash } from 'node:crypto';
 import { database } from '../lib/db.js';
 import { HttpError, handle } from '../lib/lobby.js';
+import { saveStats, statsSummary } from '../lib/stats.js';
 
 export default async function handler(req, res) {
   const action = req.query?.action ?? new URL(req.url, 'http://x').pathname.split('/').pop();
@@ -22,8 +26,13 @@ export default async function handler(req, res) {
       await db.command({ ping: 1 });
       return send(res, 200, { ok: true });
     }
+    if (req.method === 'GET' && action === 'stats') return send(res, 200, await statsSummary(db));
     if (req.method !== 'POST') throw new HttpError(405, 'usa POST');
-    const body = req.body && typeof req.body === 'object' ? req.body : await readJson(req);
+    const limit = action === 'stats' ? 256 * 1024 : 16_384;
+    const body = req.body && typeof req.body === 'object' ? req.body : await readJson(req, limit);
+    if (action === 'stats') return send(res, 200, await saveStats(db, body));
+    // La IP solo como hash, para el tope de entradas (nunca la que diga el cuerpo).
+    body.ipHash = ipHash(req);
     return send(res, 200, await handle(db, action, body));
   } catch (err) {
     if (!(err instanceof HttpError)) console.error(err);
@@ -38,15 +47,21 @@ function send(res, status, json) {
   res.end(JSON.stringify(json));
 }
 
-async function readJson(req) {
+async function readJson(req, limit) {
   let raw = '';
   for await (const chunk of req) {
     raw += chunk;
-    if (raw.length > 16_384) throw new HttpError(413, 'demasiado grande');
+    if (raw.length > limit) throw new HttpError(413, 'demasiado grande');
   }
   try {
     return JSON.parse(raw || '{}');
   } catch {
     throw new HttpError(400, 'JSON no válido');
   }
+}
+
+function ipHash(req) {
+  const forwarded = String(req.headers?.['x-forwarded-for'] || '').split(',')[0].trim();
+  const ip = forwarded || req.socket?.remoteAddress || '';
+  return ip ? createHash('sha256').update(`pasalo-ip:${ip}`).digest('hex').slice(0, 16) : '';
 }

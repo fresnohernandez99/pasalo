@@ -49,7 +49,7 @@ async fn join(app: &AppHandle, state: &AppState) -> CmdResult<()> {
     let (server, me) = {
         let settings = state.settings.lock().unwrap();
         let local = state.local.lock().unwrap();
-        let me = LobbyUser { id: local.device_id.clone(), name: local.name.clone(), platform: local.platform.clone() };
+        let me = LobbyUser { id: pasalo_core::session_id(), name: local.name.clone(), platform: local.platform.clone() };
         (settings.server.clone(), me)
     };
     if server.is_empty() {

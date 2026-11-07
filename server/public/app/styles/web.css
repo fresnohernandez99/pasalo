@@ -12,13 +12,15 @@
 .web #check-update,
 .web #update-result { display: none !important; }
 
-/* Lo recibido, esperando a que se guarde. */
+/* Lo recibido, esperando a que se guarde. Por debajo del chat y de los
+   Ajustes en el móvil (que van encima, z-index 10+); lo de debajo le deja
+   sitio con --sheet-h (la lista y el botón +). */
 .web-received {
   position: fixed;
   left: 12px;
   right: 12px;
   bottom: calc(76px + var(--nav));
-  z-index: 15;
+  z-index: 9;
   max-width: 460px;
   margin: 0 auto;
   background: var(--surface);
@@ -28,30 +30,34 @@
   padding: 10px 12px;
 }
 .web-received[hidden] { display: none; }
-.web-received-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 6px; }
-.web-received-list { max-height: 34vh; overflow-y: auto; display: grid; gap: 6px; }
+.web-received-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.web-received-list { max-height: 30vh; overflow-y: auto; display: grid; gap: 6px; margin-top: 6px; }
 .web-received-row { display: flex; align-items: center; gap: 8px; }
 .web-received-info { flex: 1; min-width: 0; }
 .web-received-name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .web-received-row .icon-btn { font-size: 20px; line-height: 1; }
-/* En pantallas anchas, encima de la caja de escribir del chat. */
+.web-received-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 8px; }
+.web-received-actions:empty { display: none; }
+.has-received .home-body { padding-bottom: calc(96px + var(--nav) + var(--sheet-h, 0px)); }
+.has-received .fab { bottom: calc(80px + var(--nav) + var(--sheet-h, 0px)); }
+/* En pantallas anchas, abajo a la derecha encima de la caja de escribir del chat. */
 @media (min-width: 860px) {
-  .web-received { left: auto; right: 20px; bottom: 84px; width: 420px; }
+  .web-received { left: auto; right: 20px; bottom: 84px; width: 420px; z-index: 15; }
+  .has-received .fab { bottom: calc(80px + var(--nav)); }
 }
 
-/* Cómo instalarla en el iPhone. */
+/* Cómo instalarla en el iPhone: arriba de la lista, sin tapar nada. */
 .web-install {
-  position: fixed;
-  left: 12px;
-  right: 12px;
-  top: max(12px, env(safe-area-inset-top));
-  z-index: 16;
-  max-width: 460px;
-  margin: 0 auto;
+  margin: 4px 0 12px;
   background: var(--surface);
-  border: 1px solid var(--border);
   border-radius: var(--radius);
-  box-shadow: var(--shadow-2);
+  box-shadow: var(--shadow-1);
   padding: 14px 16px;
 }
 .web-install p { margin: 6px 0 10px; color: var(--muted); font-size: 14px; }
+
+/* iPhone en horizontal: nada bajo la muesca (en vertical las zonas laterales son 0). */
+.web .app {
+  padding-left: env(safe-area-inset-left, 0px);
+  padding-right: env(safe-area-inset-right, 0px);
+}

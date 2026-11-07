@@ -170,7 +170,7 @@ async fn main() -> Result<()> {
             }
             let lobby = match (&server, &remote) {
                 (Some(server), Some(remote)) => {
-                    let me = LobbyUser { id: local.device_id.clone(), name: local.name.clone(), platform: local.platform.clone() };
+                    let me = LobbyUser { id: pasalo_core::session_id(), name: local.name.clone(), platform: local.platform.clone() };
                     let lobby = Lobby::join(server, remote, me, tx.clone()).await.context("no se pudo entrar en el server")?;
                     println!("En el server {server}. Esperando solicitudes…");
                     Some(lobby)

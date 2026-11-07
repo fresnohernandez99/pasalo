@@ -21,6 +21,8 @@ const PROGRESS_EVERY = 100;
 /** Lo recibido se guarda en trozos de este tamaño. */
 const PART = 4 * 1024 * 1024;
 const LEDGER_EVERY = 1000;
+const MAX_TEXT = 64 * 1024;
+const MAX_ITEMS = 100_000;
 
 /** Progreso como mucho cada 100 ms. */
 class Progress {
@@ -342,14 +344,12 @@ export class Receiver {
 
   async session(conn, send, reader, started) {
     const local = this.local();
-    const first = await readMsg(reader, SHORT);
+    // Lo primero que manda cualquiera: pequeño.
+    const first = await readMsg(reader, SHORT, 16 * 1024);
     if (first.type !== 'hello') throw unexpected('hello');
     const { version, device_id: deviceId, name: peer } = first;
     await writeMsg(send, hello(local));
-    if (this.only && this.only !== deviceId) {
-      await writeMsg(send, { type: 'reject', reason: 'busy' });
-      throw new PasaloError('rejected', 'busy');
-    }
+
     if (version !== PROTOCOL_VERSION) {
       const reason = `versión de protocolo ${version} no soportada`;
       await writeMsg(send, { type: 'reject', reason });
@@ -360,6 +360,10 @@ export class Receiver {
     if (offer.type === 'done') return writeMsg(send, { type: 'result', error: null });
     if (offer.type !== 'offer') throw unexpected('offer');
     if (offer.text != null) {
+      if (String(offer.text).length > MAX_TEXT) {
+        await writeMsg(send, { type: 'reject', reason: 'too_large' });
+        throw new PasaloError('rejected', 'too_large');
+      }
       await writeMsg(send, { type: 'accept', items: [] });
       this.emit({ kind: 'text_received', from: peer, text: offer.text });
       const done = await readMsg(reader, SHORT);
@@ -369,7 +373,10 @@ export class Receiver {
 
     const items = offer.items || [];
     const rel = items.map((item) => splitSafe(item.path));
-    if (rel.some((r) => !r)) {
+    // Tamaños de verdad (enteros, sin pasarse) y una suma que no se desborde.
+    const sizes = items.every((i) => Number.isSafeInteger(i.size) && i.size >= 0);
+    const total = sizes ? items.reduce((n, i) => n + i.size, 0) : NaN;
+    if (rel.some((r) => !r) || !Number.isSafeInteger(total) || items.length > MAX_ITEMS) {
       const reason = 'la oferta contiene rutas no válidas';
       await writeMsg(send, { type: 'reject', reason });
       throw new PasaloError('rejected', reason);

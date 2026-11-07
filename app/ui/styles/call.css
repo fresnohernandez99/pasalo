@@ -7,7 +7,7 @@
   justify-content: space-between;
   background: radial-gradient(120% 80% at 50% 0%, #1d2433 0%, #0b0d12 70%);
   color: #eef0f4;
-  padding: max(24px, env(safe-area-inset-top)) 16px max(20px, var(--nav));
+  padding: max(24px, var(--safe-top)) 16px max(20px, var(--nav));
   overflow: hidden auto;
 }
 .call video, .call canvas { position: absolute; background: #000; }
@@ -16,7 +16,7 @@
 #call-local {
   z-index: 2;
   right: 14px;
-  top: calc(max(14px, env(safe-area-inset-top)) + 52px);
+  top: calc(max(14px, var(--safe-top)) + 52px);
   width: 28%;
   max-width: 180px;
   aspect-ratio: 3 / 4;
@@ -42,7 +42,7 @@
   z-index: 2;
   inset: auto;
   right: 14px;
-  top: calc(max(14px, env(safe-area-inset-top)) + 52px);
+  top: calc(max(14px, var(--safe-top)) + 52px);
   width: 28%;
   max-width: 180px;
   height: auto;
@@ -72,14 +72,14 @@
 .call.has-video .call-info .avatar { display: none; }
 .call.has-video .call-name { font-size: 20px; }
 .call.has-video .call-bar { padding-top: 24px; background: linear-gradient(transparent, rgb(0 0 0 / .55) 40%); margin: 0 -16px calc(-1 * max(20px, var(--nav))); padding-bottom: max(20px, var(--nav)); }
-.call.has-video .call-top { margin: calc(-1 * max(24px, env(safe-area-inset-top))) -16px 0; padding: max(24px, env(safe-area-inset-top)) 16px 30px; background: linear-gradient(rgb(0 0 0 / .5), transparent); }
+.call.has-video .call-top { margin: calc(-1 * max(24px, var(--safe-top))) -16px 0; padding: max(24px, var(--safe-top)) 16px 30px; background: linear-gradient(rgb(0 0 0 / .5), transparent); }
 
 /* Calidad: un botón medio transparente arriba a la derecha que despliega los selectores. */
 .call-quality {
   position: absolute;
   z-index: 3;
   right: 14px;
-  top: max(10px, env(safe-area-inset-top));
+  top: max(10px, var(--safe-top));
   display: flex;
   flex-direction: column;
   align-items: flex-end;
@@ -123,6 +123,8 @@
   font-size: 15px;
 }
 .call-quality-menu option { color: #0b0d12; }
+.call-quality-menu .switch-row { display: flex; color: #eef0f4; font-size: 15px; }
+.call-quality-menu .switch-row[hidden] { display: none; }
 
 /* Un toque en la imagen esconde todo menos el vídeo; otro lo vuelve a enseñar. */
 .call.controls-hidden .call-quality { opacity: 0; pointer-events: none; }

@@ -256,3 +256,37 @@ async fn hold_reports_release_and_loss() {
     b.remote.shutdown().await;
     assert!(!tokio::time::timeout(Duration::from_secs(60), holding).await.unwrap().unwrap());
 }
+
+/// Una foto con un id que no es un uuid (`../`, ruta absoluta) no se guarda:
+/// el id forma el nombre del archivo.
+#[tokio::test]
+async fn image_id_cannot_escape_the_chat_folder() {
+    use iroh::endpoint::presets;
+    use iroh::{Endpoint, EndpointAddr};
+
+    let b = side("beto").await;
+    let attacker = Endpoint::builder(presets::Minimal)
+        .relay_mode(iroh::RelayMode::Disabled)
+        .bind()
+        .await
+        .unwrap();
+    let id: iroh::EndpointId = b.code.parse().unwrap();
+    let conn = attacker.connect(EndpointAddr::new(id).with_ip_addr(b.addr), pasalo_core::TALK_ALPN).await.unwrap();
+    let escape = b._dir.path().join("escapado");
+    for bad in ["../../escapado", escape.to_str().unwrap()] {
+        let (mut send, mut recv) = conn.open_bi().await.unwrap();
+        let frame = serde_json::json!({
+            "type": "chat", "id": bad, "ts": 1, "name": "x", "text": null, "image": { "ext": "txt", "size": 4 }
+        });
+        let json = serde_json::to_vec(&frame).unwrap();
+        send.write_all(&(json.len() as u32).to_be_bytes()).await.unwrap();
+        send.write_all(&json).await.unwrap();
+        send.write_all(b"evil").await.unwrap();
+        send.finish().unwrap();
+        // Sin acuse: el otro lado corta el stream.
+        assert!(tokio::time::timeout(Duration::from_secs(5), recv.read_to_end(1024)).await.unwrap().map_or(true, |d| d.is_empty()));
+    }
+    assert!(!escape.with_extension("txt").exists());
+    assert!(!b._dir.path().join("escapado.txt").exists());
+    attacker.close().await;
+}

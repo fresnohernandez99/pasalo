@@ -386,3 +386,60 @@ más) y WebRTC se queda para el vídeo. El server es solo señalización.
 - Una llamada no puede esperar a `AudioContext.resume()`: sin un toque real
   no termina nunca. Ahora se espera 500 ms y el audio arranca con el primer toque.
 - Un tono puro de prueba no pasa el detector de voz: para probar, uno modulado.
+
+## Sesión 2026-11-07 (tarde) — Vídeo congelado, estadísticas de llamadas y auditoría
+
+Informe completo en coTs (`code-notes/261107-1552`).
+
+### Vídeo que se congelaba por internet (la voz seguía)
+- Causa principal: las imágenes llegaban a la interfaz por un `Channel` de
+  Tauri, que entrega en orden; si un mensaje grande se perdía, todos los
+  siguientes se quedaban esperando para siempre. Ahora la interfaz las recoge
+  con `video_recv` (cada petición es independiente).
+- El receptor vigila con un temporizador y pide una imagen clave aunque no
+  llegue nada; acota lo que guarda mientras espera una clave.
+- El emisor rehace el compresor si se cuelga sin avisar, pide la cámara de
+  nuevo si deja de dar imágenes y baja la calidad sola si la red descarta
+  imágenes (y se lo dice al otro lado).
+- Las imágenes caducadas se cancelan (`reset`) y salen en orden
+  (`send_fairness(false)`); el límite de retraso sube a 1 s.
+- Las señales `key` y compañía ya no avisan ni abren conexiones nuevas en
+  plena llamada. En Android el vídeo cruza la IPC en base64.
+
+### Llamadas en el chat y estadísticas
+- Cada llamada queda en su chat («Videollamada · 0:42 · 709 KB», perdidas en
+  rojo); al tocarla, los detalles (duración, datos, vídeo, calidad, pérdidas).
+- Se apuntan para subirlas a mano desde Ajustes → Estadísticas de llamadas
+  (`POST /api/stats`, sin con quién fue; `GET /api/stats` da el resumen).
+
+### Seguridad
+- C1: el id de una foto del chat formaba la ruta del archivo sin comprobarse
+  (escritura en cualquier sitio y robo de archivos). Ahora solo uuids, y nunca
+  se envía una foto de fuera de la carpeta del chat.
+- C2: una oferta podía escribir un registro de reanudación falso y luego
+  escribir fuera de Descargas sin preguntar. Se rechaza `.pasalo` y se validan
+  los registros al cargarlos.
+- Server: nadie entra con el id de otro conectado; tope de entradas por IP;
+  id del lobby nuevo por sesión (no el `device_id`).
+- Enlaces de fuera piden confirmación; con pareja no se recibe por TCP de la
+  LAN; anuncios de la LAN que suplantan a otro se ignoran; topes de tamaño y
+  de conexiones; textos sueltos de 64 KB; suma de tamaños sin desbordar;
+  fotos por trozos con límite; clave de iroh creada 0600; Android sin copias
+  de seguridad; CSP y cabeceras en Vercel.
+
+### Interfaz
+- Silenciar antes de contestar ya silencia; doble toque en Contestar/Llamar;
+  contestar con un diálogo abierto; avisos en cola; textos que no se pierden
+  al fallar; Reanudar que falla; errores sin «JS:»; cancelar mientras conecta;
+  zona segura de arriba en Android (botón de calidad bajo la barra de estado);
+  contraste y tamaños táctiles; textos de la web traducidos; hoja «Recibido»
+  plegable sin tapar nada; teclado y Atrás del navegador en la web.
+
+### Pendiente
+- Sin probar en un iPhone ni en un Android de verdad (las pruebas fueron en
+  Chrome en el Mac: videollamada web↔web, corte simulado del vídeo y su
+  recuperación, registro y subida de estadísticas).
+- La tira de transferencias del chat sigue emparejando por nombre en las de
+  entrada; foco y `inert` de las pantallas; los detalles de error del núcleo
+  siguen en español.
+- La LAN por TCP sigue sin cifrar (diseño).

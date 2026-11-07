@@ -12,7 +12,7 @@
 .viewer-close {
   position: absolute;
   z-index: 1;
-  top: max(12px, env(safe-area-inset-top));
+  top: max(12px, var(--safe-top));
   right: 12px;
   color: #fff;
   background: rgb(255 255 255 / .14);

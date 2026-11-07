@@ -67,6 +67,9 @@ button:focus-visible, [tabindex]:focus-visible { outline: 2px solid var(--accent
 .icon-btn:not(:disabled):hover, .icon-btn.on { background: var(--surface-2); }
 .icon-btn.small { width: 34px; height: 34px; }
 .icon-btn.small .i { width: 18px; height: 18px; }
+/* En el móvil, todo lo que se toca mide al menos lo que un dedo. */
+.mobile .small { min-height: var(--tap); }
+.mobile .icon-btn.small { width: var(--tap); height: var(--tap); }
 .icon-btn.subtle { color: var(--muted); }
 
 /* ---------- campos ---------- */
@@ -87,6 +90,12 @@ input:focus, textarea:focus, select:focus { border-color: var(--accent); backgro
 
 .field { display: flex; flex-direction: column; gap: 6px; font-size: 14px; color: var(--muted); }
 .field + .field { margin-top: 14px; }
+/* Interruptor: texto a la izquierda, casilla a la derecha. */
+.switch-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; cursor: pointer; }
+.switch-row input { width: 22px; height: 22px; flex: none; accent-color: var(--accent); }
+.field-switch { margin-top: 16px; font-size: 15px; }
+.field-switch > span { display: grid; gap: 2px; }
+.field-switch small { font-size: 13px; }
 .grow { flex: 1; min-width: 0; }
 
 /* ---------- piezas ---------- */
@@ -197,6 +206,10 @@ dialog textarea { resize: vertical; }
 }
 .toast.show { opacity: 1; transform: translate(-50%, 0); }
 .toast.error { background: var(--err); color: #fff; }
+/* En oscuro, --err es claro: el texto blanco no se leería. */
+@media (prefers-color-scheme: dark) {
+  .toast.error { background: #b42318; }
+}
 
 /* En el móvil no hay carpetas que elegir, ni arrastrar y soltar, ni Finder. */
 .mobile .desktop-only, .mobile .drag-hint { display: none !important; }

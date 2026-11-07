@@ -1,7 +1,13 @@
 // Vídeo de las videollamadas: la cámara se comprime aquí con WebCodecs y
 // cada imagen viaja por la conexión de iroh (`video_send`), la misma que la
-// voz, así que llega siempre que llegue la voz. Lo que viene del otro lado
-// sale por un Channel de Tauri y se dibuja en un <canvas>.
+// voz, así que llega siempre que llegue la voz. Lo que viene del otro lado se
+// recoge con `video_recv` (ver call.js) y se dibuja en un <canvas>.
+//
+// Nada puede dejar el vídeo parado para siempre mientras sigue la voz: el
+// receptor vigila con un temporizador (no solo cuando llegan imágenes) y pide
+// una imagen clave; el emisor rehace el compresor si se cuelga sin avisar,
+// pide la cámara de nuevo si deja de dar imágenes, y baja la calidad sola si
+// la red va descartando imágenes.
 //
 // Cada imagen lleva delante una cabecera de 12 bytes:
 //   [versión u8][flags u8: bit 0 = clave][códec u8][época u8][seq u32][ms u32]
@@ -26,6 +32,8 @@ const VIDEO_CODECS = [
   { id: 0, name: 'vp8', codec: 'vp8' },
 ];
 
+import { Upscaler } from './upscale.js';
+
 const HEADER = 12;
 const VERSION = 1;
 // Una imagen clave cada tanto, por si algo se pierde sin que nadie lo note.
@@ -38,6 +46,23 @@ const KEY_REQUEST_EVERY_MS = 1000;
 const STALL_MS = 2500;
 // Lo mínimo entre dos intentos de rehacer el compresor tras un error.
 const REBUILD_EVERY_MS = 1000;
+// Sin salida del compresor en este tiempo, con imágenes esperando: se colgó.
+const ENCODER_STUCK_MS = 2000;
+// La cámara sin imágenes nuevas en este tiempo: se pide de nuevo.
+const CAMERA_STUCK_MS = 3000;
+// Imágenes descartadas por la red en la ventana: se baja un modo.
+const DEGRADE_DROPS = 5;
+const DEGRADE_WINDOW_MS = 5000;
+// Entre dos bajadas, para que la red se asiente.
+const DEGRADE_EVERY_MS = 8000;
+// Modos de más a menos calidad.
+const MODE_ORDER = ['high', 'normal', 'low', 'minimum'];
+// Lo que se guarda como mucho mientras se espera una imagen clave.
+const PENDING_MAX = 120;
+// Lo que se mide antes de decidir si el teléfono da abasto con el desenfoque
+// o la mejora de imagen, y la parte del tiempo de cada imagen que pueden usar.
+const MEASURE_FRAMES = 20;
+const BUDGET = 0.5;
 
 export const videoSupported = () => typeof VideoEncoder !== 'undefined' && typeof VideoDecoder !== 'undefined';
 
@@ -77,16 +102,26 @@ function targetSize(width, height, long) {
  * `false` si la red las está descartando (la siguiente sale clave).
  * `onBytes(n)` cuenta lo enviado, para las estadísticas.
  * `onCameraLost()` avisa de que la cámara se cortó (p. ej. otra app la tomó)
- * y hay que pedirla de nuevo con `setStream`.
+ * y hay que pedirla de nuevo con `setStream`. `onBlurSlow()`, de que el
+ * desenfoque se quitó porque el equipo no daba abasto.
  */
 export class VideoSender {
-  constructor({ stream, codec, mode, send, onBytes, onCameraLost }) {
+  constructor({ stream, codec, mode, send, onBytes, onCameraLost, onBlurSlow, onBlurFailed, onDegrade }) {
+    this.onBlurFailed = onBlurFailed;
+    this.onDegrade = onDegrade;
+    this.drops = [];
+    this.degradedAt = 0;
+    this.lastOutputAt = performance.now();
+    this.cameraFrameAt = performance.now();
     this.stream = stream;
     this.codec = codec;
     this.mode = mode;
     this.send = send;
     this.onBytes = onBytes;
     this.onCameraLost = onCameraLost;
+    this.onBlurSlow = onBlurSlow;
+    this.blur = null;
+    this.blurTimes = [];
     this.epoch = Math.floor(Math.random() * 256);
     this.seq = 0;
     this.needKey = true;
@@ -101,6 +136,29 @@ export class VideoSender {
     this.ctx = this.canvas.getContext('2d', { alpha: false });
     this.builtAt = 0;
     this.encoder = this.makeEncoder();
+    this.watchCamera();
+  }
+
+  // Cuándo dio la cámara su última imagen: si deja de darlas (Android al
+  // volver del fondo, otra app con la cámara), se mandaría la misma imagen
+  // congelada.
+  watchCamera() {
+    const v = this.video;
+    if (typeof v.requestVideoFrameCallback === 'function') {
+      const tick = () => {
+        this.cameraFrameAt = performance.now();
+        if (!this.stopped) v.requestVideoFrameCallback(tick);
+      };
+      v.requestVideoFrameCallback(tick);
+    } else {
+      let last = -1;
+      this.cameraTimer = setInterval(() => {
+        if (v.currentTime !== last) {
+          last = v.currentTime;
+          this.cameraFrameAt = performance.now();
+        }
+      }, 250);
+    }
   }
 
   // Si el compresor falla (pasa con el de hardware del teléfono), se rehace en
@@ -141,7 +199,34 @@ export class VideoSender {
     this.video.srcObject = stream;
     this.size = null;
     this.cameraLost = false;
+    this.cameraFrameAt = performance.now();
+    this.needKey = true;
     await this.video.play().catch(() => {});
+  }
+
+  /** Desenfoque del fondo (un `BackgroundBlur`) o ninguno (`null`). */
+  setBlur(blur) {
+    this.blur = blur;
+    this.blurTimes = [];
+  }
+
+  /** Lo que se envía, para verlo en la miniatura (con el fondo desenfocado). */
+  preview() {
+    if (!this.previewStream) this.previewStream = this.canvas.captureStream();
+    return this.previewStream;
+  }
+
+  // Si desenfocar se come más de la mitad del tiempo de cada imagen, se quita.
+  watchBlur(ms) {
+    if (this.blurTimes.length >= MEASURE_FRAMES) return;
+    this.blurTimes.push(ms);
+    if (this.blurTimes.length < MEASURE_FRAMES) return;
+    const avg = this.blurTimes.reduce((a, b) => a + b, 0) / this.blurTimes.length;
+    if (avg > (1000 / VIDEO_MODES[this.mode].fps) * BUDGET) {
+      console.warn(`desenfoque demasiado lento: ${avg.toFixed(1)} ms por imagen`);
+      this.blur = null;
+      this.onBlurSlow?.();
+    }
   }
 
   /** El otro lado perdió algo: la siguiente imagen, clave. */
@@ -152,7 +237,24 @@ export class VideoSender {
   /** Sin enviar imágenes (cámara apagada), pero sin soltar la cámara. */
   setPaused(paused) {
     this.paused = paused;
-    if (!paused) this.needKey = true;
+    if (!paused) {
+      this.needKey = true;
+      this.cameraFrameAt = performance.now();
+    }
+  }
+
+  /** La red descartó una imagen: si pasa a menudo, se baja un modo. */
+  noteDrop() {
+    const now = performance.now();
+    this.drops = this.drops.filter((t) => now - t < DEGRADE_WINDOW_MS);
+    this.drops.push(now);
+    if (this.drops.length < DEGRADE_DROPS || now - this.degradedAt < DEGRADE_EVERY_MS) return;
+    const next = MODE_ORDER[MODE_ORDER.indexOf(this.mode) + 1];
+    if (!next) return;
+    this.degradedAt = now;
+    this.drops = [];
+    this.setMode(next);
+    this.onDegrade?.(next);
   }
 
   configure(width, height) {
@@ -177,7 +279,8 @@ export class VideoSender {
     const v = this.video;
     if (this.paused || this.stopped) return;
     const track = this.stream?.getVideoTracks()[0];
-    if (!track || track.readyState === 'ended') {
+    const frozen = performance.now() - this.cameraFrameAt > CAMERA_STUCK_MS;
+    if (!track || track.readyState === 'ended' || frozen) {
       if (!this.cameraLost) {
         this.cameraLost = true;
         this.onCameraLost?.();
@@ -192,13 +295,36 @@ export class VideoSender {
       this.encoder = this.makeEncoder();
     }
     if (!v.videoWidth) return;
-    // Si el compresor va atrasado, esta imagen sobra.
-    if (this.encoder.encodeQueueSize > 1) return;
+    // Si el compresor va atrasado, esta imagen sobra. Si además lleva un rato
+    // sin sacar nada, se colgó sin avisar (pasa con el de hardware): se rehace.
+    if (this.encoder.encodeQueueSize > 1) {
+      const now = performance.now();
+      if (now - this.lastOutputAt > ENCODER_STUCK_MS && Date.now() - this.builtAt > ENCODER_STUCK_MS) {
+        console.warn('compresor de vídeo colgado: se rehace');
+        try {
+          this.encoder.close();
+        } catch {}
+        this.encoder = null;
+        this.needKey = true;
+      }
+      return;
+    }
     const want = targetSize(v.videoWidth, v.videoHeight, VIDEO_MODES[this.mode].long);
     if (!this.size || want.width !== this.size.width || want.height !== this.size.height) {
       this.configure(want.width, want.height);
     }
     this.ctx.drawImage(v, 0, 0, this.size.width, this.size.height);
+    if (this.blur) {
+      const started = performance.now();
+      try {
+        this.blur.apply(this.ctx, v, this.size.width, this.size.height);
+        this.watchBlur(performance.now() - started);
+      } catch (err) {
+        console.warn('desenfoque', err);
+        this.blur = null;
+        this.onBlurFailed?.();
+      }
+    }
     const frame = new VideoFrame(this.canvas, { timestamp: Math.round(performance.now() * 1000) });
     const now = Date.now();
     const key = this.needKey || now - this.lastKey > KEY_EVERY_MS;
@@ -214,6 +340,7 @@ export class VideoSender {
   }
 
   output(chunk) {
+    this.lastOutputAt = performance.now();
     const bytes = new Uint8Array(HEADER + chunk.byteLength);
     const view = new DataView(bytes.buffer);
     bytes[0] = VERSION;
@@ -226,7 +353,9 @@ export class VideoSender {
     this.onBytes?.(bytes.length);
     this.send(bytes).then(
       (sent) => {
-        if (!sent) this.needKey = true;
+        if (sent) return;
+        this.needKey = true;
+        this.noteDrop();
       },
       () => (this.needKey = true),
     );
@@ -235,6 +364,8 @@ export class VideoSender {
   stop() {
     this.stopped = true;
     clearInterval(this.timer);
+    clearInterval(this.cameraTimer);
+    this.previewStream?.getTracks().forEach((track) => track.stop());
     if (this.encoder && this.encoder.state !== 'closed') this.encoder.close();
     this.encoder = null;
     this.video.srcObject = null;
@@ -248,16 +379,48 @@ export class VideoSender {
  * al otro lado.
  */
 export class VideoReceiver {
-  constructor({ canvas, needKey, onBytes, onFrame }) {
+  /** Con `enhance`, la imagen se mejora en la GPU (ver upscale.js) si se puede. */
+  constructor({ canvas, needKey, onBytes, onFrame, enhance = false }) {
+    // Un canvas que en otra llamada acabó con contexto 2D ya no admite la
+    // mejora (WebGL): se cambia por uno nuevo igual.
+    if (enhance && canvas.dataset.ctx === '2d') {
+      const fresh = canvas.cloneNode(false);
+      delete fresh.dataset.ctx;
+      canvas.replaceWith(fresh);
+      canvas = fresh;
+    }
     this.canvas = canvas;
-    this.ctx = canvas.getContext('2d', { alpha: false });
+    this.ctx = null;
+    this.upscaler = enhance ? Upscaler.create(canvas) : null;
+    this.drawTimes = [];
     this.needKey = needKey;
     this.onBytes = onBytes;
     this.onFrame = onFrame;
     this.decoder = null;
     this.codecId = null;
     this.drawnAt = Date.now();
+    this.expecting = true;
     this.reset(null);
+    // Vigilancia por temporizador: si no se dibuja nada (lleguen imágenes o
+    // no), se empieza de nuevo y se pide una imagen clave. Antes solo se
+    // miraba al llegar una imagen, y si dejaban de llegar no se pedía nada.
+    this.watchdog = setInterval(() => this.checkStall(), 1000);
+  }
+
+  /** Si se esperan imágenes (con la cámara del otro apagada, no). */
+  setExpecting(on) {
+    this.expecting = on;
+    this.drawnAt = Date.now();
+  }
+
+  checkStall() {
+    if (!this.expecting) return;
+    const now = Date.now();
+    if (now - this.drawnAt <= STALL_MS) return;
+    this.drawnAt = now;
+    this.reset(this.epoch);
+    this.resetDecoder();
+    this.askKey();
   }
 
   reset(epoch) {
@@ -296,6 +459,8 @@ export class VideoReceiver {
       this.askKey();
     }
     if (this.next !== null && p.seq < this.next) return; // vieja: ya se saltó
+    // Esperando una clave, lo demás no sirve: no se acumula.
+    if (this.next === null && !p.key && this.pending.size >= PENDING_MAX) return;
     this.pending.set(p.seq, p);
     this.drain();
   }
@@ -305,6 +470,8 @@ export class VideoReceiver {
       // Se empieza (o se sigue tras un hueco) por la clave más antigua.
       const key = [...this.pending.values()].filter((p) => p.key).sort((a, b) => a.seq - b.seq)[0];
       if (!key) {
+        // Sin una clave delante, las demás no se pueden mostrar.
+        this.pending.clear();
         this.askKey();
         return;
       }
@@ -374,6 +541,13 @@ export class VideoReceiver {
   }
 
   draw(frame) {
+    if (this.upscaler && this.drawEnhanced(frame)) {
+      frame.close();
+      this.drawnAt = Date.now();
+      this.onFrame?.();
+      return;
+    }
+    if (!this.ctx) this.ctx = this.plainContext();
     const { displayWidth: w, displayHeight: h } = frame;
     if (this.canvas.width !== w || this.canvas.height !== h) {
       this.canvas.width = w;
@@ -385,7 +559,48 @@ export class VideoReceiver {
     this.onFrame?.();
   }
 
+  // Con la GPU; al principio se mide, y si no da abasto (o se pierde el
+  // contexto) se vuelve a dibujar como siempre.
+  drawEnhanced(frame) {
+    const measuring = this.drawTimes.length < MEASURE_FRAMES;
+    const started = performance.now();
+    let ok = false;
+    try {
+      ok = this.upscaler.draw(frame);
+      if (ok && measuring) this.upscaler.finish();
+    } catch (err) {
+      console.warn('mejora de imagen', err);
+    }
+    if (ok && measuring) {
+      this.drawTimes.push(performance.now() - started);
+      if (this.drawTimes.length === MEASURE_FRAMES) {
+        const avg = this.drawTimes.reduce((a, b) => a + b, 0) / MEASURE_FRAMES;
+        // Unas 15 imágenes por segundo como mucho: la mitad de su tiempo.
+        if (avg > (1000 / 15) * BUDGET) {
+          console.warn(`mejora de imagen demasiado lenta: ${avg.toFixed(1)} ms`);
+          ok = false;
+        }
+      }
+    }
+    if (!ok) this.upscaler = null;
+    return ok;
+  }
+
+  // Un canvas que ya tuvo WebGL no admite un contexto 2D: se cambia por uno nuevo igual.
+  plainContext() {
+    let ctx = this.canvas.getContext('2d', { alpha: false });
+    if (!ctx) {
+      const fresh = this.canvas.cloneNode(false);
+      this.canvas.replaceWith(fresh);
+      this.canvas = fresh;
+      ctx = fresh.getContext('2d', { alpha: false });
+    }
+    this.canvas.dataset.ctx = '2d';
+    return ctx;
+  }
+
   stop() {
+    clearInterval(this.watchdog);
     this.reset(null);
     this.resetDecoder();
   }

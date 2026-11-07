@@ -74,6 +74,8 @@ impl Node {
                 .receive_window(VarInt::from_u32(2 * STREAM_WINDOW))
                 .send_window(2 * STREAM_WINDOW as u64)
                 .ack_frequency_config(Some(acks))
+                // Las imágenes del vídeo salen en orden (ver `remote.rs` del núcleo).
+                .send_fairness(false)
                 .build();
             let endpoint = Endpoint::builder(presets::Minimal)
                 .relay_mode(RelayMode::Custom(RelayMap::empty()))

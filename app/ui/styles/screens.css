@@ -10,7 +10,7 @@
 }
 @keyframes slide-in { from { transform: translateX(24px); opacity: 0; } }
 .screen-head { display: flex; align-items: center; gap: 8px; padding: 8px 12px 8px 6px; }
-.mobile .screen-head { padding-top: max(8px, env(safe-area-inset-top)); }
+.mobile .screen-head { padding-top: max(8px, var(--safe-top)); }
 .screen-head h1 { font-size: 20px; }
 .screen-body { flex: 1; min-height: 0; overflow-y: auto; width: 100%; max-width: 600px; align-self: center; padding: 0 16px calc(24px + var(--nav)); }
 .screen-body h2 { font-size: 13px; font-weight: 650; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); margin: 22px 6px 8px; }

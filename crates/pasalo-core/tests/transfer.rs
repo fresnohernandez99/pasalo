@@ -297,7 +297,9 @@ async fn sends_to_remote_by_code() {
     listening.shutdown().await;
 }
 
-/// Con pareja, los demás equipos de la LAN reciben `busy`.
+/// Con pareja, la LAN recibe `busy`: el `device_id` que se declara por TCP no
+/// prueba nada, así que ni quien dice ser la pareja pasa (ella llega por iroh,
+/// autenticada por su clave).
 #[tokio::test]
 async fn paired_receiver_only_takes_its_partner() {
     let src = tempfile::tempdir().unwrap();
@@ -314,8 +316,26 @@ async fn paired_receiver_only_takes_its_partner() {
     assert!(matches!(&other, Err(Error::Rejected(r)) if r == "busy"), "{other:?}");
     assert!(send_text(&Target::Lan(addr), &LocalInfo::new("otro-id", "otro"), "hola").await.is_err());
 
-    send_paths(new_transfer_id(), &Target::Lan(addr), &LocalInfo::new("pareja-id", "pareja"), &[file], &opts, &tx).await.unwrap();
-    assert!(dst.path().join("a.txt").exists());
+    let fake = send_paths(new_transfer_id(), &Target::Lan(addr), &LocalInfo::new("pareja-id", "pareja"), &[file], &opts, &tx).await;
+    assert!(matches!(&fake, Err(Error::Rejected(r)) if r == "busy"), "{fake:?}");
+    assert!(!dst.path().join("a.txt").exists());
+}
+
+/// Una oferta no puede escribir en la carpeta de los registros de reanudación
+/// ni anunciar tamaños que, sumados, den la vuelta.
+#[tokio::test]
+async fn offer_cannot_touch_the_ledger_or_overflow() {
+    let src = tempfile::tempdir().unwrap();
+    let dst = tempfile::tempdir().unwrap();
+    let folder = src.path().join(".pasalo");
+    std::fs::create_dir(&folder).unwrap();
+    std::fs::write(folder.join("x.json"), b"{}").unwrap();
+    let (addr, _events, receiver) = start_asking_receiver(dst.path()).await;
+    receiver.set_ask(false);
+    let (tx, _rx) = mpsc::unbounded_channel();
+    let sent = send_paths(new_transfer_id(), &Target::Lan(addr), &LocalInfo::new("x", "x"), &[folder], &SendOptions::default(), &tx).await;
+    assert!(matches!(&sent, Err(Error::Rejected(_))), "{sent:?}");
+    assert!(!dst.path().join(".pasalo").join("x.json").exists());
 }
 
 #[tokio::test]
