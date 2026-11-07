@@ -296,4 +296,8 @@ export default {
   'reason.timeout': "nadie contestó",
   'reason.cancelled': "se canceló",
   'reason.too_large': "es demasiado grande",
+  'details.blur': "Fondo desenfocado",
+  'details.enhance': "Imagen mejorada",
+  'details.yes': "Sí",
+  'details.no': "No",
 };

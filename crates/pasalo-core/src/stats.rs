@@ -18,7 +18,7 @@ const BATCH: usize = 100;
 /// nombre, se queda aquí).
 const FIELDS: &[&str] = &[
     "id", "media", "role", "outcome", "started", "duration_ms", "audio", "video", "sent", "received", "video_sent",
-    "video_received", "lost", "recovered",
+    "video_received", "lost", "recovered", "blur", "enhance",
 ];
 
 /// Llamadas pendientes de subir, una por línea en un `.jsonl`.

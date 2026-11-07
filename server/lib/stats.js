@@ -6,7 +6,9 @@
 // Colección:
 //   calls  { _id (id de la llamada + equipo), device, platform, version, media, role,
 //            outcome, started, duration_ms, audio, video, sent, received, video_sent,
-//            video_received, lost, recovered, at }
+//            video_received, lost, recovered, blur, enhance, at }
+// `blur`: se envió con el fondo desenfocado; `enhance`: la imagen que llegaba
+// se mejoró en la GPU. Así se puede comparar consumo y calidad con y sin.
 
 import { createHash } from 'node:crypto';
 import { HttpError } from './lobby.js';
@@ -38,6 +40,13 @@ function count(value, max, field) {
   return Math.round(n);
 }
 
+/** Sí, no o sin dato (las versiones viejas no lo mandan). */
+function flag(value, field) {
+  if (value == null) return null;
+  if (typeof value !== 'boolean') throw new HttpError(400, `${field} no válido`);
+  return value;
+}
+
 function clean(raw, device, platform, version) {
   if (!raw || typeof raw !== 'object') throw new HttpError(400, 'registro no válido');
   const id = typeof raw.id === 'string' && /^[\w-]{1,80}$/.test(raw.id) ? raw.id : null;
@@ -62,6 +71,8 @@ function clean(raw, device, platform, version) {
     video_received: count(raw.video_received, 1e12, 'video_received'),
     lost: count(raw.lost, 1e9, 'lost'),
     recovered: count(raw.recovered, 1e9, 'recovered'),
+    blur: flag(raw.blur, 'blur'),
+    enhance: flag(raw.enhance, 'enhance'),
   };
 }
 
@@ -95,11 +106,12 @@ export async function statsSummary(db) {
       { $match: { outcome: { $in: ['completed', 'lost'] }, duration_ms: { $gt: 0 } } },
       {
         $group: {
-          _id: { media: '$media', audio: '$audio', video: '$video' },
+          _id: { media: '$media', audio: '$audio', video: '$video', blur: '$blur', enhance: '$enhance' },
           calls: { $sum: 1 },
           devices: { $addToSet: '$device' },
           minutes: { $sum: { $divide: ['$duration_ms', 60_000] } },
           bytes: { $sum: { $add: ['$sent', '$received'] } },
+          videoBytes: { $sum: '$video_sent' },
           lost: { $sum: '$lost' },
         },
       },
@@ -111,11 +123,15 @@ export async function statsSummary(db) {
       media: r._id.media,
       audio: r._id.audio,
       video: r._id.video,
+      blur: r._id.blur ?? null,
+      enhance: r._id.enhance ?? null,
       calls: r.calls,
       devices: r.devices.length,
       minutes: Math.round(r.minutes * 10) / 10,
       // Consumo medio de la llamada (subida y bajada juntas).
       kbps: r.minutes ? Math.round((r.bytes * 8) / 1000 / (r.minutes * 60)) : 0,
+      // Lo que manda cada lado de vídeo: lo que cambia con el desenfoque.
+      video_up_kbps: r.minutes ? Math.round((r.videoBytes * 8) / 1000 / (r.minutes * 60)) : 0,
       lost: r.lost,
     })),
   };

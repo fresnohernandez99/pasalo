@@ -48,8 +48,20 @@ test('rechaza lo que no cuadra', async () => {
     { ...base, calls: [call('c', { sent: -1 })] },
     { ...base, calls: [call('c', { id: { $gt: '' } })] },
     { ...base, calls: [call('c', { media: 'fax' })] },
+    { ...base, calls: [call('c', { blur: 'sí' })] },
     { ...base, calls: Array.from({ length: MAX_RECORDS + 1 }, (_, i) => call(`n${i}`)) },
     { ...base, device: { $ne: null }, calls: [] },
   ];
   for (const body of bad) await assert.rejects(saveStats(db, body), (err) => err.status === 400);
+});
+
+test('separa con y sin desenfoque', async () => {
+  await db.collection('calls').deleteMany({});
+  const video = (id, blur, kb) =>
+    call(id, { media: 'video', video: 'normal', blur, enhance: true, video_sent: kb * 1000, sent: kb * 1000, received: kb * 1000 });
+  await saveStats(db, { device: 'v', platform: 'android', version: '1', calls: [video('x', true, 700), video('y', false, 1000)] });
+  const { groups } = await statsSummary(db);
+  const by = Object.fromEntries(groups.map((g) => [String(g.blur), g]));
+  assert.ok(by.true.video_up_kbps < by.false.video_up_kbps);
+  assert.equal(by.true.enhance, true);
 });

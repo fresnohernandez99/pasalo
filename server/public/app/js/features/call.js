@@ -505,6 +505,7 @@ async function flipCamera() {
 }
 
 function stopVideo(c) {
+  if (c.sender?.blurUsed) c.blurUsed = true;
   c.sender?.stop();
   c.receiver?.stop();
   c.stream?.getTracks().forEach((track) => track.stop());
@@ -564,6 +565,11 @@ function logCall(c, outcome) {
     duration_ms: c.started && c.state === 'active' ? Date.now() - c.started : 0,
     audio: c.audio || null,
     video: c.media === 'video' ? c.video || null : null,
+    // Para comparar consumo y calidad: si se envió con el fondo desenfocado
+    // (en algún momento) y si la imagen que llegaba se mejoró en la GPU.
+    blur: c.media === 'video' ? !!(c.blurUsed || c.sender?.blurUsed) : false,
+    // (si la GPU no daba abasto, se quitó sola y cuenta como no).
+    enhance: c.media === 'video' ? !!c.receiver?.upscaler : false,
     sent: Math.max(0, (last.sent || 0) - (first.sent || 0)),
     received: Math.max(0, (last.received || 0) - (first.received || 0)),
     video_sent: c.videoUp || 0,

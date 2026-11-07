@@ -204,6 +204,9 @@ function openCallDetails(m) {
     if (seconds >= 1) rows.push([t('details.avg'), `${((callTotal(c) * 8) / 1000 / seconds).toFixed(1)} kbps`]);
     if (c.audio) rows.push([t('details.audio_q'), t(`voice.${c.audio}`, { kbps: '' }).replace(/\s*·\s*~?\s*kbps$/, '')]);
     if (c.video) rows.push([t('details.video_q'), t(`video.${c.video}`, { kbps: '' }).replace(/\s*·\s*~?\s*kbps$/, '')]);
+    if (c.media === 'video' && 'blur' in c) {
+      rows.push([t('details.blur'), t(c.blur ? 'details.yes' : 'details.no')], [t('details.enhance'), t(c.enhance ? 'details.yes' : 'details.no')]);
+    }
     if (c.lost || c.recovered) rows.push([t('details.loss'), t('details.loss_value', { lost: c.lost || 0, recovered: c.recovered || 0 })]);
   }
   setHtml($('#call-details-list'), rows.map(([k, v]) => `<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`).join(''));

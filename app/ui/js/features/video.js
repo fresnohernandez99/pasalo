@@ -57,6 +57,10 @@ const DEGRADE_WINDOW_MS = 5000;
 const DEGRADE_EVERY_MS = 8000;
 // Modos de más a menos calidad.
 const MODE_ORDER = ['high', 'normal', 'low', 'minimum'];
+// Con el fondo desenfocado hay mucho menos detalle que comprimir: se pide
+// esta parte del bitrate del modo. Así ahorra datos de verdad (si no, el
+// compresor gasta lo mismo afinando la cara).
+const BLUR_BITRATE = 0.7;
 // Lo que se guarda como mucho mientras se espera una imagen clave.
 const PENDING_MAX = 120;
 // Lo que se mide antes de decidir si el teléfono da abasto con el desenfoque
@@ -206,8 +210,10 @@ export class VideoSender {
 
   /** Desenfoque del fondo (un `BackgroundBlur`) o ninguno (`null`). */
   setBlur(blur) {
+    if (!!blur !== !!this.blur) this.size = null; // reconfigura con el otro bitrate
     this.blur = blur;
     this.blurTimes = [];
+    if (blur) this.blurUsed = true;
   }
 
   /** Lo que se envía, para verlo en la miniatura (con el fondo desenfocado). */
@@ -225,6 +231,7 @@ export class VideoSender {
     if (avg > (1000 / VIDEO_MODES[this.mode].fps) * BUDGET) {
       console.warn(`desenfoque demasiado lento: ${avg.toFixed(1)} ms por imagen`);
       this.blur = null;
+      this.size = null;
       this.onBlurSlow?.();
     }
   }
@@ -263,7 +270,7 @@ export class VideoSender {
       codec: this.codec.codec,
       width,
       height,
-      bitrate: m.kbps * 1000,
+      bitrate: Math.round(m.kbps * 1000 * (this.blur ? BLUR_BITRATE : 1)),
       framerate: m.fps,
       latencyMode: 'realtime',
     };
@@ -322,6 +329,7 @@ export class VideoSender {
       } catch (err) {
         console.warn('desenfoque', err);
         this.blur = null;
+        this.size = null;
         this.onBlurFailed?.();
       }
     }
