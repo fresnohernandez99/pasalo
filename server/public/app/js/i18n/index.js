@@ -34,9 +34,14 @@ export function errorText(err) {
     if (err.code === 'other') return err.detail;
     const key = `error.${err.code}`;
     if (!LANGS.en[key]) return err.detail || err.code;
-    const text = t(key, { detail: err.detail });
+    let detail = err.detail || '';
+    // Lo de dentro del protocolo no le dice nada a quien usa la app (y viene
+    // en español del núcleo); los motivos de un rechazo sí, traducidos.
+    if (['protocol', 'superseded'].includes(err.code)) detail = '';
+    if (err.code === 'rejected' && LANGS.en[`reason.${detail}`]) detail = t(`reason.${detail}`);
+    const text = t(key, { detail });
     // Si el detalle ya va dentro del mensaje no se repite.
-    return err.detail && !LANGS.en[key].includes('{detail}') ? `${text}: ${err.detail}` : text;
+    return detail && !LANGS.en[key].includes('{detail}') ? `${text}: ${detail}` : text;
   }
   return String(err?.message || err);
 }

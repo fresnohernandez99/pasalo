@@ -291,4 +291,9 @@ export default {
   'web.reload': "Перезагрузить",
   'web.collapse': "Скрыть",
   'web.expand': "Показать",
+  'reason.busy': "оно подключено к другому устройству",
+  'reason.declined': "отклонено",
+  'reason.timeout': "никто не ответил",
+  'reason.cancelled': "отменено",
+  'reason.too_large': "слишком большой объём",
 };

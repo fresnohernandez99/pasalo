@@ -38,9 +38,17 @@ function transfer(id, direction) {
   return tr;
 }
 
-/** Las que siguen en marcha con un equipo (por su nombre), para enseñarlas en su chat. */
-export function liveWith(name) {
-  return [...items.values()].filter((i) => i.kind === 'transfer' && i.peer === name && LIVE.includes(i.status));
+/**
+ * Las que siguen en marcha con un equipo, para enseñarlas en su chat. Por su
+ * código o su dirección; por el nombre solo las de la LAN que llegan (de esas
+ * no se sabe más), que dos equipos pueden llamarse igual.
+ */
+export function liveWith(peer) {
+  const mine = (i) =>
+    (i.code && i.code === peer.code) ||
+    (i.target && (i.target === peer.code || i.target === peer.addr)) ||
+    (!i.code && !i.target && i.peer === peer.name);
+  return [...items.values()].filter((i) => i.kind === 'transfer' && LIVE.includes(i.status) && mine(i));
 }
 
 // ---------- enviar ----------
@@ -312,7 +320,7 @@ export function onTransferEvent(e) {
   switch (e.kind) {
     case 'transfer_request': {
       const tr = transfer(e.id, 'incoming');
-      Object.assign(tr, { peer: e.peer, roots: e.roots, total: e.total_bytes, files: e.files, status: 'request', error: null });
+      Object.assign(tr, { peer: e.peer, code: e.code || null, roots: e.roots, total: e.total_bytes, files: e.files, status: 'request', error: null });
       update(tr);
       toast(t('toast.request', { peer: e.peer, name: label(e.roots) }));
       break;
@@ -336,6 +344,7 @@ export function onTransferEvent(e) {
       if (['paused', 'cancelled'].includes(tr.status)) break;
       Object.assign(tr, {
         peer: e.peer,
+        code: e.code || tr.code || null,
         roots: e.roots.length ? e.roots : tr.roots,
         total: e.total_bytes,
         done: e.resumed_bytes,

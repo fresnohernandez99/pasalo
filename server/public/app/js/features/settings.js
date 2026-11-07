@@ -9,18 +9,20 @@ import { toast } from '../lib/toast.js';
 import { app } from '../state.js';
 import { fillCallSettings } from './call.js';
 import { copyMyLink } from './lobby.js';
-import { onBack } from './nav.js';
+import { onBack, updateLayers } from './nav.js';
 
 export function openSettings() {
   fill();
   fillCallSettings();
   refreshStats();
   $('#settings').hidden = false;
+  updateLayers($('#settings-close'));
 }
 
 function closeSettings() {
   if ($('#settings').hidden) return false;
   $('#settings').hidden = true;
+  updateLayers($('#open-settings'));
   return true;
 }
 

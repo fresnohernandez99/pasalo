@@ -30,7 +30,7 @@ import { app, isMobile } from '../state.js';
 import { activePeer, onChatEvent } from './chat.js';
 import { keepCall } from './keepalive.js';
 import { onHello, onUnpair } from './lobby.js';
-import { onBack } from './nav.js';
+import { onBack, updateLayers } from './nav.js';
 import { ensureRemotePeer } from './peers.js';
 import { BackgroundBlur, loadSegmenter } from './blur.js';
 import { VIDEO_MODES, VideoReceiver, VideoSender, decodableCodecs, pickCodec } from './video.js';
@@ -532,6 +532,7 @@ function endCall(message, outcome) {
   if (c.state === 'active') invoke('voice_stop').catch(() => {});
   stopVideo(c);
   $('#call').hidden = true;
+  updateLayers();
   $('#call').classList.remove('controls-hidden', 'rear', 'swapped');
   setQualityMenu(false);
   if (message) toast(message);
@@ -609,7 +610,9 @@ async function updateStats() {
 function showCall() {
   const c = live;
   const video = c.media === 'video';
+  const opening = $('#call').hidden;
   $('#call').hidden = false;
+  if (opening) updateLayers(c.state === 'incoming' ? $('#call-accept') : $('#call-hangup'));
   const hidden = $('#call').classList.contains('controls-hidden') && c.state === 'active';
   const hasVideo = video && !!c.hasVideo && !c.remoteCamOff;
   // Cambiadas de sitio solo mientras se vean las dos.

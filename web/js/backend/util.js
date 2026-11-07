@@ -11,7 +11,10 @@ export const LONG = 600_000;
 /** Bloques de los archivos. */
 export const CHUNK = 256 * 1024;
 
-/** Error como `pasalo_core::Error`: `code` estable y `detail` para mostrar. */
+/**
+ * Error como `pasalo_core::Error`: `code` estable (la interfaz lo traduce) y
+ * `detail`, que va en inglés como los mensajes del sistema que da el núcleo.
+ */
 export class PasaloError extends Error {
   constructor(code, detail = '') {
     super(detail ? `${code}: ${detail}` : code);
@@ -146,7 +149,7 @@ export class Reader {
 
   async need(n, limit) {
     while (this.available < n) {
-      if (!(await timed(limit, this.fill()))) throw new PasaloError('io', 'conexión cerrada (fin del stream)');
+      if (!(await timed(limit, this.fill()))) throw new PasaloError('io', 'connection closed');
     }
   }
 

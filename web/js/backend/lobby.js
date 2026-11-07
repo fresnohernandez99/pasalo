@@ -131,7 +131,7 @@ export class Lobby {
       });
       text = await response.text();
     } catch (err) {
-      throw new PasaloError('server', err?.name === 'AbortError' ? 'tiempo de espera agotado' : String(err?.message || err));
+      throw new PasaloError('server', err?.name === 'AbortError' ? 'timed out' : String(err?.message || err));
     } finally {
       clearTimeout(timer);
     }
@@ -140,7 +140,7 @@ export class Lobby {
       json = JSON.parse(text);
     } catch {}
     if (!response.ok) throw new PasaloError('server', `${response.status} ${json?.error || ''}`.trim());
-    if (!json) throw new PasaloError('server', 'respuesta no válida');
+    if (!json) throw new PasaloError('server', 'invalid response');
     return json;
   }
 }
