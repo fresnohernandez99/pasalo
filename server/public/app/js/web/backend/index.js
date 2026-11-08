@@ -608,7 +608,7 @@ const commands = {
       const calls = pending.slice(i, i + 100);
       let response;
       try {
-        response = await fetch(`${s.settings.server}/api/stats`, {
+        response = await fetch(`${s.settings.server}/api/v1/stats`, {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
           body: JSON.stringify({ device: s.deviceId, platform: s.platform, version: VERSION, calls }),

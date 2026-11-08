@@ -290,7 +290,7 @@ impl Lobby {
         let response = self
             .inner
             .http
-            .post(format!("{}/api/{action}", self.inner.base))
+            .post(format!("{}/api/v1/{action}", self.inner.base))
             .header("content-type", "application/json")
             .body(serde_json::to_vec(&body).expect("JSON válido"))
             .timeout(timeout)

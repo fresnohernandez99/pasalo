@@ -127,7 +127,7 @@ export class Lobby {
     let response;
     let text;
     try {
-      response = await fetch(`${this.base}/api/${action}`, {
+      response = await fetch(`${this.base}/api/v1/${action}`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ ...body, id: this.me.id, token: this.token }),

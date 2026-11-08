@@ -240,3 +240,10 @@ test('una solicitud por segundo como mucho', async () => {
   clock += 1;
   await ana.request('carla');
 });
+
+test('la API sin versión no tiene `users`; la v1 sí', async () => {
+  await ana.join();
+  const body = { id: 'ana', token: 't-ana' };
+  await assert.rejects(handle(db, 'users', body, { now, sleep, version: 0 }), { status: 404 });
+  assert.equal((await handle(db, 'users', body, { now, sleep, version: 1 })).total, 0);
+});

@@ -73,7 +73,7 @@ impl CallStats {
             .timeout(Duration::from_secs(30))
             .build()
             .map_err(|e| Error::Server(e.to_string()))?;
-        let url = format!("{}/api/stats", server.trim().trim_end_matches('/'));
+        let url = format!("{}/api/v1/stats", server.trim().trim_end_matches('/'));
         let mut uploaded = 0;
         for batch in pending.chunks(BATCH) {
             let body = json!({ "device": device, "platform": platform, "version": version, "calls": batch });

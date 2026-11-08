@@ -49,8 +49,10 @@ function text(value, max, field) {
   return value.trim();
 }
 
-/** Atiende `action` con el cuerpo `body` y devuelve lo que se contesta. */
-export async function handle(db, action, body, { now = () => new Date(), sleep = defaultSleep } = {}) {
+/** Atiende `action` con el cuerpo `body` y devuelve lo que se contesta.
+ *  `version` es la de la API (0 sin versión, 1 para /api/v1): cada acción
+ *  nueva solo existe desde la suya. */
+export async function handle(db, action, body, { now = () => new Date(), sleep = defaultSleep, version = 1 } = {}) {
   const users = db.collection('users');
   const requests = db.collection('requests');
   const id = text(body.id, 64, 'id');
@@ -180,6 +182,7 @@ export async function handle(db, action, body, { now = () => new Date(), sleep =
     // Una página de los que están en línea, con búsqueda por nombre. `sync`
     // sigue mandando la lista (hasta 200) para las versiones que no usan esto.
     case 'users': {
+      if (version < 1) throw new HttpError(404, 'acción desconocida');
       await me();
       const q = typeof body.q === 'string' ? body.q.trim().slice(0, 64) : '';
       const offset = Number.isInteger(body.offset) && body.offset >= 0 ? Math.min(body.offset, 100_000) : 0;

@@ -15,20 +15,22 @@ Es una sola función para Vercel (`api/[action].js`) con MongoDB (pensado para M
    | `MONGODB_URI` | La cadena de conexión de Atlas (`mongodb+srv://usuario:contraseña@…`) |
    | `MONGODB_DB` | Opcional. Nombre de la base de datos (por defecto `pasalo`) |
 
-4. Despliega y comprueba `https://<tu-proyecto>.vercel.app/api/health`. Tiene que contestar `{"ok":true}`.
+4. Despliega y comprueba `https://<tu-proyecto>.vercel.app/api/v1/health`. Tiene que contestar `{"ok":true}`.
 5. La app viene apuntando a `https://pasalo-server.vercel.app` (`DEFAULT_SERVER` en `app/src-tauri/src/lib.rs`). Para usar otro despliegue, cámbialo ahí antes de compilar o ponlo en ⚙ **Ajustes → Server de conexión**.
 
 Los índices (incluidos los TTL que borran lo abandonado) se crean solos la primera vez.
 
 ## Cómo funciona
 
-Todo es `POST /api/<acción>` con un JSON que lleva `id` (el identificador del equipo) y `token` (aleatorio, de cada sesión):
+La API va por versiones. Las apps actuales usan `/api/v1/<acción>`; las rutas sin versión (`/api/<acción>`) son las de las apps anteriores y no cambian, para poder retirarlas cuando ya nadie las use. Cada cambio que no sea compatible va en una versión nueva (`v2`, `v3`…).
+
+Todo es `POST /api/v1/<acción>` con un JSON que lleva `id` (el identificador del equipo) y `token` (aleatorio, de cada sesión):
 
 | Acción | Qué hace |
 |---|---|
 | `join` | Entra con `name`, `platform` y `code` (el código de iroh, que solo se revela al aceptar). |
 | `sync` | Espera hasta 20 s a que cambie algo y devuelve la lista de conectados, las solicitudes recibidas y las respuestas a las propias. Si no cambió nada, solo devuelve la versión `v`. |
-| `users` | Una página de los conectados (para Descubrir): `q` busca en el nombre, `offset` y `limit` (hasta 50) eligen la página. Devuelve `users`, `total` y `offset`. |
+| `users` | (Solo v1) Una página de los conectados (para Descubrir): `q` busca en el nombre, `offset` y `limit` (hasta 50) eligen la página. Devuelve `users`, `total` y `offset`. |
 | `request` | Pide conectarse con `to`. |
 | `cancel` | Retira una solicitud propia. |
 | `answer` | Acepta (`accept: true`) o rechaza una solicitud recibida. Al aceptar devuelve la pareja con su código y saca a los dos del server: las demás solicitudes de los dos se cancelan y ya no aparecen para nadie. |
