@@ -14,6 +14,9 @@ import { onBack, setPaneOpen } from './nav.js';
 import { avatar, ensureRemotePeer, findPeerByCode, peerCode } from './peers.js';
 import { act, items, liveWith, sendPaths } from './transfers.js';
 import { openViewer } from './viewer.js';
+import { openPhotoPreview } from './photo-preview.js';
+import { openOnce } from './once.js';
+import { isRecording, startRecording } from './recorder.js';
 
 const chat = {
   peer: null, // { code, name, os, platform, addr }
@@ -45,6 +48,8 @@ export async function openChat(peer) {
   closeAttachMenu();
   setPaneOpen(true);
   renderStrip();
+  setPrivate(false);
+  invoke('chat_private', { peer: code }).then((on) => chat.peer?.code === code && setPrivate(on), () => {});
   try {
     chat.messages.set(code, await invoke('chat_history', { peer: code }));
   } catch (err) {
@@ -139,13 +144,14 @@ function messageNode(m, first, last) {
     nodes.set(m.id, el);
   }
   const call = m.call ? ` call-msg${BAD_OUTCOMES.includes(m.call.outcome) ? ' bad' : ''}` : '';
-  el.className = `msg ${m.outgoing ? 'out' : 'in'}${first ? ' first' : ''}${last ? ' last' : ''}${m.image && !m.text ? ' photo' : ''}${call}`;
+  el.className = `msg ${m.outgoing ? 'out' : 'in'}${first ? ' first' : ''}${last ? ' last' : ''}${m.image && !m.text && !m.once ? ' photo' : ''}${call}${m.once ? ' once-msg' : ''}`;
   const html = bubbleHtml(m);
   if (el.dataset.html !== html) {
     el.dataset.html = html;
     el.innerHTML = html;
     const img = el.querySelector('img[data-path]');
     if (img) loadImage(img);
+
   }
   return el;
 }
@@ -215,17 +221,109 @@ function openCallDetails(m) {
 
 $('#call-details-close').addEventListener('click', () => $('#call-details').close());
 
+/** Foto de una vez: no se enseña aquí; se abre (y se borra) al tocarla. */
+function onceHtml(m) {
+  const label = m.outgoing ? t(m.opened ? 'once.seen' : 'once.sent') : t(m.opened ? 'once.opened' : 'once.view');
+  const inner = `${icon('shield')}<span>${esc(label)}</span>`;
+  if (!m.outgoing && !m.opened) return `<button type="button" class="once-chip ready" data-once="${esc(m.id)}">${inner}</button>`;
+  return `<span class="once-chip">${inner}</span>`;
+}
+
+/** «0:42» de una nota de voz. */
+function noteTime(ms) {
+  const s = Math.round((ms || 0) / 1000);
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+}
+
 function bubbleHtml(m) {
   if (m.call) return callBubble(m);
   const pending = m.outgoing && m.status === 'pending';
   const tick = m.outgoing
     ? `<span class="tick ${pending ? 'pending' : ''}" title="${esc(t(pending ? 'chat.pending' : 'chat.delivered'))}">${icon(pending ? 'clock' : 'check')}</span>`
     : '';
+  if (m.once) return `<div class="bubble">${onceHtml(m)}<span class="meta">${clock(m.ts)}${tick}</span></div>`;
+  if (m.audio) {
+    // Reproductor propio: el de serie no sabe la duración de lo grabado con
+    // MediaRecorder (sale «0:00 / 0:00») y ocupa media pantalla.
+    return `<div class="bubble"><div class="voice-note" data-ms="${Number(m.duration_ms) || 0}">
+      <button class="vn-play" type="button" aria-label="${esc(t('chat.voice_note'))}">${icon('play')}</button>
+      <div class="vn-track"><div class="vn-fill"></div></div>
+      <span class="vn-time">${esc(noteTime(m.duration_ms))}</span>
+      <audio preload="none" data-path="${esc(m.audio)}"></audio></div>
+      <span class="meta">${clock(m.ts)}${tick}</span></div>`;
+  }
   const img = m.image
     ? `<button class="msg-img" type="button" aria-label="${esc(t('chat.photo'))}"><img data-path="${esc(m.image)}" alt=""></button>`
     : '';
   const text = m.text ? `<span class="msg-text">${esc(m.text)}</span>` : '';
   return `<div class="bubble">${img}${text}<span class="meta">${clock(m.ts)}${tick}</span></div>`;
+}
+
+// ---------- notas de voz ----------
+
+let playing = null; // el <audio> que suena ahora
+
+/** Una `data:` URL como URL de un blob (más fiable para <audio> en WebKit). */
+function blobUrl(url) {
+  if (!url.startsWith('data:')) return url;
+  const [head, b64] = url.split(',');
+  const type = head.slice(5).split(';')[0];
+  const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
+  return URL.createObjectURL(new Blob([bytes], { type }));
+}
+
+async function toggleNote(note) {
+  const audio = note.querySelector('audio');
+  if (!audio.src) {
+    try {
+      audio.src = blobUrl(await invoke('chat_image', { path: audio.dataset.path }));
+    } catch (err) {
+      note.classList.add('broken');
+      toast(errorText(err), true);
+      return;
+    }
+    bindNote(note, audio);
+  }
+  if (!audio.paused) {
+    audio.pause();
+    return;
+  }
+  if (playing && playing !== audio) playing.pause();
+  playing = audio;
+  audio.play().catch((err) => {
+    // Formato que este equipo no sabe reproducir (p. ej. WebM en un Safari viejo).
+    if (err?.name === 'NotSupportedError') {
+      note.classList.add('broken');
+      toast(t('rec.cant_play'), true);
+    } else {
+      toast(errorText(err), true);
+    }
+  });
+}
+
+function bindNote(note, audio) {
+  const total = (Number(note.dataset.ms) || 0) / 1000;
+  const button = note.querySelector('.vn-play');
+  const show = () => {
+    const length = Number.isFinite(audio.duration) && audio.duration > 0 ? audio.duration : total;
+    const pct = length ? Math.min(100, (audio.currentTime / length) * 100) : 0;
+    note.querySelector('.vn-fill').style.width = `${pct}%`;
+    note.querySelector('.vn-time').textContent = noteTime((audio.currentTime || 0) * 1000 || total * 1000);
+  };
+  audio.addEventListener('play', () => {
+    button.innerHTML = icon('pause');
+    note.classList.add('playing');
+  });
+  audio.addEventListener('pause', () => {
+    button.innerHTML = icon('play');
+    note.classList.remove('playing');
+  });
+  audio.addEventListener('timeupdate', show);
+  audio.addEventListener('ended', () => {
+    audio.currentTime = 0;
+    note.querySelector('.vn-fill').style.width = '0%';
+    note.querySelector('.vn-time').textContent = noteTime(total * 1000);
+  });
 }
 
 async function loadImage(img) {
@@ -256,6 +354,16 @@ async function loadImage(img) {
 }
 
 $('#chat-list').addEventListener('click', (ev) => {
+  const note = ev.target.closest('.vn-play')?.closest('.voice-note');
+  if (note) {
+    toggleNote(note);
+    return;
+  }
+  const once = ev.target.closest('[data-once]');
+  if (once && chat.peer) {
+    openOnce(chat.peer.code, once.dataset.once);
+    return;
+  }
   const call = ev.target.closest('[data-call]');
   if (call) {
     const m = (chat.messages.get(chat.peer?.code) || []).find((x) => x.id === call.dataset.call);
@@ -338,32 +446,90 @@ $('#attach-menu').addEventListener('click', async (ev) => {
   }
 });
 
-$('#chat-file').addEventListener('change', async (ev) => {
+// Las fotos pasan por la vista previa: ahí ya van comprimidas (1600 px, WebP
+// o JPEG, sin metadatos; unos 150-400 KB) y se puede marcar «ver una vez».
+$('#chat-file').addEventListener('change', (ev) => {
   const files = [...ev.target.files];
   ev.target.value = '';
-  for (const file of files) await sendImage(file);
-});
-
-// Las fotos del móvil pesan varios MB: se reducen a 1600 px en JPEG antes de
-// enviarlas (unos 200-400 KB), que con mala señal es lo que importa.
-async function sendImage(file) {
-  if (!chat.peer) return;
-  try {
-    const bitmap = await createImageBitmap(file);
-    const scale = Math.min(1, 1600 / Math.max(bitmap.width, bitmap.height));
-    const canvas = document.createElement('canvas');
-    canvas.width = Math.round(bitmap.width * scale);
-    canvas.height = Math.round(bitmap.height * scale);
-    canvas.getContext('2d').drawImage(bitmap, 0, 0, canvas.width, canvas.height);
-    const data = canvas.toDataURL('image/jpeg', 0.8).split(',')[1];
-    const m = await tryCall('chat_send_image', { peer: chat.peer.code, data, ext: 'jpg' });
-    if (m) {
+  const peer = chat.peer;
+  if (!files.length || !peer) return;
+  openPhotoPreview(files, async ({ data, ext, once }) => {
+    const m = await tryCall(once ? 'chat_send_once' : 'chat_send_image', { peer: peer.code, data, ext });
+    if (m && chat.peer?.code === peer.code) {
       upsertMessage(m);
       renderChat(true);
     }
-  } catch (err) {
-    toast(errorText(err), true);
+  });
+});
+
+// Nota de voz.
+$('#chat-mic').addEventListener('click', () => {
+  const peer = chat.peer;
+  if (!peer || isRecording()) return;
+  startRecording(async ({ data, ext, durationMs }) => {
+    const m = await tryCall('chat_send_audio', { peer: peer.code, data, ext, durationMs });
+    if (m && chat.peer?.code === peer.code) {
+      upsertMessage(m);
+      renderChat(true);
+    }
+  });
+});
+
+// ---------- chat privado ----------
+// Con el candado, el historial (mensajes, fotos, notas de voz) se borra en
+// los dos equipos al desconectarse. El otro se entera con la señal `private`.
+
+function setPrivate(on) {
+  const button = $('#chat-private');
+  button.classList.toggle('on', on);
+  button.setAttribute('aria-pressed', String(on));
+  button.innerHTML = icon(on ? 'lock' : 'unlock');
+  $('#chat-private-bar').hidden = !on;
+}
+
+$('#chat-private').addEventListener('click', async () => {
+  const peer = chat.peer;
+  if (!peer) return;
+  const on = $('#chat-private').getAttribute('aria-pressed') !== 'true';
+  const button = $('#chat-private');
+  button.disabled = true;
+  try {
+    // Primero el otro: si no se entera, no sería privado en los dos lados.
+    await call('call_signal', { peer: peer.code, call: '', kind: 'private', data: { on } });
+    await call('chat_set_private', { peer: peer.code, on });
+    if (chat.peer?.code === peer.code) setPrivate(on);
+    toast(t(on ? 'private.on' : 'private.off'));
+  } catch {
+    // call() ya avisó (p. ej. el otro no está conectado).
+  } finally {
+    button.disabled = false;
   }
+});
+
+/** El otro cambió el chat a privado (o no). El backend ya lo guardó. */
+export function onPrivateSignal({ peer, name, signal }) {
+  const on = signal.data?.on === true;
+  if (chat.peer?.code === peer) setPrivate(on);
+  toast(t(on ? 'private.peer_on' : 'private.peer_off', { name }));
+}
+
+/** Se borró el chat privado con `peer` (al desconectarse). */
+export function onChatWiped({ peer }) {
+  chat.messages.delete(peer);
+  chat.unread.delete(peer);
+  emit('chat:unread');
+  if (chat.peer?.code === peer) {
+    nodes.clear();
+    $('#chat-list').replaceChildren();
+    delete $('#chat-list').dataset.peer;
+    renderChat();
+  }
+  toast(t('private.wiped'));
+}
+
+/** Al desconectarse de `peer` (dejó la LAN o nos desconectamos): si su chat es privado, se borra. */
+export function wipeIfPrivate(peer) {
+  if (peer) invoke('chat_wipe', { peer }).catch(() => {});
 }
 
 // ---------- transferencias con este equipo ----------
@@ -423,7 +589,7 @@ export function onChatEvent({ message, name }) {
       chat.unread.set(message.peer, unreadCount(message.peer) + 1);
       emit('chat:unread');
     }
-  } else if (!message.outgoing) {
+  } else if (!message.outgoing && !message.opened) {
     chat.unread.set(message.peer, unreadCount(message.peer) + 1);
     emit('chat:unread');
     toast(t('toast.message_from', { name: name || shortCode(message.peer) }));

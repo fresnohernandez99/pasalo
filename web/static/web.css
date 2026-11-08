@@ -61,3 +61,9 @@
   padding-left: env(safe-area-inset-left, 0px);
   padding-right: env(safe-area-inset-right, 0px);
 }
+
+/* Con una pantalla encima (Ajustes, una llamada, una foto), la hoja se aparta. */
+body:has(#settings:not([hidden]), #call:not([hidden]), #photo-preview:not([hidden]), #once-viewer:not([hidden])) .web-received { display: none; }
+
+/* El texto de «descargar la app» se lee entero. */
+#get-app-text { white-space: normal; }

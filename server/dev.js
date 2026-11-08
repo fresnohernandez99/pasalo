@@ -14,6 +14,7 @@ if (!process.env.MONGODB_URI) {
   console.log('MongoDB en memoria');
 }
 const { default: handler } = await import('./api/[action].js');
+const { default: handlerV1 } = await import('./api/v1/[action].js');
 
 const TYPES = {
   '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.mjs': 'text/javascript', '.css': 'text/css',
@@ -49,6 +50,7 @@ function serveStatic(pathname, res) {
 const port = Number(process.env.PORT || 3000);
 createServer((req, res) => {
   const { pathname } = new URL(req.url, 'http://x');
+  if (pathname.startsWith('/api/v1/')) return handlerV1(req, res);
   if (pathname.startsWith('/api/')) return handler(req, res);
   if (req.method === 'GET' && serveStatic(pathname, res)) return;
   res.statusCode = 404;

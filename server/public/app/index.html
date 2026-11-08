@@ -45,6 +45,7 @@
       <div class="netbar">
         <span id="net-dot" class="dot"></span>
         <span id="net-state" class="net-state"></span>
+        <button id="net-discover" class="primary small" type="button" data-i18n="net.discover"></button>
         <button id="net-toggle" class="primary small" type="button"></button>
       </div>
 
@@ -66,7 +67,7 @@
 
           <div id="lobby" class="section" hidden>
             <div class="section-head">
-              <h2 data-i18n="lobby.title"></h2>
+              <h2 data-i18n="lobby.requests"></h2>
               <span id="lobby-status" class="sub"></span>
             </div>
             <div id="lobby-list" class="lobby-list"></div>
@@ -127,9 +128,11 @@
             <div id="chat-name" class="chat-name"></div>
             <div id="chat-sub" class="sub"></div>
           </div>
+          <button id="chat-private" class="icon-btn" type="button" aria-pressed="false" data-i18n-title="private.toggle"><span data-icon="unlock"></span></button>
           <button id="chat-voice" class="icon-btn" type="button" data-i18n-title="call.voice"><span data-icon="phone"></span></button>
           <button id="chat-video" class="icon-btn" type="button" data-i18n-title="call.video"><span data-icon="video"></span></button>
         </header>
+        <div id="chat-private-bar" class="chat-private-bar" hidden><span data-icon="lock"></span><span data-i18n="private.bar"></span></div>
         <div id="chat-strip" class="chat-strip" hidden></div>
         <div id="chat-list" class="chat-list"></div>
         <form id="chat-form" class="composer">
@@ -143,13 +146,41 @@
           </div>
           <input type="file" id="chat-file" accept="image/*" multiple hidden>
           <textarea id="chat-input" rows="1" data-i18n-placeholder="chat.placeholder" data-i18n-title="chat.placeholder"></textarea>
+          <button type="button" id="chat-mic" class="icon-btn" data-i18n-title="chat.voice_note"><span data-icon="mic"></span></button>
           <button type="submit" id="chat-send" class="send" disabled data-i18n-title="btn.send"><span data-icon="send"></span></button>
+          <div id="rec-bar" class="rec-bar" hidden>
+            <button type="button" id="rec-cancel" class="icon-btn subtle" data-i18n-title="btn.cancel"><span data-icon="close"></span></button>
+            <span class="rec-dot"></span>
+            <span id="rec-time" class="rec-time">0:00</span>
+            <span class="rec-label" data-i18n="rec.recording"></span>
+            <button type="button" id="rec-send" class="send" data-i18n-title="btn.send"><span data-icon="send"></span></button>
+          </div>
         </form>
       </section>
     </main>
   </div>
 
   <!-- Ajustes: cada cambio se guarda al momento. -->
+  <!-- Descubrir: quién está en línea en el server, con búsqueda y por páginas
+       (ver lobby.js). -->
+  <section id="discover" class="screen" hidden>
+    <header class="screen-head">
+      <button id="discover-close" class="icon-btn" type="button" data-i18n-title="btn.back"><span data-icon="back"></span></button>
+      <h1 data-i18n="net.discover"></h1>
+    </header>
+    <div class="screen-body">
+      <ol id="discover-steps" class="net-steps" hidden></ol>
+      <p id="discover-status" class="sub" hidden></p>
+      <input id="discover-search" type="search" autocomplete="off" spellcheck="false" data-i18n-placeholder="discover.search" data-i18n-title="discover.search">
+      <div id="discover-list" class="lobby-list discover-list"></div>
+      <div id="discover-pager" class="discover-pager" hidden>
+        <button id="discover-prev" class="ghost small" type="button" data-i18n="discover.prev"></button>
+        <span id="discover-range" class="sub"></span>
+        <button id="discover-next" class="ghost small" type="button" data-i18n="discover.next"></button>
+      </div>
+    </div>
+  </section>
+
   <section id="settings" class="screen" hidden>
     <header class="screen-head">
       <button id="settings-close" class="icon-btn" type="button" data-i18n-title="btn.back"><span data-icon="back"></span></button>
@@ -221,6 +252,12 @@
           <span id="set-version" class="sub"></span>
           <button id="check-update" class="ghost small" type="button" data-i18n="update.check"></button>
         </div>
+        <!-- Solo en la web: bajar la app para este sistema (ver web-ui.js). -->
+        <div id="get-app-row" class="row-line" hidden>
+          <span class="row-label" data-i18n="web.app"></span>
+          <span id="get-app-text" class="sub"></span>
+          <button id="get-app" class="primary small" type="button" data-i18n="web.get_app"></button>
+        </div>
         <div id="update-result" class="update-result" hidden>
           <span id="update-text"></span>
           <button id="update-get" class="primary small" type="button" data-i18n="update.download" hidden></button>
@@ -267,6 +304,30 @@
   </section>
 
   <!-- Visor de fotos. -->
+  <!-- Vista previa de las fotos antes de enviarlas (ver photo-preview.js). -->
+  <div id="photo-preview" class="photo-preview" hidden>
+    <div class="pp-head">
+      <button id="pp-close" class="icon-btn" type="button" data-i18n-title="btn.cancel"><span data-icon="close"></span></button>
+      <span id="pp-count" class="pp-count"></span>
+    </div>
+    <div class="pp-stage"><img id="pp-img" alt=""></div>
+    <div id="pp-thumbs" class="pp-thumbs"></div>
+    <div class="pp-bar">
+      <button id="pp-once" class="pp-once" type="button" aria-pressed="false"><span>1</span></button>
+      <span id="pp-info" class="pp-info"></span>
+      <button id="pp-send" class="send" type="button" data-i18n-title="btn.send"><span data-icon="send"></span></button>
+    </div>
+  </div>
+
+  <!-- Foto de una sola vez: se ve aquí y se borra al cerrarla. Sin menú,
+       sin arrastrar y, donde el sistema lo permite, sin capturas. -->
+  <div id="once-viewer" class="once-viewer" hidden>
+    <img id="once-img" alt="" draggable="false">
+    <div id="once-mark" class="once-mark" aria-hidden="true"></div>
+    <p id="once-hint" class="once-hint"></p>
+    <button id="once-close" class="icon-btn once-close" type="button" data-i18n-title="viewer.close"><span data-icon="close"></span></button>
+  </div>
+
   <div id="viewer" class="viewer" hidden>
     <div class="viewer-bg"></div>
     <img id="viewer-img" alt="">

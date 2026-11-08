@@ -10,7 +10,7 @@ import { icon } from '../lib/icons.js';
 import { call, invoke, listen } from '../lib/tauri.js';
 import { toast } from '../lib/toast.js';
 import { app, isMobile } from '../state.js';
-import { activePeerCode, openChat, unreadCount } from './chat.js';
+import { activePeerCode, openChat, unreadCount, wipeIfPrivate } from './chat.js';
 import { openLink } from './lobby.js';
 import { openTextDialog, pauseFor, resumeFor, sendPaths } from './transfers.js';
 
@@ -107,10 +107,11 @@ export function findPeerByCode(code) {
 // ---------- lista ----------
 
 export function renderPeers() {
-  // La pareja, si además está en la LAN, sale una sola vez (como pareja).
+  // La pareja, si además está en la LAN (o se añadió antes por enlace), sale
+  // una sola vez (como pareja).
   const partner = peers.get('partner')?.addr;
   const list = [...peers.values()]
-    .filter((p) => p.platform === 'partner' || !partner || p.code !== partner)
+    .filter((p) => p.platform === 'partner' || !partner || (p.code !== partner && p.addr !== partner))
     .sort((a, b) => (b.platform === 'partner') - (a.platform === 'partner') || a.name.localeCompare(b.name));
   const html = list.length
     ? list.map(peerRow).join('')
@@ -259,7 +260,10 @@ export function onPeerEvent(e) {
   } else {
     // Lo que se le enviaba queda en pausa hasta que vuelva; su chat se cierra
     // (ver chat.js). La llamada no: esa la corta la propia conexión si se cae.
-    pauseFor(peers.get(e.device_id)?.addr);
+    const gone = peers.get(e.device_id);
+    pauseFor(gone?.addr);
+    // Se fue de la red: si el chat con él es privado, se borra.
+    wipeIfPrivate(gone?.code);
     peers.delete(e.device_id);
   }
   renderPeers();

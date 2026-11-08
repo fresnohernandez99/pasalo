@@ -6,7 +6,7 @@ import { invoke, listen } from './lib/tauri.js';
 import { toast } from './lib/toast.js';
 import { app } from './state.js';
 import { onSignal, onTalkLost } from './features/call.js';
-import { onChatEvent } from './features/chat.js';
+import { onChatEvent, onChatWiped, onPrivateSignal } from './features/chat.js';
 import { initNet, onLobbyEvent, renderHeader, takeLink } from './features/lobby.js';
 import { showTab } from './features/nav.js';
 import { initPeers, onPeerEvent } from './features/peers.js';
@@ -22,7 +22,7 @@ window.addEventListener('error', (ev) => {
 });
 window.addEventListener('unhandledrejection', (ev) => {
   const reason = ev.reason;
-  if (reason && typeof reason === 'object' && 'code' in reason) return; // ya lo mostró call()
+  if (reason && typeof reason === 'object' && typeof reason.code === 'string') return; // ya lo mostró call()
   // El portapapeles sin permiso no es un fallo de la app.
   if (reason?.name === 'NotAllowedError') return;
   console.error(reason);
@@ -39,7 +39,11 @@ listen('pasalo', ({ payload: e }) => {
       onChatEvent(e);
       break;
     case 'signal':
-      onSignal(e);
+      if (e.signal?.kind === 'private') onPrivateSignal(e);
+      else if (e.signal?.kind !== 'wipe') onSignal(e);
+      break;
+    case 'chat_wiped':
+      onChatWiped(e);
       break;
     case 'talk_lost':
       onTalkLost(e);

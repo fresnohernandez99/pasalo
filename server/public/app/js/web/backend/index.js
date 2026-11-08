@@ -14,7 +14,7 @@ import { VERSION } from '../version.js';
 import { Lobby } from './lobby.js';
 import { ALPN, Receiver, forgetReceived, manifest, probe, receivedFile, sendEntries, sendText } from './files.js';
 import * as store from './store.js';
-import { TALK_ALPN, Talk } from './talk.js';
+import { ONCE_PREFIX, TALK_ALPN, Talk } from './talk.js';
 import { PasaloError, SHORT, asError, cmdError, cmdFrom, mimeFor, sleep, timed, uuid } from './util.js';
 import { VoiceCall } from './voice.js';
 
@@ -214,6 +214,8 @@ function dropPartner() {
   s.partner = null;
   stopWith(partner.code);
   s.talk.release(partner.code);
+  // Chat privado: al desconectarse, su historial se borra.
+  s.talk.wipePrivate(partner.code);
   s.receiver.only = null;
   s.net.only = null;
   return partner;
@@ -241,6 +243,10 @@ function onEvent(e) {
       dropPartner();
       s.node.setInternet(false).catch(() => {});
     }
+  } else if (e.kind === 'signal' && e.signal?.kind === 'private') {
+    s.talk.setPrivate(e.peer, e.signal.data?.on === true).catch(() => {});
+  } else if (e.kind === 'signal' && e.signal?.kind === 'wipe') {
+    s.talk.wipePrivate(e.peer);
   } else if (e.kind === 'talk_lost') {
     stopWith(e.peer);
   }
@@ -467,6 +473,7 @@ const commands = {
     await s.node.setInternet(false);
   },
   lobby_request: ({ to }) => lobbyOr().request(to),
+  lobby_users: ({ q, offset, limit }) => lobbyOr().users(q || '', offset || 0, limit || 20),
   lobby_cancel: ({ request }) => lobbyOr().cancel(request),
   lobby_answer: ({ request, accept }) => lobbyOr().answer(request, accept),
 
@@ -484,6 +491,9 @@ const commands = {
   },
 
   chat_history: ({ peer }) => s.talk.history(peer),
+  chat_private: ({ peer }) => s.talk.isPrivate(peer),
+  chat_set_private: ({ peer, on }) => s.talk.setPrivate(peer, on),
+  chat_wipe: ({ peer }) => s.talk.wipePrivate(peer),
   chat_send: ({ peer, text }) => {
     if (!String(text || '').trim()) throw cmdError('nothing_to_send');
     return s.talk.sendText(peer, text);
@@ -492,8 +502,29 @@ const commands = {
     const bytes = Uint8Array.from(atob(data), (c) => c.charCodeAt(0));
     return s.talk.sendImage(peer, bytes, ext);
   },
+  chat_send_audio: ({ peer, data, ext, durationMs }) => {
+    const bytes = Uint8Array.from(atob(data), (c) => c.charCodeAt(0));
+    return s.talk.sendAudio(peer, bytes, ext, durationMs);
+  },
+  chat_send_once: ({ peer, data, ext }) => {
+    const bytes = Uint8Array.from(atob(data), (c) => c.charCodeAt(0));
+    return s.talk.sendOnce(peer, bytes, ext);
+  },
+  // Como data URL y no como blob: URL, que se quedaría abierta para quien la copie.
+  chat_once_open: async ({ peer, id }) => {
+    const blob = await s.talk.openOnce(peer, id);
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result);
+      reader.onerror = () => reject(reader.error);
+      reader.readAsDataURL(blob);
+    });
+  },
+  // El navegador no deja impedir las capturas (ver once.js en la interfaz).
+  secure_view: () => {},
   chat_image: async ({ path }) => {
     if (s.images.has(path)) return s.images.get(path);
+    if (String(path).startsWith(`media:${ONCE_PREFIX}`)) throw cmdError('other', 'not available');
     const blob = String(path).startsWith('media:') ? await store.getMedia(path.slice(6)) : null;
     if (!blob) throw cmdError('other', 'imagen no encontrada');
     const url = URL.createObjectURL(blob);
@@ -577,7 +608,7 @@ const commands = {
       const calls = pending.slice(i, i + 100);
       let response;
       try {
-        response = await fetch(`${s.settings.server}/api/stats`, {
+        response = await fetch(`${s.settings.server}/api/v1/stats`, {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
           body: JSON.stringify({ device: s.deviceId, platform: s.platform, version: VERSION, calls }),

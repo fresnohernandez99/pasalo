@@ -132,7 +132,7 @@ function actionsFor(tr) {
   if (incoming && ['connecting', 'active'].includes(s)) a.push(['cancel', t('btn.cancel'), 'danger']);
   // En la web «mostrar» es guardar (no hay carpeta), también en el móvil.
   const web = !!app.settings?.web;
-  if (incoming && s === 'done' && tr.saved.length && (web || !isMobile())) a.push(['reveal', t(web ? 'btn.save' : 'btn.reveal')]);
+  if (incoming && s === 'done' && tr.saved.length) a.push(['reveal', t(web ? 'btn.save' : 'btn.reveal')]);
   if (FINISHED.includes(s)) a.push(['remove', t('btn.remove')]);
   return a;
 }
@@ -157,7 +157,7 @@ export function update(item) {
 
   const tr = item;
   const incoming = tr.direction === 'incoming';
-  el.className = `tcard ${tr.status}`;
+  el.className = `tcard ${tr.status}${openable(tr) ? ' openable' : ''}`;
   q('.ticon').innerHTML = icon(incoming ? 'download' : 'upload');
   q('.ttitle').textContent = label(tr.roots) || t(incoming ? 'item.receiving' : 'item.sending');
 
@@ -298,10 +298,18 @@ export async function act(item, action) {
   }
 }
 
+/** Lo recibido se abre tocando la tarjeta: su carpeta (en la web, guardar
+ *  sigue siendo el botón, para no descargar por un toque sin querer). */
+function openable(tr) {
+  return tr.direction === 'incoming' && tr.status === 'done' && tr.saved?.length > 0 && !app.settings?.web;
+}
+
 $('#transfers').addEventListener('click', (ev) => {
   const button = ev.target.closest('button[data-act]');
   const item = items.get(ev.target.closest('.tcard')?.id);
-  if (button && item) act(item, button.dataset.act).catch(() => {});
+  if (!item) return;
+  if (button) act(item, button.dataset.act).catch(() => {});
+  else if (openable(item) && !getSelection()?.toString()) act(item, 'reveal').catch(() => {});
 });
 
 $('#clear').addEventListener('click', () => {

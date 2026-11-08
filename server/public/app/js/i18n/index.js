@@ -30,7 +30,9 @@ export function t(key, params = {}) {
 
 /** Texto de un error de Rust (`{ code, detail }`) o de cualquier otra cosa lanzada. */
 export function errorText(err) {
-  if (err && typeof err === 'object' && 'code' in err) {
+  // Solo los errores del backend (`{ code: 'texto', detail }`): los del
+  // navegador (DOMException) también tienen `code`, pero numérico, y salía «9».
+  if (err && typeof err === 'object' && typeof err.code === 'string') {
     if (err.code === 'other') return err.detail;
     const key = `error.${err.code}`;
     if (!LANGS.en[key]) return err.detail || err.code;

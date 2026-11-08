@@ -44,18 +44,20 @@ Pasalo's calls are built for poor networks: mobile data with weak signal, crowde
 ## Moving files, at home or far away
 
 - **On your network, without internet**: devices find each other. Drag files or folders onto a device (on a computer) or tap send.
-- **Across networks**: both tap **Connect**, one asks and the other accepts. Or share your link. Pasalo looks for a direct path and, if the networks don't allow one, goes through an encrypted relay. No ports to open, nothing to set up.
+- **Across networks**: both tap **Discover**, find the other one in the list (there's a search box), one asks and the other accepts. Or share your link. Pasalo looks for a direct path and, if the networks don't allow one, goes through an encrypted relay. No ports to open, nothing to set up.
 - **If it drops, it picks up where it left off**: lose Wi-Fi, close the app or restart the other device, and it continues from the last byte, not from the start.
 - **Only what's needed goes over the wire**: compressible files are compressed (a 9.9 MB text log went as 2.2 MB). Photos and videos, already compressed, are sent as they are.
 - **Huge files and thousands of small ones**, no problem. Every file is verified on arrival.
 - **You decide what you receive**: every transfer arrives as a request you accept or decline.
+
+<p align="center"><img src="docs/screenshots/discover.png" width="240" alt="Discover: who is online, with search"></p>
 
 ## Private by design
 
 - **No accounts**: your device has its own key, which is its identity; chats and calls are authenticated with it.
 - **Encrypted from one device to the other**: chat, calls and everything that goes across networks. (Files you move within your own local network are not encrypted.)
 - **The server only introduces you** (to find each other across networks); no files, messages or calls go through it.
-- **Nothing leaves your network until you tap Connect.**
+- **Nothing leaves your network until you tap Discover.**
 - **View-once photos**: deleted once seen, and on Android, Mac and Windows they can't be captured while open.
 - **Private chats**: with the chat's lock, the history is deleted on both devices when you disconnect.
 
@@ -81,7 +83,7 @@ They're not signed by Apple or Microsoft yet:
 
 1. Install Pasalo on two devices.
 2. **Same Wi-Fi**: open it on both and they show up under **Devices**. Tap one to chat or call, or its send button to send files.
-3. **Different networks**: both tap **Connect**, one taps **Connect** next to the other, and the other accepts.
+3. **Different networks**: both tap **Discover**, one taps **Connect** next to the other, and the other accepts.
 
 ## More
 

@@ -67,8 +67,9 @@ button:focus-visible, [tabindex]:focus-visible { outline: 2px solid var(--accent
 .icon-btn:not(:disabled):hover, .icon-btn.on { background: var(--surface-2); }
 .icon-btn.small { width: 34px; height: 34px; }
 .icon-btn.small .i { width: 18px; height: 18px; }
-/* En el móvil, todo lo que se toca mide al menos lo que un dedo. */
-.mobile .small { min-height: var(--tap); }
+/* En el móvil, los botones miden al menos lo que un dedo (solo los botones:
+   los avatares pequeños también llevan `small` y se volvían óvalos). */
+.mobile button.small { min-height: var(--tap); }
 .mobile .icon-btn.small { width: var(--tap); height: var(--tap); }
 .icon-btn.subtle { color: var(--muted); }
 

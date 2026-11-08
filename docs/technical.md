@@ -9,7 +9,7 @@ Pasalo runs on **macOS, Windows, Linux and Android**. Its core is written in Rus
 ## Features
 
 - **Finds devices on your network automatically.** There are no accounts and no setup. It works without internet access.
-- **Offline until you say so.** When it opens, Pasalo only talks to your local network and sends nothing to the internet. With **Connect** you see who else is online and can ask them to connect; if they accept, only the two of you are connected to each other, over [iroh](https://iroh.computer) and without opening ports.
+- **Offline until you say so.** When it opens, Pasalo only talks to your local network and sends nothing to the internet. With **Discover** you see who else is online (searchable and paged) and can ask them to connect; if they accept, only the two of you are connected to each other, over [iroh](https://iroh.computer) and without opening ports.
 - **You decide what you receive.** Every file transfer arrives as a request you accept or decline.
 - **Uses as little data as possible.** Whatever compresses gets compressed (a 9.9 MB text log went over as 2.2 MB); already-compressed files (photos, videos, zips) go as they are, without wasting battery trying.
 - **Resumes interrupted transfers.** If the connection drops, the app is closed or the sender is restarted, the next attempt continues from the last byte received. Every file is verified with BLAKE3.
@@ -51,8 +51,8 @@ If a device doesn't show up, type its IP in **Add by IP**. That usually happens 
 
 ### Across networks
 
-1. Both of you press **Connect**. Until then Pasalo tries nothing outside the local network.
-2. **Online now** lists everyone else who is connected. One of you presses **Connect** next to the other.
+1. Both of you press **Discover**. Until then Pasalo tries nothing outside the local network.
+2. **Discover** lists everyone else who is connected, with a search box and pages. One of you presses **Connect** next to the other.
 3. The other gets the request and presses **Accept** (or **Decline**).
 4. You're connected: both of you leave the server, nobody else can see you or reach you, and each of you shows up in the other's **Devices** to send files, chat and call as on the local network.
 5. **Disconnect** ends the connection on both sides and goes back to local network only. Closing the app also starts disconnected next time.
@@ -116,7 +116,7 @@ pasalo call <target> --mode minimum --voice-in voice.raw   # test call with an a
 | Remote transfer | QUIC over [iroh](https://iroh.computer) (ALPN `pasalo/1`), with hole punching and the public n0 relays as a fallback. |
 | Protocol | Length-prefixed JSON control messages, with the file contents between them: in zstd-compressed blocks when both devices support it (level 1 on the LAN, 3 across networks), raw with older versions. |
 | Requests | The receiver doesn't answer the offer until the user accepts or declines (`Reject { reason: "declined" }`). |
-| Connecting | iroh starts with no relays and no DNS. **Connect** adds the n0 relays and DNS on the fly, keeping the same code and port; once paired, only connections from the partner are accepted. |
+| Connecting | iroh starts with no relays and no DNS. **Discover** adds the n0 relays and DNS on the fly, keeping the same code and port; once paired, only connections from the partner are accepted. |
 | Integrity | BLAKE3 hash of each complete file, checked before it is renamed into place. |
 | Resuming | The receiver keeps `.pasalo-part` files and a small log in `<destination>/.pasalo/`. When the sender offers the same files again, the receiver answers with the offset to continue from. |
 

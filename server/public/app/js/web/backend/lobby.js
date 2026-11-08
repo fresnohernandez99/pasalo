@@ -33,6 +33,11 @@ export class Lobby {
     return created.id;
   }
 
+  /** Una página de los que están en línea, con búsqueda por nombre. */
+  users(q, offset, limit) {
+    return this.post('users', { q, offset, limit });
+  }
+
   async cancel(request) {
     this.outgoing.delete(request);
     await this.post('cancel', { request });
@@ -122,7 +127,7 @@ export class Lobby {
     let response;
     let text;
     try {
-      response = await fetch(`${this.base}/api/${action}`, {
+      response = await fetch(`${this.base}/api/v1/${action}`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ ...body, id: this.me.id, token: this.token }),

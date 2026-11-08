@@ -18,6 +18,10 @@ export const WAIT_MS = 20_000;
 const POLL_MS = 1_500;
 /** Solicitudes sin contestar que puede tener abiertas un equipo. */
 const MAX_PENDING = 5;
+/** Equipos por página en `users`. */
+const MAX_PAGE = 50;
+/** Tiempo mínimo entre dos solicitudes de un mismo equipo. */
+const REQUEST_GAP_MS = 1000;
 /** Equipos nuevos por IP y minuto. */
 const MAX_JOINS_PER_IP = 10;
 
@@ -45,8 +49,10 @@ function text(value, max, field) {
   return value.trim();
 }
 
-/** Atiende `action` con el cuerpo `body` y devuelve lo que se contesta. */
-export async function handle(db, action, body, { now = () => new Date(), sleep = defaultSleep } = {}) {
+/** Atiende `action` con el cuerpo `body` y devuelve lo que se contesta.
+ *  `version` es la de la API (0 sin versión, 1 para /api/v1): cada acción
+ *  nueva solo existe desde la suya. */
+export async function handle(db, action, body, { now = () => new Date(), sleep = defaultSleep, version = 1 } = {}) {
   const users = db.collection('users');
   const requests = db.collection('requests');
   const id = text(body.id, 64, 'id');
@@ -121,6 +127,13 @@ export async function handle(db, action, body, { now = () => new Date(), sleep =
       if ((await requests.countDocuments({ from: id, state: 'pending' })) >= MAX_PENDING) {
         throw new HttpError(429, 'demasiadas solicitudes sin contestar');
       }
+      // Una solicitud por segundo como mucho: sin ráfagas para molestar.
+      const t = now();
+      const slot = await users.updateOne(
+        { _id: id, token, $or: [{ lastRequest: { $exists: false } }, { lastRequest: { $lte: new Date(t.getTime() - REQUEST_GAP_MS) } }] },
+        { $set: { lastRequest: t } },
+      );
+      if (!slot.matchedCount) throw new HttpError(429, 'espera un segundo entre solicitudes');
       const request = {
         _id: randomUUID(),
         from: id,
@@ -164,6 +177,23 @@ export async function handle(db, action, body, { now = () => new Date(), sleep =
       await cancelAll(from._id, request._id);
       await users.deleteOne({ _id: id });
       return { partner: { id: from._id, name: from.name, platform: from.platform, code: from.code } };
+    }
+
+    // Una página de los que están en línea, con búsqueda por nombre. `sync`
+    // sigue mandando la lista (hasta 200) para las versiones que no usan esto.
+    case 'users': {
+      if (version < 1) throw new HttpError(404, 'acción desconocida');
+      await me();
+      const q = typeof body.q === 'string' ? body.q.trim().slice(0, 64) : '';
+      const offset = Number.isInteger(body.offset) && body.offset >= 0 ? Math.min(body.offset, 100_000) : 0;
+      const limit = Number.isInteger(body.limit) ? Math.min(Math.max(body.limit, 1), MAX_PAGE) : MAX_PAGE;
+      const filter = { _id: { $ne: id }, paired: false, ...online() };
+      if (q) filter.name = { $regex: q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), $options: 'i' };
+      const [list, total] = await Promise.all([
+        users.find(filter, { projection: { name: 1, platform: 1 } }).collation({ locale: 'en', strength: 1 }).sort({ name: 1, _id: 1 }).skip(offset).limit(limit).toArray(),
+        users.countDocuments(filter),
+      ]);
+      return { users: list.map((u) => ({ id: u._id, name: u.name, platform: u.platform })), total, offset };
     }
 
     case 'leave': {
