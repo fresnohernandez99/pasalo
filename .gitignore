@@ -9,3 +9,6 @@ node_modules
 *.jks
 *.keystore
 /web/target
+
+# Registros de sesión: nunca al repositorio.
+/docs/LOG.md
