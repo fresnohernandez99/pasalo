@@ -73,6 +73,9 @@ pub fn init(app: &App) {
 fn opened(app: &AppHandle, url: &Url) {
     let Some(link) = parse(url) else { return };
     *app.state::<Pending>().0.lock().unwrap() = Some(link);
+    // Con la ventana escondida en la bandeja, el enlace no se vería.
+    #[cfg(desktop)]
+    crate::tray::show_window(app);
     let _ = app.emit("pasalo_link", ());
 }
 

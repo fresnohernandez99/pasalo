@@ -12,6 +12,14 @@ mod net;
 mod settings;
 mod state;
 mod stats;
+#[cfg(desktop)]
+mod tray;
+/// En el móvil no hay bandeja.
+#[cfg(mobile)]
+mod tray {
+    #[tauri::command]
+    pub fn tray_labels(_show: String, _quit: String) {}
+}
 
 use std::sync::Mutex;
 
@@ -85,6 +93,10 @@ fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     })?;
 
     crate::links::init(app);
+    #[cfg(desktop)]
+    if let Err(e) = tray::init(app.handle()) {
+        eprintln!("sin icono en la bandeja: {e}");
+    }
 
     // Los eventos esperan en el canal hasta aquí, así que no se pierde ninguno.
     let (emitter, talk) = (handle.clone(), state.talk.clone());
@@ -118,9 +130,7 @@ pub fn run() {
     // que ya está abierta y esa se cierra. Tiene que ir antes que deep-link.
     #[cfg(any(windows, target_os = "linux"))]
     let builder = builder.plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
-        if let Some(window) = app.get_webview_window("main") {
-            let _ = window.set_focus();
-        }
+        tray::show_window(app);
     }));
     let builder = builder
         .plugin(tauri_plugin_deep_link::init())
@@ -129,6 +139,8 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init());
     #[cfg(target_os = "android")]
     let builder = builder.plugin(android::init());
+    #[cfg(desktop)]
+    let builder = builder.on_window_event(tray::on_window_event);
     builder
         .setup(setup)
         .invoke_handler(tauri::generate_handler![
@@ -144,8 +156,15 @@ pub fn run() {
             chat::chat_set_private, chat::chat_wipe,
             stats::call_record, stats::stats_pending, stats::stats_upload,
             call::call_signal, call::voice_start, call::voice_mode, call::voice_mute, call::voice_speaker,
-            call::voice_stop, call::voice_stats, call::video_start, call::video_recv, call::video_send, call::video_stop
+            call::voice_stop, call::voice_stats, call::video_start, call::video_recv, call::video_send, call::video_stop, tray::tray_labels
         ])
-        .run(tauri::generate_context!())
-        .expect("error al iniciar Pasalo");
+        .build(tauri::generate_context!())
+        .expect("error al iniciar Pasalo")
+        .run(|_app, _event| {
+            // macOS: tocar el icono del Dock con la ventana escondida la vuelve a abrir.
+            #[cfg(target_os = "macos")]
+            if let tauri::RunEvent::Reopen { .. } = _event {
+                tray::show_window(_app);
+            }
+        });
 }

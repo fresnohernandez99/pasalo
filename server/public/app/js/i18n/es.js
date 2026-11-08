@@ -339,4 +339,6 @@ export default {
   'discover.slow': "Espera un segundo entre solicitudes.",
   'share.pick': "Toca el equipo al que enviarlo",
   'share.failed': "No se pudo leer lo compartido",
+  'tray.show': "Abrir Pasalo",
+  'tray.quit': "Salir",
 };
