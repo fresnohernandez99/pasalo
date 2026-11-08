@@ -267,11 +267,12 @@ class PasaloPlugin(private val activity: Activity) : Plugin(activity) {
     }
     intents += Intent(android.app.DownloadManager.ACTION_VIEW_DOWNLOADS)
     for (intent in intents) {
+      // Sin pedir permisos sobre la URI: no es nuestra, y Android lo rechaza.
       try {
-        activity.startActivity(intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION))
+        activity.startActivity(intent)
         invoke.resolve(JSObject().put("granted", true))
         return
-      } catch (_: android.content.ActivityNotFoundException) {
+      } catch (_: Exception) {
       }
     }
     invoke.resolve(JSObject().put("granted", false))

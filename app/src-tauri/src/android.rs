@@ -80,13 +80,14 @@ impl Android {
     }
 
     /// Abre `dir` en la app de archivos; si no se puede, las descargas.
-    pub fn open_folder(&self, dir: &std::path::Path) -> bool {
+    pub async fn open_folder(&self, dir: &std::path::Path) -> Result<bool, String> {
         #[derive(serde::Serialize)]
         struct Args {
             path: String,
         }
         let args = Args { path: dir.to_string_lossy().into_owned() };
-        self.0.run_mobile_plugin::<Granted>("openFolder", args).is_ok_and(|g| g.granted)
+        let opened: Granted = self.0.run_mobile_plugin_async("openFolder", args).await.map_err(|e| e.to_string())?;
+        Ok(opened.granted)
     }
 
     pub async fn pick_files(&self) -> Result<Vec<PathBuf>, String> {

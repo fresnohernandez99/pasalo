@@ -138,28 +138,37 @@ pub async fn choose_dir(app: AppHandle, state: State<'_, AppState>) -> CmdResult
     Ok(Some(dir))
 }
 
+// Async: en Android hablan con Kotlin, y un comando síncrono corre en el hilo
+// principal, el mismo que tendría que contestar.
 #[tauri::command]
-pub fn open_dir(app: AppHandle, state: State<'_, AppState>) -> CmdResult<()> {
+pub async fn open_dir(app: AppHandle, state: State<'_, AppState>) -> CmdResult<()> {
     let dir = state.receiver.dest();
     std::fs::create_dir_all(&dir).map_err(CmdError::other)?;
     #[cfg(target_os = "android")]
     {
-        app.state::<crate::android::Android>().open_folder(&dir);
-        Ok(())
+        open_folder(&app, &dir).await
     }
     #[cfg(not(target_os = "android"))]
     app.opener().open_path(dir.to_string_lossy(), None::<&str>).map_err(CmdError::other)
 }
 
+#[cfg(target_os = "android")]
+async fn open_folder(app: &AppHandle, dir: &Path) -> CmdResult<()> {
+    match app.state::<crate::android::Android>().open_folder(dir).await {
+        Ok(true) => Ok(()),
+        Ok(false) => Err(CmdError::new("no_files_app", dir.display().to_string())),
+        Err(e) => Err(CmdError::new("open_failed", e)),
+    }
+}
+
 /// Enseña dónde quedó lo recibido: en el escritorio, el archivo marcado en su
 /// carpeta; en Android, su carpeta en la app de archivos.
 #[tauri::command]
-pub fn reveal(app: AppHandle, path: PathBuf) -> CmdResult<()> {
+pub async fn reveal(app: AppHandle, path: PathBuf) -> CmdResult<()> {
     #[cfg(target_os = "android")]
     {
         let dir = if path.is_dir() { path.as_path() } else { path.parent().unwrap_or(&path) };
-        app.state::<crate::android::Android>().open_folder(dir);
-        Ok(())
+        open_folder(&app, dir).await
     }
     #[cfg(not(target_os = "android"))]
     app.opener().reveal_item_in_dir(path).map_err(CmdError::other)
