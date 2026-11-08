@@ -36,6 +36,7 @@
       <div class="netbar">
         <span id="net-dot" class="dot"></span>
         <span id="net-state" class="net-state"></span>
+        <button id="net-discover" class="primary small" type="button" data-i18n="net.discover"></button>
         <button id="net-toggle" class="primary small" type="button"></button>
       </div>
 
@@ -57,7 +58,7 @@
 
           <div id="lobby" class="section" hidden>
             <div class="section-head">
-              <h2 data-i18n="lobby.title"></h2>
+              <h2 data-i18n="lobby.requests"></h2>
               <span id="lobby-status" class="sub"></span>
             </div>
             <div id="lobby-list" class="lobby-list"></div>
@@ -151,6 +152,26 @@
   </div>
 
   <!-- Ajustes: cada cambio se guarda al momento. -->
+  <!-- Descubrir: quién está en línea en el server, con búsqueda y por páginas
+       (ver lobby.js). -->
+  <section id="discover" class="screen" hidden>
+    <header class="screen-head">
+      <button id="discover-close" class="icon-btn" type="button" data-i18n-title="btn.back"><span data-icon="back"></span></button>
+      <h1 data-i18n="net.discover"></h1>
+    </header>
+    <div class="screen-body">
+      <ol id="discover-steps" class="net-steps" hidden></ol>
+      <p id="discover-status" class="sub" hidden></p>
+      <input id="discover-search" type="search" autocomplete="off" spellcheck="false" data-i18n-placeholder="discover.search" data-i18n-title="discover.search">
+      <div id="discover-list" class="lobby-list discover-list"></div>
+      <div id="discover-pager" class="discover-pager" hidden>
+        <button id="discover-prev" class="ghost small" type="button" data-i18n="discover.prev"></button>
+        <span id="discover-range" class="sub"></span>
+        <button id="discover-next" class="ghost small" type="button" data-i18n="discover.next"></button>
+      </div>
+    </div>
+  </section>
+
   <section id="settings" class="screen" hidden>
     <header class="screen-head">
       <button id="settings-close" class="icon-btn" type="button" data-i18n-title="btn.back"><span data-icon="back"></span></button>

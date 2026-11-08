@@ -85,6 +85,15 @@ struct Answer {
     code: Option<String>,
 }
 
+/// Una página de los que están en línea (ver [`Lobby::users`]).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UsersPage {
+    pub users: Vec<LobbyUser>,
+    /// Cuántos hay en total con esa búsqueda.
+    pub total: u64,
+    pub offset: u64,
+}
+
 #[derive(Deserialize)]
 struct Created {
     id: String,
@@ -140,6 +149,11 @@ impl Lobby {
         let created: Created = self.post("request", json!({ "to": to.id })).await?;
         self.inner.outgoing.lock().unwrap().insert(created.id.clone(), to.clone());
         Ok(created.id)
+    }
+
+    /// Una página de los que están en línea, con búsqueda por nombre (`q`).
+    pub async fn users(&self, q: &str, offset: u64, limit: u64) -> Result<UsersPage, Error> {
+        self.post("users", json!({ "q": q, "offset": offset, "limit": limit })).await
     }
 
     /// Retira una solicitud enviada.

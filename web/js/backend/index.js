@@ -473,6 +473,7 @@ const commands = {
     await s.node.setInternet(false);
   },
   lobby_request: ({ to }) => lobbyOr().request(to),
+  lobby_users: ({ q, offset, limit }) => lobbyOr().users(q || '', offset || 0, limit || 20),
   lobby_cancel: ({ request }) => lobbyOr().cancel(request),
   lobby_answer: ({ request, accept }) => lobbyOr().answer(request, accept),
 

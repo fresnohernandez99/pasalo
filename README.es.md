@@ -44,18 +44,20 @@ Las llamadas de Pasalo están hechas para redes malas: datos móviles con poca c
 ## Pasar archivos, en casa o a distancia
 
 - **En tu red, sin internet**: los equipos se encuentran solos. Arrastras archivos o carpetas encima de un equipo (en el ordenador) o pulsas enviar.
-- **Entre redes distintas**: pulsas **Conectarse** en los dos, uno se lo pide al otro y el otro acepta. O compartes tu enlace. Pasalo busca el camino directo y, si las redes no lo permiten, pasa por un relay cifrado. No hay que abrir puertos ni configurar nada.
+- **Entre redes distintas**: pulsas **Descubrir** en los dos, buscas al otro en la lista (tiene buscador), uno se lo pide al otro y el otro acepta. O compartes tu enlace. Pasalo busca el camino directo y, si las redes no lo permiten, pasa por un relay cifrado. No hay que abrir puertos ni configurar nada.
 - **Si se corta, sigue donde iba**: se te va la wifi, cierras la app o se reinicia el otro equipo, y al volver continúa desde el último byte, no desde el principio.
 - **Gasta lo justo**: lo que se puede comprimir se comprime (un registro de texto de 9,9 MB pasó como 2,2 MB). Las fotos y vídeos, que ya van comprimidos, se envían tal cual.
 - **Archivos enormes y miles de archivos pequeños**, sin problema. Cada archivo se verifica al llegar.
 - **Tú decides qué recibes**: cada envío llega como una solicitud que aceptas o rechazas.
+
+<p align="center"><img src="docs/screenshots/discover.png" width="240" alt="Descubrir: quién está en línea, con buscador"></p>
 
 ## Privado por diseño
 
 - **Sin cuentas**: tu equipo tiene su propia clave, que es su identidad; los chats y las llamadas van autenticados con ella.
 - **Cifrado de un equipo a otro**: el chat, las llamadas y todo lo que va entre redes. (Los archivos que pasas dentro de tu propia red local van sin cifrar.)
 - **El server solo os presenta** (para encontraros entre redes); por él no pasan archivos, mensajes ni llamadas.
-- **Nada sale de tu red hasta que pulsas Conectarse.**
+- **Nada sale de tu red hasta que pulsas Descubrir.**
 - **Fotos de «ver una vez»**: se borran al verlas y, en Android, Mac y Windows, no se pueden capturar mientras se ven.
 - **Chats privados**: con el candado del chat, el historial se borra en los dos equipos al desconectaros.
 
@@ -81,7 +83,7 @@ Todavía no van firmadas por Apple ni Microsoft:
 
 1. Instala Pasalo en dos equipos.
 2. **En la misma wifi**: ábrelo en los dos y aparecerán en **Equipos**. Toca uno para chatear o llamar, o el botón de enviar para mandarle archivos.
-3. **En redes distintas**: los dos pulsáis **Conectarse**, uno toca **Conectar** junto al otro y el otro acepta.
+3. **En redes distintas**: los dos pulsáis **Descubrir**, uno toca **Conectar** junto al otro y el otro acepta.
 
 ## Más información
 

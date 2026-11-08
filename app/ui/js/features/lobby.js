@@ -1,7 +1,9 @@
 // Conexión con otras redes por el server. La app arranca sin conexión y no
-// intenta nada fuera de la LAN hasta que el usuario pulsa «Conectarse».
-// Conectado, ve quién más lo está y puede pedirle conectarse; si el otro
-// acepta, los dos dejan el server y quedan conectados solo entre ellos.
+// intenta nada fuera de la LAN hasta que el usuario pulsa «Descubrir», que
+// abre una pantalla con quién más está en línea (con búsqueda y por páginas).
+// Ahí se le pide conectarse a alguien; si acepta, los dos dejan el server y
+// quedan conectados solo entre ellos. Las solicitudes que llegan se ven en la
+// pantalla principal, para no perderlas.
 //
 // Con el enlace de un equipo no hace falta el server: los dos salen a
 // internet (estado `direct`) y se hablan por su código, por los relays de iroh.
@@ -20,6 +22,7 @@ import { app } from '../state.js';
 import { endCallWith } from './call.js';
 import { openChat, wipeIfPrivate } from './chat.js';
 import { keepOnline } from './keepalive.js';
+import { onBack, updateLayers } from './nav.js';
 import { addRemotePeer, avatar, ensureRemotePeer, findPeerByCode, peers, removePeer } from './peers.js';
 import { pauseFor, resumeFor } from './transfers.js';
 
@@ -56,6 +59,7 @@ function setNetState(state) {
   renderHeader();
   renderLobby();
   renderSteps();
+  renderDiscover();
 }
 
 /** Empieza a conectar: se enseñan los pasos hasta tener el ID de iroh en la red. */
@@ -68,7 +72,11 @@ function startConnecting(steps) {
 function renderSteps() {
   const show = net.state === 'connecting' && net.steps.length > 0;
   $('#net-progress').hidden = !show;
-  if (show) stepList($('#net-steps'), net.steps, net.step);
+  $('#discover-steps').hidden = !show;
+  if (show) {
+    stepList($('#net-steps'), net.steps, net.step);
+    stepList($('#discover-steps'), net.steps, net.step);
+  }
   if (opening) stepList($('#link-steps'), opening.steps, opening.step, { name: opening.name });
 }
 
@@ -113,20 +121,22 @@ export function renderHeader() {
   $('#net-state').textContent =
     state === 'paired' ? t('net.paired', { name: partner.name }) : t(state === 'offline' ? 'net.local' : `net.${state}`);
   $('#net-dot').className = `dot ${state === 'direct' ? 'online' : state}`;
+  // «Descubrir» abre la pantalla de quién está en línea (y entra en el
+  // server si hace falta); el otro botón cancela o desconecta.
+  $('#net-discover').hidden = !(state === 'offline' || state === 'online') || !s.code;
   const toggle = $('#net-toggle');
-  toggle.textContent = t(state === 'offline' ? 'net.connect' : state === 'connecting' ? 'btn.cancel' : 'net.disconnect');
-  toggle.className = state === 'offline' ? 'primary small' : 'ghost small';
+  toggle.textContent = t(state === 'connecting' ? 'btn.cancel' : 'net.disconnect');
+  toggle.className = 'ghost small';
   toggle.disabled = false;
-  // Sin server ni pareja no hay nada de qué desconectarse; sin server
-  // configurado, tampoco a qué conectarse.
-  toggle.hidden = state === 'offline' && !s.code;
+  toggle.hidden = state === 'offline';
 }
 
-// ---------- en línea ahora ----------
+// ---------- solicitudes (pantalla principal) ----------
 
 function renderLobby() {
-  $('#lobby').hidden = net.state !== 'online';
-  if (net.state !== 'online') return;
+  // Aquí solo lo que espera respuesta; la lista de gente está en Descubrir.
+  $('#lobby').hidden = net.state !== 'online' || !net.incoming.size;
+  if ($('#lobby').hidden) return;
   $('#lobby-status').textContent = net.error ? t('lobby.unreachable') : '';
   const rows = [];
   for (const [request, from] of net.incoming) {
@@ -142,42 +152,127 @@ function renderLobby() {
         </div>
       </div>`);
   }
-  const asking = new Set([...net.incoming.values()].map((u) => u.id));
-  for (const user of net.users.filter((u) => !asking.has(u.id))) {
-    const pending = net.outgoing.has(user.id);
-    rows.push(`
-      <div class="lobby-row" data-user="${esc(user.id)}">
-        <div class="lobby-who">
-          ${avatar(user.name, user.platform, 'small')}
-          <div class="info"><div class="pname">${esc(user.name)}</div>${pending ? `<div class="sub">${esc(t('lobby.waiting'))}</div>` : ''}</div>
-        </div>
-        ${pending
-          ? `<button class="ghost small" data-act="cancel">${esc(t('btn.cancel'))}</button>`
-          : `<button class="primary small" data-act="request">${esc(t('lobby.connect'))}</button>`}
-      </div>`);
-  }
-  setHtml(
-    $('#lobby-list'),
-    rows.length ? rows.join('') : `<div class="empty small">${esc(t('lobby.empty'))}<br>${esc(t('net.online_hint'))}</div>`,
-  );
+  setHtml($('#lobby-list'), rows.join(''));
 }
+
+// ---------- Descubrir ----------
+
+/** Equipos por página. */
+const PAGE = 20;
+const discover = { q: '', offset: 0, total: 0, users: [], loading: 0, error: '' };
+
+function userRow(user) {
+  const pending = net.outgoing.has(user.id);
+  return `
+    <div class="lobby-row" data-user="${esc(user.id)}">
+      <div class="lobby-who">
+        ${avatar(user.name, user.platform, 'small')}
+        <div class="info"><div class="pname">${esc(user.name)}</div>${pending ? `<div class="sub">${esc(t('lobby.waiting'))}</div>` : ''}</div>
+      </div>
+      ${pending
+        ? `<button class="ghost small" data-act="cancel">${esc(t('btn.cancel'))}</button>`
+        : `<button class="primary small" data-act="request">${esc(t('lobby.connect'))}</button>`}
+    </div>`;
+}
+
+function renderDiscover() {
+  if ($('#discover').hidden) return;
+  const online = net.state === 'online';
+  $('#discover-search').hidden = !online;
+  const status = $('#discover-status');
+  status.hidden = net.state !== 'offline' && !(online && net.error);
+  status.textContent = online ? t('lobby.unreachable') : t('discover.offline');
+  if (!online) {
+    setHtml($('#discover-list'), '');
+    $('#discover-pager').hidden = true;
+    return;
+  }
+  const asking = new Set([...net.incoming.values()].map((u) => u.id));
+  const rows = discover.users.filter((u) => !asking.has(u.id)).map(userRow);
+  const empty = discover.q ? t('discover.no_match') : `${t('lobby.empty')} ${t('discover.hint')}`;
+  setHtml($('#discover-list'), rows.length ? rows.join('') : `<div class="empty small">${esc(empty)}</div>`);
+  const { offset, total } = discover;
+  $('#discover-pager').hidden = total <= PAGE;
+  $('#discover-range').textContent = t('discover.range', { from: total ? offset + 1 : 0, to: Math.min(offset + PAGE, total), total });
+  $('#discover-prev').disabled = offset === 0;
+  $('#discover-next').disabled = offset + PAGE >= total;
+}
+
+/** Pide al server la página actual con la búsqueda actual. */
+async function loadPage() {
+  if (net.state !== 'online' || $('#discover').hidden) return;
+  const mine = ++discover.loading;
+  try {
+    const page = await invoke('lobby_users', { q: discover.q, offset: discover.offset, limit: PAGE });
+    if (mine !== discover.loading) return;
+    // Si la página se quedó vacía (se fueron), a la anterior.
+    if (!page.users.length && page.total && discover.offset >= page.total) {
+      discover.offset = Math.max(0, Math.floor((page.total - 1) / PAGE) * PAGE);
+      return loadPage();
+    }
+    Object.assign(discover, { users: page.users, total: page.total });
+  } catch {
+    // Sin respuesta del server: se queda lo que había; el aviso sale con `lobby_error`.
+  }
+  renderDiscover();
+}
+
+/** Abre Descubrir: si no estaba en el server, entra. */
+export async function openDiscover() {
+  $('#discover').hidden = false;
+  updateLayers($('#discover-search'));
+  renderSteps();
+  renderDiscover();
+  if (net.state === 'offline') await connectServer();
+  loadPage();
+}
+
+function closeDiscover() {
+  if ($('#discover').hidden) return false;
+  $('#discover').hidden = true;
+  updateLayers($('#net-discover'));
+  return true;
+}
+
+let searchTimer;
+$('#discover-search').addEventListener('input', (ev) => {
+  clearTimeout(searchTimer);
+  searchTimer = setTimeout(() => {
+    discover.q = ev.target.value.trim();
+    discover.offset = 0;
+    loadPage();
+  }, 300);
+});
+$('#discover-prev').addEventListener('click', () => {
+  discover.offset = Math.max(0, discover.offset - PAGE);
+  loadPage();
+});
+$('#discover-next').addEventListener('click', () => {
+  discover.offset += PAGE;
+  loadPage();
+});
+$('#discover-close').addEventListener('click', closeDiscover);
+$('#net-discover').addEventListener('click', openDiscover);
+onBack(closeDiscover);
 
 // Cada intento de conectar tiene su número: si se cancela, lo que conteste
 // después ya no cambia nada.
 let attempt = 0;
 
-$('#net-toggle').addEventListener('click', async () => {
-  if (net.state === 'offline') {
-    const mine = ++attempt;
-    startConnecting(STEPS_SERVER);
-    try {
-      await call('net_connect');
-      if (mine === attempt) setNetState('online');
-    } catch {
-      if (mine === attempt) setNetState('offline');
-    }
-    return;
+/** Entra en el server (los pasos se ven en la cabecera y en Descubrir). */
+async function connectServer() {
+  const mine = ++attempt;
+  startConnecting(STEPS_SERVER);
+  try {
+    await call('net_connect');
+    if (mine === attempt) setNetState('online');
+  } catch {
+    if (mine === attempt) setNetState('offline');
   }
+}
+
+$('#net-toggle').addEventListener('click', async () => {
+  if (net.state === 'offline') return;
   if (net.state === 'connecting') {
     // Cancelar mientras conecta: se vuelve a solo red local.
     attempt++;
@@ -192,16 +287,25 @@ $('#net-toggle').addEventListener('click', async () => {
   setNetState('offline');
 });
 
-$('#lobby-list').addEventListener('click', async (ev) => {
+/** El server admite una solicitud por segundo; aquí se avisa antes de pedir. */
+const REQUEST_GAP_MS = 1000;
+let lastRequest = 0;
+
+async function onLobbyClick(ev) {
   const button = ev.target.closest('button');
   if (!button) return;
   const row = button.closest('.lobby-row');
   const act = button.dataset.act;
+  if (act === 'request' && Date.now() - lastRequest < REQUEST_GAP_MS) {
+    toast(t('discover.slow'));
+    return;
+  }
   button.disabled = true;
   try {
     if (act === 'request') {
-      const user = net.users.find((u) => u.id === row.dataset.user);
+      const user = discover.users.find((u) => u.id === row.dataset.user) || net.users.find((u) => u.id === row.dataset.user);
       if (!user) return;
+      lastRequest = Date.now();
       net.outgoing.set(user.id, await call('lobby_request', { to: user }));
       toast(t('toast.request_sent', { name: user.name }));
     } else if (act === 'cancel') {
@@ -227,8 +331,12 @@ $('#lobby-list').addEventListener('click', async (ev) => {
     // Si la lista no cambia no se repinta: el botón tiene que volver solo.
     button.disabled = false;
     renderLobby();
+    renderDiscover();
   }
-});
+}
+
+$('#lobby-list').addEventListener('click', onLobbyClick);
+$('#discover-list').addEventListener('click', onLobbyClick);
 
 export function onLobbyEvent(e) {
   switch (e.kind) {
@@ -236,6 +344,8 @@ export function onLobbyEvent(e) {
       net.users = e.users;
       // Lo pedido a alguien que se fue ya no espera.
       for (const id of [...net.outgoing.keys()]) if (!e.users.some((u) => u.id === id)) net.outgoing.delete(id);
+      // Cambió quién está: la página de Descubrir, al día.
+      loadPage();
       break;
     case 'lobby_request':
       net.incoming.set(e.request, e.from);
@@ -253,6 +363,7 @@ export function onLobbyEvent(e) {
       break;
     }
     case 'lobby_paired':
+      closeDiscover();
       setPartner(e.partner);
       toast(t('toast.paired', { name: e.partner.name }));
       return;
@@ -267,6 +378,7 @@ export function onLobbyEvent(e) {
       break;
   }
   renderLobby();
+  renderDiscover();
 }
 
 function setPartner(partner) {

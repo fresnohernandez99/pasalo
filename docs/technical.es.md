@@ -9,7 +9,7 @@ Pasalo funciona en **macOS, Windows, Linux y Android**. El núcleo está escrito
 ## Qué hace
 
 - **Encuentra solo los equipos de tu red.** No hay cuentas ni configuración. Funciona sin internet.
-- **Sin conexión hasta que tú quieras.** Al abrirse, Pasalo solo habla con tu red local y no manda nada a internet. Con **Conectarse** ves quién más está en línea y le puedes pedir conectarse; si acepta, quedáis conectados solo entre vosotros dos, por [iroh](https://iroh.computer) y sin abrir puertos.
+- **Sin conexión hasta que tú quieras.** Al abrirse, Pasalo solo habla con tu red local y no manda nada a internet. Con **Descubrir** ves quién más está en línea (con buscador y por páginas) y le puedes pedir conectarse; si acepta, quedáis conectados solo entre vosotros dos, por [iroh](https://iroh.computer) y sin abrir puertos.
 - **Tú decides qué recibes.** Cada envío de archivos llega como una solicitud que aceptas o rechazas.
 - **Gasta lo mínimo.** Lo que se puede comprimir se comprime (un registro de texto de 9,9 MB pasó como 2,2 MB); lo que ya va comprimido (fotos, vídeos, zip) se envía tal cual, sin gastar batería en intentarlo.
 - **Reanuda las transferencias.** Si se corta la conexión, se cierra la app o se reinicia el emisor, el siguiente intento sigue desde el último byte recibido. Cada archivo se verifica con BLAKE3.
@@ -51,8 +51,8 @@ Si un equipo no aparece, escribe su IP en **Añadir por IP**. Suele pasar en red
 
 ### Entre redes distintas
 
-1. Los dos pulsan **Conectarse**. Hasta entonces Pasalo no intenta nada fuera de la red local.
-2. En **En línea ahora** aparecen los demás conectados. Uno pulsa **Conectar** junto al otro.
+1. Los dos pulsan **Descubrir**. Hasta entonces Pasalo no intenta nada fuera de la red local.
+2. En **Descubrir** aparecen los demás conectados, con buscador y por páginas. Uno pulsa **Conectar** junto al otro.
 3. Al otro le llega la solicitud y pulsa **Aceptar** (o **Rechazar**).
 4. Ya estáis conectados: los dos dejáis el server, nadie más os ve ni os puede escribir, y os aparecéis en **Equipos** para enviaros archivos, chatear y llamaros como en la red local.
 5. **Desconectar** termina la conexión en los dos lados y vuelve a solo red local. Al cerrar la app también se empieza desconectado la próxima vez.
@@ -116,7 +116,7 @@ pasalo call <destino> --mode minimum --voice-in voz.raw    # llamada de prueba c
 | Transferencia remota | QUIC sobre [iroh](https://iroh.computer) (ALPN `pasalo/1`), atravesando el NAT y con los relays públicos de n0 como respaldo. |
 | Protocolo | Mensajes de control en JSON precedidos de su longitud, con el contenido de los archivos entre ellos: en bloques comprimidos con zstd si los dos equipos lo entienden (nivel 1 en la LAN, 3 entre redes), en crudo con versiones antiguas. |
 | Solicitudes | El receptor no contesta a la oferta hasta que el usuario acepta o rechaza (`Reject { reason: "declined" }`). |
-| Conexión | iroh arranca sin relays ni DNS. **Conectarse** añade los relays y el DNS de n0 en marcha, con el mismo código y el mismo puerto; al emparejarse solo se aceptan conexiones de la pareja. |
+| Conexión | iroh arranca sin relays ni DNS. **Descubrir** añade los relays y el DNS de n0 en marcha, con el mismo código y el mismo puerto; al emparejarse solo se aceptan conexiones de la pareja. |
 | Integridad | Hash BLAKE3 de cada archivo completo, comprobado antes de dejarlo en su sitio. |
 | Reanudación | El receptor guarda archivos `.pasalo-part` y un registro pequeño en `<destino>/.pasalo/`. Cuando el emisor vuelve a ofrecer lo mismo, el receptor le contesta desde qué byte seguir. |
 

@@ -31,3 +31,12 @@
 .ghost.dir { flex: 1; min-width: 0; justify-content: flex-start; border-radius: var(--radius-sm); font-weight: 500; }
 #dir-label { overflow: hidden; text-overflow: ellipsis; }
 .mobile #open-dir { pointer-events: none; }
+
+/* Descubrir: buscador arriba, la lista y las páginas abajo. */
+/* El buscador y las páginas se quedan a la vista al bajar por la lista. */
+#discover-search { position: sticky; top: 0; z-index: 1; width: 100%; margin: 0 0 12px; box-shadow: 0 -4px 0 4px var(--bg), 0 8px 8px -4px var(--bg); }
+.discover-list { display: grid; gap: 8px; padding-bottom: 12px; }
+.discover-pager { position: sticky; bottom: 0; display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 4px 0 calc(10px + env(safe-area-inset-bottom)); background: var(--bg); }
+/* Sin hueco debajo: las páginas van pegadas abajo. */
+#discover .screen-body { padding-bottom: 0; }
+#discover-steps { margin: 4px 0 14px; }

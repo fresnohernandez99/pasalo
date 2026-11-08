@@ -231,3 +231,6 @@ body[data-tab="transfers"] :is(.topbar, .netbar) { display: none; }
 .tab.on { color: var(--accent); }
 .tab.on > span:first-child { background: var(--accent-soft); }
 .tab .badge { position: absolute; top: 4px; left: calc(50% + 12px); }
+
+/* Tocar una tarjeta recibida abre su carpeta. */
+.tcard.openable { cursor: pointer; }

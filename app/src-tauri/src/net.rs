@@ -146,6 +146,12 @@ pub async fn lobby_request(state: State<'_, AppState>, to: LobbyUser) -> CmdResu
     lobby(&state).await?.request(&to).await.map_err(CmdError::core)
 }
 
+/// Una página de los que están en línea, con búsqueda (pantalla Descubrir).
+#[tauri::command]
+pub async fn lobby_users(state: State<'_, AppState>, q: String, offset: u64, limit: u64) -> CmdResult<pasalo_core::UsersPage> {
+    lobby(&state).await?.users(&q, offset, limit).await.map_err(|e| CmdError::new("server", e.detail()))
+}
+
 #[tauri::command]
 pub async fn lobby_cancel(state: State<'_, AppState>, request: String) -> CmdResult<()> {
     lobby(&state).await?.cancel(&request).await.map_err(CmdError::core)

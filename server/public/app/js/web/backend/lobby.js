@@ -33,6 +33,11 @@ export class Lobby {
     return created.id;
   }
 
+  /** Una página de los que están en línea, con búsqueda por nombre. */
+  users(q, offset, limit) {
+    return this.post('users', { q, offset, limit });
+  }
+
   async cancel(request) {
     this.outgoing.delete(request);
     await this.post('cancel', { request });

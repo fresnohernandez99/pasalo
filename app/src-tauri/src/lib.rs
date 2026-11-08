@@ -138,7 +138,7 @@ pub fn run() {
             files::pick_files, files::pick_folder, files::send, files::send_text, files::probe, files::pause,
             files::resume, files::forget, files::transfer_decide, files::cancel_incoming,
             net::net_connect, net::net_direct, net::net_disconnect,
-            links::link_take, links::link_parse, links::link_mine, net::lobby_request, net::lobby_cancel, net::lobby_answer,
+            links::link_take, links::link_parse, links::link_mine, net::lobby_request, net::lobby_users, net::lobby_cancel, net::lobby_answer,
             chat::chat_history, chat::chat_send, chat::chat_send_image, chat::chat_image, chat::chat_send_audio,
             chat::chat_send_once, chat::chat_once_open, chat::secure_view, chat::chat_private,
             chat::chat_set_private, chat::chat_wipe,

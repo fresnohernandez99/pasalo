@@ -37,7 +37,7 @@ let unseen = 0;
  */
 export function updateLayers(focus) {
   const call = !$('#call').hidden;
-  const settings = !$('#settings').hidden;
+  const settings = !$('#settings').hidden || !$('#discover').hidden;
   const photo = !$('#photo-preview').hidden || !$('#once-viewer').hidden;
   $('.app').inert = call || settings || photo;
   $('#settings').inert = call;

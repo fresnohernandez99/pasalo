@@ -122,6 +122,7 @@ test('solicitud a alguien que se va: cancelada si se despide, caducada si desapa
   await beto.join();
   await carla.join();
   const toBeto = await ana.request('beto');
+  clock += 1000;
   const toCarla = await ana.request('carla');
   await beto.leave();
   clock += ONLINE_MS + 1000;
@@ -200,4 +201,42 @@ test('tope de entradas por IP', async () => {
     handle(db, 'join', { id: 'ip-10', token: 't', name: 'x', platform: 'ios', code: 'c', ipHash: 'h' }, opts),
     (err) => err.status === 429,
   );
+});
+
+test('lista paginada con búsqueda', async () => {
+  const opts = { now, sleep };
+  const join = (id, name) => handle(db, 'join', { id, token: `t-${id}`, name, platform: 'ios', code: `c-${id}` }, opts);
+  await join('yo', 'Yo');
+  for (let i = 0; i < 25; i++) await join(`u${i}`, `Usuario ${String(i).padStart(2, '0')}`);
+  await join('ana', 'Ana (casa)');
+  const page = (body) => handle(db, 'users', { id: 'yo', token: 't-yo', ...body }, opts);
+
+  const first = await page({ limit: 10 });
+  assert.equal(first.total, 26);
+  assert.equal(first.users.length, 10);
+  assert.equal(first.users[0].name, 'Ana (casa)');
+  assert.ok(!first.users.some((u) => u.id === 'yo'));
+  const last = await page({ limit: 10, offset: 20 });
+  assert.equal(last.users.length, 6);
+
+  const found = await page({ q: 'usuario 1' });
+  assert.equal(found.total, 10);
+  // Los caracteres especiales se buscan tal cual (nada de expresiones).
+  assert.equal((await page({ q: '(casa)' })).total, 1);
+  assert.equal((await page({ q: '.*' })).total, 0);
+  await assert.rejects(handle(db, 'users', { id: 'yo', token: 'mal' }, opts), (err) => err.status === 401);
+});
+
+test('una solicitud por segundo como mucho', async () => {
+  await ana.join();
+  await beto.join();
+  await carla.join();
+  await ana.request('beto');
+  // Repetir la misma no cuenta: devuelve la que ya hay.
+  await ana.request('beto');
+  await assert.rejects(ana.request('carla'), { status: 429 });
+  clock += 999;
+  await assert.rejects(ana.request('carla'), { status: 429 });
+  clock += 1;
+  await ana.request('carla');
 });

@@ -166,8 +166,13 @@
 .round.ok .disc { background: #1e9e47; }
 .round.danger .disc { background: #e5383b; }
 #call-hangup .disc { width: 84px; height: 58px; border-radius: 29px; }
-.call.incoming #call-accept .disc { animation: nudge 1.2s ease-in-out infinite; }
-@keyframes nudge { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-6px); } }
+/* Contestar se toca, no se arrastra: el aviso es un halo que late, sin mover
+   el botón (si el círculo salta, en el móvil el dedo puede soltar fuera y el
+   toque se pierde). Los hijos no reciben el toque: siempre llega al botón. */
+.round { touch-action: manipulation; }
+.round > * { pointer-events: none; }
+.call.incoming #call-accept .disc { animation: halo 1.4s ease-out infinite; }
+@keyframes halo { 0% { box-shadow: 0 0 0 0 rgba(30, 158, 71, .6); } 100% { box-shadow: 0 0 0 18px rgba(30, 158, 71, 0); } }
 
 /* Ventanas bajas (el escritorio encogido): todo más compacto para que los
    botones sigan a la vista. */

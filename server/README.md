@@ -28,12 +28,13 @@ Todo es `POST /api/<acción>` con un JSON que lleva `id` (el identificador del e
 |---|---|
 | `join` | Entra con `name`, `platform` y `code` (el código de iroh, que solo se revela al aceptar). |
 | `sync` | Espera hasta 20 s a que cambie algo y devuelve la lista de conectados, las solicitudes recibidas y las respuestas a las propias. Si no cambió nada, solo devuelve la versión `v`. |
+| `users` | Una página de los conectados (para Descubrir): `q` busca en el nombre, `offset` y `limit` (hasta 50) eligen la página. Devuelve `users`, `total` y `offset`. |
 | `request` | Pide conectarse con `to`. |
 | `cancel` | Retira una solicitud propia. |
 | `answer` | Acepta (`accept: true`) o rechaza una solicitud recibida. Al aceptar devuelve la pareja con su código y saca a los dos del server: las demás solicitudes de los dos se cancelan y ya no aparecen para nadie. |
 | `leave` | Sale del server. |
 
-Gasto en el móvil: mientras se está conectado y sin hacer nada, una petición pequeña cada 20 s. Sin pulsar **Conectarse**, la app no habla con el server.
+Gasto en el móvil: mientras se está conectado y sin hacer nada, una petición pequeña cada 20 s. Sin pulsar **Descubrir**, la app no habla con el server.
 
 Un equipo que deja de sincronizar desaparece de la lista a los 45 s. Las solicitudes sin contestar caducan a los 5 minutos.
 

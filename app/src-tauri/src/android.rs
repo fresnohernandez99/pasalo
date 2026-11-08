@@ -79,6 +79,16 @@ impl Android {
         self.0.run_mobile_plugin::<Granted>("localNetwork", Args { ask }).is_ok_and(|g| g.granted)
     }
 
+    /// Abre `dir` en la app de archivos; si no se puede, las descargas.
+    pub fn open_folder(&self, dir: &std::path::Path) -> bool {
+        #[derive(serde::Serialize)]
+        struct Args {
+            path: String,
+        }
+        let args = Args { path: dir.to_string_lossy().into_owned() };
+        self.0.run_mobile_plugin::<Granted>("openFolder", args).is_ok_and(|g| g.granted)
+    }
+
     pub async fn pick_files(&self) -> Result<Vec<PathBuf>, String> {
         let picked: Picked = self.0.run_mobile_plugin_async("pickFiles", ()).await.map_err(|e| e.to_string())?;
         Ok(picked.paths)

@@ -56,6 +56,11 @@ class LocalNetworkArgs {
   var ask: Boolean = false
 }
 
+@InvokeArg
+class OpenFolderArgs {
+  var path: String = ""
+}
+
 @TauriPlugin(permissions = [Permission(strings = [android.Manifest.permission.RECORD_AUDIO], alias = "microphone")])
 class PasaloPlugin(private val activity: Activity) : Plugin(activity) {
   private var multicastLock: WifiManager.MulticastLock? = null
@@ -244,6 +249,32 @@ class PasaloPlugin(private val activity: Activity) : Plugin(activity) {
 
   companion object {
     private const val LOCAL_NETWORK = "android.permission.ACCESS_LOCAL_NETWORK"
+  }
+
+  /**
+   * Abre una carpeta (p. ej. `Download/Pasalo`) en la app de archivos del
+   * sistema. Si no hay ninguna que abra carpetas, la lista de descargas.
+   */
+  @Command
+  fun openFolder(invoke: Invoke) {
+    val args = invoke.parseArgs(OpenFolderArgs::class.java)
+    val root = "/storage/emulated/0/"
+    val intents = mutableListOf<Intent>()
+    if (args.path.startsWith(root)) {
+      val doc = "primary:" + args.path.removePrefix(root).trimEnd('/')
+      val uri = android.provider.DocumentsContract.buildDocumentUri("com.android.externalstorage.documents", doc)
+      intents += Intent(Intent.ACTION_VIEW).setDataAndType(uri, android.provider.DocumentsContract.Document.MIME_TYPE_DIR)
+    }
+    intents += Intent(android.app.DownloadManager.ACTION_VIEW_DOWNLOADS)
+    for (intent in intents) {
+      try {
+        activity.startActivity(intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION))
+        invoke.resolve(JSObject().put("granted", true))
+        return
+      } catch (_: android.content.ActivityNotFoundException) {
+      }
+    }
+    invoke.resolve(JSObject().put("granted", false))
   }
 
   @Command

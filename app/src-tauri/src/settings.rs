@@ -142,11 +142,26 @@ pub async fn choose_dir(app: AppHandle, state: State<'_, AppState>) -> CmdResult
 pub fn open_dir(app: AppHandle, state: State<'_, AppState>) -> CmdResult<()> {
     let dir = state.receiver.dest();
     std::fs::create_dir_all(&dir).map_err(CmdError::other)?;
+    #[cfg(target_os = "android")]
+    {
+        app.state::<crate::android::Android>().open_folder(&dir);
+        Ok(())
+    }
+    #[cfg(not(target_os = "android"))]
     app.opener().open_path(dir.to_string_lossy(), None::<&str>).map_err(CmdError::other)
 }
 
+/// Enseña dónde quedó lo recibido: en el escritorio, el archivo marcado en su
+/// carpeta; en Android, su carpeta en la app de archivos.
 #[tauri::command]
 pub fn reveal(app: AppHandle, path: PathBuf) -> CmdResult<()> {
+    #[cfg(target_os = "android")]
+    {
+        let dir = if path.is_dir() { path.as_path() } else { path.parent().unwrap_or(&path) };
+        app.state::<crate::android::Android>().open_folder(dir);
+        Ok(())
+    }
+    #[cfg(not(target_os = "android"))]
     app.opener().reveal_item_in_dir(path).map_err(CmdError::other)
 }
 
