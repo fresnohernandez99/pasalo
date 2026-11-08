@@ -5,3 +5,6 @@ node_modules
 .kotlin
 .vercel
 /web/target
+
+# Registros de sesión: nunca al repositorio.
+/docs/LOG.md
