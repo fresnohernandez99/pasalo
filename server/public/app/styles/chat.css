@@ -115,7 +115,7 @@
 .call-log .call-title { font-weight: 600; }
 .call-log .call-sub { font-size: 12px; opacity: .75; font-variant-numeric: tabular-nums; }
 .call-log .meta { float: none; align-self: flex-end; margin: 0 0 0 6px; }
-.msg.call-msg.bad .call-icon { background: color-mix(in srgb, var(--err) 18%, transparent); color: var(--err); }
+.msg.call-msg.bad .call-icon { background: rgb(217 45 32 / .18); background: color-mix(in srgb, var(--err) 18%, transparent); color: var(--err); }
 .msg.out.call-msg.bad .call-icon { background: rgb(255 255 255 / .2); color: inherit; }
 
 .call-details dl { display: grid; grid-template-columns: auto 1fr; gap: 6px 14px; margin: 0; }
@@ -210,7 +210,7 @@
 .once-viewer {
   position: fixed;
   z-index: 45;
-  inset: 0;
+  top: 0; right: 0; bottom: 0; left: 0;
   overflow: hidden;
   background: #000;
   -webkit-user-select: none;
@@ -235,7 +235,7 @@
 /* El nombre de quien la ve, por encima: una foto de la pantalla lo lleva. */
 .once-mark {
   position: absolute;
-  inset: -50%;
+  top: -50%; right: -50%; bottom: -50%; left: -50%;
   transform: rotate(-24deg);
   color: #fff;
   opacity: .14;
@@ -255,7 +255,7 @@
 .photo-preview {
   position: fixed;
   z-index: 42;
-  inset: 0;
+  top: 0; right: 0; bottom: 0; left: 0;
   display: flex;
   flex-direction: column;
   background: #0b0d12;

@@ -12,6 +12,7 @@ import { showTab } from './features/nav.js';
 import { initPeers, onPeerEvent } from './features/peers.js';
 import { initPermissions } from './features/permissions.js';
 import './features/settings.js';
+import { takeShare } from './features/share.js';
 import { onTransferEvent } from './features/transfers.js';
 
 // En el móvil no hay consola a mano: un error de JavaScript se ve como aviso.
@@ -93,6 +94,8 @@ async function init() {
   // Abierta con un enlace de otro equipo (o llega uno con la app abierta).
   listen('pasalo_link', takeLink);
   takeLink();
+  // Abierta desde «Compartir» en otra app (lo de después avisa con `pasaloShare`).
+  if (snapshot.mobile && !snapshot.web) takeShare();
 }
 
 init();

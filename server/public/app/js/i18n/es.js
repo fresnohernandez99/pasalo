@@ -337,4 +337,6 @@ export default {
   'discover.offline': "Sin conexión con el server.",
   'discover.hint': "Pídeles que pulsen Descubrir también.",
   'discover.slow': "Espera un segundo entre solicitudes.",
+  'share.pick': "Toca el equipo al que enviarlo",
+  'share.failed': "No se pudo leer lo compartido",
 };

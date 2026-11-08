@@ -122,7 +122,7 @@ function renderChat(jump = false) {
     if (box.children[i] !== node) box.insertBefore(node, box.children[i] || null);
   });
   while (box.children.length > wanted.length) box.lastChild.remove();
-  if (jump || nearBottom || list.at(-1)?.outgoing) box.scrollTop = box.scrollHeight;
+  if (jump || nearBottom || list[list.length - 1]?.outgoing) box.scrollTop = box.scrollHeight;
 }
 
 function dayNode(ts) {
