@@ -51,6 +51,16 @@
 
       <div class="home-body">
         <section class="tab-page" data-page="peers">
+          <!-- Lo compartido desde otra app (Android): se toca el equipo que lo recibe. -->
+          <div id="share-banner" class="banner share-banner" hidden>
+            <span class="banner-icon" data-icon="upload"></span>
+            <div class="banner-text">
+              <strong data-i18n="share.pick"></strong>
+              <span id="share-what" class="share-what"></span>
+            </div>
+            <button id="share-cancel" class="ghost small" type="button" data-i18n="btn.cancel"></button>
+          </div>
+
           <div id="perm-banner" class="banner" hidden>
             <span class="banner-icon" data-icon="wifi"></span>
             <div class="banner-text">

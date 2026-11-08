@@ -32,6 +32,29 @@ pub async fn pick_files(app: AppHandle) -> CmdResult<Vec<PathBuf>> {
     Ok(files.into_iter().filter_map(|f| f.into_path().ok()).collect())
 }
 
+/// Lo compartido con Pasalo desde otra app: archivos (copias en la caché) o
+/// solo texto.
+#[derive(Default, serde::Serialize, serde::Deserialize)]
+pub struct Shared {
+    paths: Vec<PathBuf>,
+    text: String,
+    /// Algún archivo no se pudo copiar.
+    #[serde(default)]
+    failed: bool,
+}
+
+/// Lo que llegó por «Compartir» y aún no se ha enviado. Se recoge una sola vez.
+#[tauri::command]
+pub async fn share_take(app: AppHandle) -> CmdResult<Shared> {
+    #[cfg(target_os = "android")]
+    return app.state::<crate::android::Android>().take_share().await.map_err(CmdError::other);
+    #[cfg(not(target_os = "android"))]
+    {
+        let _ = app;
+        Ok(Shared::default())
+    }
+}
+
 #[cfg(mobile)]
 #[tauri::command]
 pub async fn pick_folder(_app: AppHandle) -> CmdResult<Option<PathBuf>> {

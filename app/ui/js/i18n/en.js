@@ -337,4 +337,6 @@ export default {
   'discover.offline': "Not connected to the server.",
   'discover.hint': "Ask them to tap Discover too.",
   'discover.slow': "Wait a second between requests.",
+  'share.pick': "Tap the device to send it to",
+  'share.failed': "Couldn't read what was shared",
 };

@@ -94,6 +94,11 @@ impl Android {
         let picked: Picked = self.0.run_mobile_plugin_async("pickFiles", ()).await.map_err(|e| e.to_string())?;
         Ok(picked.paths)
     }
+
+    /// Lo que llegó por «Compartir» desde otra app (ya copiado), si hay algo.
+    pub async fn take_share(&self) -> Result<crate::files::Shared, String> {
+        self.0.run_mobile_plugin_async("takeShare", ()).await.map_err(|e| e.to_string())
+    }
 }
 
 /// El nombre del equipo en Android es siempre "localhost": mejor el modelo.

@@ -1,6 +1,6 @@
 /* Visor de fotos a pantalla completa (ver js/features/viewer.js). */
-.viewer { position: fixed; z-index: 40; inset: 0; touch-action: none; overflow: hidden; }
-.viewer-bg { position: absolute; inset: 0; background: #000; opacity: 0; }
+.viewer { position: fixed; z-index: 40; top: 0; right: 0; bottom: 0; left: 0; touch-action: none; overflow: hidden; }
+.viewer-bg { position: absolute; top: 0; right: 0; bottom: 0; left: 0; background: #000; opacity: 0; }
 #viewer-img {
   position: absolute;
   transform-origin: 0 0;

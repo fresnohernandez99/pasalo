@@ -63,6 +63,9 @@ class OpenFolderArgs {
 
 @TauriPlugin(permissions = [Permission(strings = [android.Manifest.permission.RECORD_AUDIO], alias = "microphone")])
 class PasaloPlugin(private val activity: Activity) : Plugin(activity) {
+  private var webView: WebView? = null
+  /** Lo compartido desde otra app, ya copiado, hasta que la página lo recoge. */
+  @Volatile private var shared: JSObject? = null
   private var multicastLock: WifiManager.MulticastLock? = null
   /** Apaga la pantalla al acercar el teléfono a la cara, como en cualquier llamada. */
   private var proximityLock: PowerManager.WakeLock? = null
@@ -78,6 +81,55 @@ class PasaloPlugin(private val activity: Activity) : Plugin(activity) {
     cleanOldCopies()
     passInsetsToPage(webView)
     handleBack(webView)
+    this.webView = webView
+    // Abierta desde «Compartir» con la app cerrada.
+    takeShareIntent(activity.intent)
+  }
+
+  override fun onNewIntent(intent: Intent) {
+    takeShareIntent(intent)
+  }
+
+  /**
+   * Lo que llega por «Compartir» (una o varias URIs, o solo texto) se copia
+   * como lo elegido con `pickFiles` y se avisa a la página (`pasaloShare`),
+   * que pregunta a quién enviarlo y lo recoge con `takeShare`.
+   */
+  private fun takeShareIntent(intent: Intent?) {
+    if (intent == null || (intent.action != Intent.ACTION_SEND && intent.action != Intent.ACTION_SEND_MULTIPLE)) return
+    val uris = mutableListOf<Uri>()
+    @Suppress("DEPRECATION")
+    if (intent.action == Intent.ACTION_SEND_MULTIPLE) {
+      intent.getParcelableArrayListExtra<Uri>(Intent.EXTRA_STREAM)?.let { uris.addAll(it) }
+    } else {
+      intent.getParcelableExtra<Uri>(Intent.EXTRA_STREAM)?.let { uris.add(it) }
+    }
+    val text = intent.getCharSequenceExtra(Intent.EXTRA_TEXT)?.toString().orEmpty()
+    // Que no se vuelva a enviar si la actividad se recrea con el mismo intent.
+    intent.action = Intent.ACTION_MAIN
+    if (uris.isEmpty() && text.isBlank()) return
+    Thread {
+      val paths = JSArray()
+      try {
+        val dir = File(copiesDir(), System.currentTimeMillis().toString()).apply { mkdirs() }
+        for (uri in uris) paths.put(copyToCache(uri, dir).absolutePath)
+      } catch (e: Exception) {
+        android.util.Log.w("pasalo", "no se pudo copiar lo compartido", e)
+      }
+      // Nada copiado: la página avisa (sin el permiso de la otra app, p. ej.).
+      val failed = paths.length() < uris.size
+      shared = JSObject().put("paths", paths).put("text", text).put("failed", failed)
+      activity.runOnUiThread {
+        webView?.evaluateJavascript("typeof pasaloShare === 'function' && pasaloShare()", null)
+      }
+    }.start()
+  }
+
+  @Command
+  fun takeShare(invoke: Invoke) {
+    val out = shared ?: JSObject().put("paths", JSArray()).put("text", "")
+    shared = null
+    invoke.resolve(out)
   }
 
   /**

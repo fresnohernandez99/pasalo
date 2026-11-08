@@ -135,7 +135,7 @@ pub fn run() {
             settings::snapshot, settings::refresh, settings::set_name, settings::choose_dir, settings::open_dir,
             settings::reveal, settings::set_server, settings::local_network, settings::check_update,
             settings::open_release, settings::keep_alive, settings::local_addresses,
-            files::pick_files, files::pick_folder, files::send, files::send_text, files::probe, files::pause,
+            files::pick_files, files::pick_folder, files::share_take, files::send, files::send_text, files::probe, files::pause,
             files::resume, files::forget, files::transfer_decide, files::cancel_incoming,
             net::net_connect, net::net_direct, net::net_disconnect,
             links::link_take, links::link_parse, links::link_mine, net::lobby_request, net::lobby_users, net::lobby_cancel, net::lobby_answer,

@@ -12,6 +12,7 @@ import { toast } from '../lib/toast.js';
 import { app, isMobile } from '../state.js';
 import { activePeerCode, openChat, unreadCount, wipeIfPrivate } from './chat.js';
 import { openLink } from './lobby.js';
+import { sharing, shareTo } from './share.js';
 import { openTextDialog, pauseFor, resumeFor, sendPaths } from './transfers.js';
 
 /** device_id → { device_id, name, platform, os?, addr, code? } */
@@ -155,7 +156,9 @@ $('#peers').addEventListener('click', async (ev) => {
   const peer = row && peers.get(row.dataset.id);
   if (!peer) return;
   const act = ev.target.closest('button')?.dataset.act;
-  if (act === 'files') {
+  if (sharing() && act !== 'remove') {
+    shareTo(peer, !!peerCode(peer));
+  } else if (act === 'files') {
     sendPaths(peer, await call('pick_files'));
   } else if (act === 'remove') {
     peers.delete(peer.device_id);
@@ -170,7 +173,8 @@ $('#peers').addEventListener('keydown', (ev) => {
   if ((ev.key !== 'Enter' && ev.key !== ' ') || !ev.target.classList.contains('peer')) return;
   ev.preventDefault();
   const peer = peers.get(ev.target.dataset.id);
-  if (peer) openPeer(peer);
+  if (peer && sharing()) shareTo(peer, !!peerCode(peer));
+  else if (peer) openPeer(peer);
 });
 
 // ---------- añadir por IP ----------

@@ -3,8 +3,11 @@
    Escritorio (≥ 860 px): lista a la izquierda y chat a la derecha. */
 
 /* Una sola fila del alto de la ventana: sin `minmax(0, …)` la fila crecía
-   con el contenido (el chat largo) y lo de abajo quedaba fuera. */
-.app { height: 100dvh; display: grid; grid-template-columns: 1fr; grid-template-rows: minmax(0, 1fr); }
+   con el contenido (el chat largo) y lo de abajo quedaba fuera. Lo mismo con
+   la columna: con `1fr` a secas un texto largo sin cortar la ensanchaba más
+   que la pantalla en WebViews antiguos. `100vh` va antes para los WebView que
+   no conocen `dvh` (Chrome < 108). */
+.app { height: 100vh; height: 100dvh; display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); }
 
 .home {
   position: relative;
@@ -17,7 +20,7 @@
 .pane {
   position: fixed;
   z-index: 10;
-  inset: 0 0 var(--kb) 0;
+  top: 0; right: 0; bottom: var(--kb); left: 0;
   display: flex;
   flex-direction: column;
   background: var(--chat-bg);
@@ -29,7 +32,7 @@ body.pane-open .pane { transform: none; visibility: visible; transition: transfo
 .pane-empty { display: none; }
 
 @media (min-width: 860px) {
-  .app { grid-template-columns: 380px 1fr; }
+  .app { grid-template-columns: 380px minmax(0, 1fr); }
   .home { border-right: 1px solid var(--border); }
   .pane { position: static; transform: none; visibility: visible; transition: none; min-width: 0; min-height: 0; }
   .pane-empty { flex: 1; display: grid; place-content: center; justify-items: center; gap: 8px; color: var(--muted); padding: 24px; text-align: center; }
@@ -87,6 +90,11 @@ body.pane-open .pane { transform: none; visibility: visible; transition: transfo
 .banner-icon { color: var(--accent); }
 .banner-text { display: flex; flex-direction: column; gap: 2px; font-size: 14px; }
 .banner .primary { grid-column: 2; justify-self: start; margin-top: 6px; }
+.share-banner .ghost { grid-column: 2; justify-self: start; margin-top: 6px; }
+.share-banner .banner-text { min-width: 0; }
+.share-what { color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* Mientras se elige a quién enviar lo compartido, cada fila es un destino. */
+.sharing .peer .icon-btn { display: none; }
 
 /* ---------- equipos ---------- */
 

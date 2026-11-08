@@ -18,6 +18,10 @@ const RING_TIMEOUT = 45_000;
 // Sin recibir nada por la conexión en este tiempo (iroh manda un keep-alive
 // cada 5 s aunque nadie hable), el otro lado ya no está.
 const LINK_TIMEOUT = 15_000;
+// `Object.hasOwn` (Chrome 93) y `crypto.randomUUID` (Chrome 92) no existen en
+// los WebView antiguos de algunos Android.
+const hasOwn = (o, k) => Object.prototype.hasOwnProperty.call(o, k);
+const newId = () => crypto.randomUUID?.() ?? Array.from(crypto.getRandomValues(new Uint8Array(16)), (b) => b.toString(16).padStart(2, '0')).join('');
 const DEFAULTS = { voiceMode: 'normal', videoAudioMode: 'low', videoQuality: 'normal', blur: false, enhance: true };
 
 import { errorText, t } from '../i18n/index.js';
@@ -165,7 +169,7 @@ export async function startCall(to, media) {
   }
   const s = callSettings();
   live = newCall({
-    id: crypto.randomUUID(),
+    id: newId(),
     peer: { code: to.code, name: to.name },
     media,
     role: 'caller',
@@ -216,7 +220,7 @@ export function onSignal({ peer, name, signal: s }) {
       role: 'callee',
       state: 'incoming',
       audio: VOICE_MODES.some(([m]) => m === s.data?.mode) ? s.data.mode : 'normal',
-      video: Object.hasOwn(VIDEO_MODES, s.data?.video ?? '') ? s.data.video : callSettings().videoQuality,
+      video: hasOwn(VIDEO_MODES, s.data?.video ?? '') ? s.data.video : callSettings().videoQuality,
       theirCodecs: s.data?.codecs || [],
     });
     showCall();
@@ -253,7 +257,7 @@ export function onSignal({ peer, name, signal: s }) {
       }
       break;
     case 'video_mode':
-      if (Object.hasOwn(VIDEO_MODES, s.data?.video ?? '')) {
+      if (hasOwn(VIDEO_MODES, s.data?.video ?? '')) {
         live.video = s.data.video;
         $('#call-vmode').value = live.video;
         live.sender?.setMode(live.video);
@@ -557,7 +561,7 @@ function logCall(c, outcome) {
   const first = c.first || { sent: 0, received: 0, lost: 0, recovered: 0 };
   const last = c.last || first;
   const record = {
-    id: String(c.id || '').replace(/[^\w-]/g, '').slice(0, 80) || crypto.randomUUID(),
+    id: String(c.id || '').replace(/[^\w-]/g, '').slice(0, 80) || newId(),
     media: c.media,
     role: c.role,
     outcome,

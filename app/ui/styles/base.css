@@ -50,7 +50,7 @@ button:focus-visible, [tabindex]:focus-visible { outline: 2px solid var(--accent
 .primary:not(:disabled):active { transform: scale(.97); }
 .ghost { background: var(--surface-2); color: var(--text); }
 .ghost:not(:disabled):hover { filter: brightness(.97); }
-.danger { background: color-mix(in srgb, var(--err) 14%, transparent); color: var(--err); }
+.danger { background: rgb(217 45 32 / .14); background: color-mix(in srgb, var(--err) 14%, transparent); color: var(--err); }
 .danger-text { color: var(--err); }
 .small { min-height: 34px; padding: 0 14px; font-size: 14px; }
 
