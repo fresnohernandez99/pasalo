@@ -446,8 +446,9 @@ $('#attach-menu').addEventListener('click', async (ev) => {
   }
 });
 
-// Las fotos pasan por la vista previa: ahí ya van comprimidas (1600 px, WebP
-// o JPEG, sin metadatos; unos 150-400 KB) y se puede marcar «ver una vez».
+// Las fotos pasan por la vista previa, donde se puede marcar «ver una vez».
+// Por internet van comprimidas (1600 px, WebP o JPEG, sin metadatos; unos
+// 150-400 KB); a un equipo de la misma red, tal cual.
 $('#chat-file').addEventListener('change', (ev) => {
   const files = [...ev.target.files];
   ev.target.value = '';
@@ -459,7 +460,7 @@ $('#chat-file').addEventListener('change', (ev) => {
       upsertMessage(m);
       renderChat(true);
     }
-  });
+  }, { original: !['remote', 'partner'].includes(peer.platform) });
 });
 
 // Nota de voz.

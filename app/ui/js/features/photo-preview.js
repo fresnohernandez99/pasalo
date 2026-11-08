@@ -1,11 +1,11 @@
 // Vista previa de las fotos antes de enviarlas, como en WhatsApp: se ve la
-// foto tal como saldrá (ya comprimida, con lo que ocupa) y, con el botón «1»,
+// foto tal como saldrá (con lo que ocupa) y, con el botón «1»,
 // se marca para verse una sola vez. Con varias fotos, cada una lleva lo suyo.
 
 import { errorText, t } from '../i18n/index.js';
 import { $, esc, setHtml } from '../lib/dom.js';
 import { bytes } from '../lib/format.js';
-import { compressImage } from '../lib/images.js';
+import { compressImage, originalImage } from '../lib/images.js';
 import { toast } from '../lib/toast.js';
 import { onBack, updateLayers } from './nav.js';
 
@@ -14,8 +14,11 @@ let current = 0;
 let sending = null; // ({ data, ext, once }) => Promise
 let job = 0;
 
-/** Abre la vista previa de `files`. `send` se llama con cada foto al enviar. */
-export async function openPhotoPreview(files, send) {
+/**
+ * Abre la vista previa de `files`. `send` se llama con cada foto al enviar.
+ * Con `original` (equipo de la misma red) van sin comprimir.
+ */
+export async function openPhotoPreview(files, send, { original = false } = {}) {
   const mine = ++job;
   sending = send;
   items = [];
@@ -27,7 +30,7 @@ export async function openPhotoPreview(files, send) {
   updateLayers($('#pp-send'));
   for (const file of files) {
     try {
-      const photo = await compressImage(file);
+      const photo = await (original ? originalImage(file) : compressImage(file));
       if (mine !== job) return;
       items.push({ ...photo, url: `data:image/${photo.ext === 'jpg' ? 'jpeg' : photo.ext};base64,${photo.data}`, once: false });
     } catch (err) {
