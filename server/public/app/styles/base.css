@@ -88,6 +88,11 @@ input, textarea, select {
   transition: border-color .15s, background .15s;
 }
 input:focus, textarea:focus, select:focus { border-color: var(--accent); background: var(--surface); }
+/* Safari del iPhone acerca la página al tocar un campo con letra de menos de
+   16 px, y no la vuelve a alejar. */
+@media (pointer: coarse) {
+  input, textarea, select { font-size: 16px; }
+}
 
 .field { display: flex; flex-direction: column; gap: 6px; font-size: 14px; color: var(--muted); }
 .field + .field { margin-top: 14px; }

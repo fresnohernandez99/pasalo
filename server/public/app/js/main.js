@@ -2,6 +2,7 @@
 
 import { applyStatic, errorText, t } from './i18n/index.js';
 import { applyIcons } from './lib/icons.js';
+import { on } from './lib/bus.js';
 import { invoke, listen } from './lib/tauri.js';
 import { toast } from './lib/toast.js';
 import { app } from './state.js';
@@ -96,6 +97,12 @@ async function init() {
   takeLink();
   // Abierta desde «Compartir» en otra app (lo de después avisa con `pasaloShare`).
   if (snapshot.mobile && !snapshot.web) takeShare();
+  // El menú del icono de la bandeja (escritorio), en el idioma elegido.
+  if (!snapshot.mobile && !snapshot.web) {
+    const trayLabels = () => invoke('tray_labels', { show: t('tray.show'), quit: t('tray.quit') }).catch(() => {});
+    trayLabels();
+    on('lang', trayLabels);
+  }
 }
 
 init();

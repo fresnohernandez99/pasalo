@@ -339,4 +339,6 @@ export default {
   'discover.slow': "Wait a second between requests.",
   'share.pick': "Tap the device to send it to",
   'share.failed': "Couldn't read what was shared",
+  'tray.show': "Open Pasalo",
+  'tray.quit': "Quit",
 };
