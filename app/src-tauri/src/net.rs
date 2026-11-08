@@ -103,6 +103,8 @@ fn drop_partner(app: &AppHandle, state: &AppState) -> Option<Partner> {
     crate::call::stop_with(app, state, &partner.code);
     if let Some(talk) = &state.talk {
         talk.release(&partner.code);
+        // Chat privado: al desconectarse, su historial se borra.
+        talk.wipe_private(&partner.code);
     }
     state.receiver.set_only(None);
     if let Some(remote) = &state.remote {
@@ -177,6 +179,19 @@ pub async fn on_event(app: &AppHandle, event: &Event) {
                 if let Some(remote) = &state.remote {
                     let _ = remote.set_internet(false).await;
                 }
+            }
+        }
+        // El otro marcó (o desmarcó) el chat como privado: aquí también.
+        Event::Signal { peer, signal, .. } if signal.kind == "private" => {
+            if let Some(talk) = &state.talk {
+                let on = signal.data.get("on").and_then(|v| v.as_bool()).unwrap_or(false);
+                let _ = talk.set_private(peer, on);
+            }
+        }
+        // El otro se desconecta: su chat privado se borra también aquí.
+        Event::Signal { peer, signal, .. } if signal.kind == "wipe" => {
+            if let Some(talk) = &state.talk {
+                talk.wipe_private(peer);
             }
         }
         // Se cortó la conexión en plena llamada: no se sigue grabando ni sonando.

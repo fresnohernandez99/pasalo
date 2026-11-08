@@ -305,12 +305,20 @@ struct Inner {
     attempts: std::sync::atomic::AtomicU64,
     /// Fotos recibiéndose ahora, por equipo (ver [`IMAGES_AT_ONCE`]).
     receiving: Mutex<HashMap<EndpointId, usize>>,
+    /// Equipos (código) con los que el chat es privado.
+    private: Mutex<HashSet<String>>,
 }
 
 impl Talk {
     /// `dir` guarda el historial (un `.jsonl` por equipo) y las imágenes.
     pub fn new(remote: Remote, name: impl Into<String>, dir: impl Into<PathBuf>, events: EventSender) -> Self {
         let store = Store { dir: dir.into(), known: Default::default() };
+        // Los chats privados se borran al desconectarse; si la app se cerró
+        // sin desconectar, al volver a abrirla.
+        let private = store.private();
+        for peer in &private {
+            store.wipe(peer);
+        }
         let pending = store.pending().into_iter().map(|m| (m.id.clone(), m)).collect();
         let talk = Self {
             inner: Arc::new(Inner {
@@ -329,6 +337,7 @@ impl Talk {
                 delivering: Default::default(),
                 attempts: Default::default(),
                 receiving: Default::default(),
+                private: Mutex::new(private),
             }),
         };
         let ticking = talk.clone();
@@ -458,6 +467,50 @@ impl Talk {
             }
         });
         Ok((bytes, ext))
+    }
+
+    /// Si el chat con `peer` es privado: su historial se borra al desconectarse.
+    pub fn is_private(&self, peer: &str) -> bool {
+        self.inner.private.lock().unwrap().contains(&normalize(peer))
+    }
+
+    /// Marca (o desmarca) el chat con `peer` como privado. Lo de avisar al
+    /// otro equipo es cosa de quien lo llama (una señal `private`).
+    pub fn set_private(&self, peer: &str, on: bool) -> Result<(), Error> {
+        let peer = parse_peer(peer)?.to_string();
+        let mut private = self.inner.private.lock().unwrap();
+        if on {
+            private.insert(peer);
+        } else {
+            private.remove(&peer);
+        }
+        self.inner.store.save_private(&private).map_err(Error::Local)
+    }
+
+    /// Si el chat con `peer` es privado, borra su historial (mensajes, fotos y
+    /// notas de voz) y lo que quedara pendiente de enviarle. Devuelve si borró.
+    pub fn wipe_private(&self, peer: &str) -> bool {
+        let peer = normalize(peer);
+        if !self.inner.private.lock().unwrap().contains(&peer) {
+            return false;
+        }
+        // Lo pendiente para ese equipo (y su entrega en curso), fuera.
+        let gone: Vec<String> = {
+            let mut pending = self.inner.pending.lock().unwrap();
+            let ids = pending.values().filter(|m| m.peer == peer).map(|m| m.id.clone()).collect();
+            pending.retain(|_, m| m.peer != peer);
+            ids
+        };
+        let mut delivering = self.inner.delivering.lock().unwrap();
+        for id in &gone {
+            if let Some((_, task)) = delivering.remove(id) {
+                task.abort();
+            }
+        }
+        drop(delivering);
+        self.inner.store.wipe(&peer);
+        let _ = self.inner.events.send(Event::ChatWiped { peer });
+        true
     }
 
     /// Deja en el historial de `peer` el registro de una llamada (`record`
@@ -1181,6 +1234,44 @@ impl Store {
             ids.insert(message.id.clone());
         }
         Ok(())
+    }
+
+    fn private_file(&self) -> PathBuf {
+        self.dir.join("private.json")
+    }
+
+    /// Los equipos con chat privado, guardados.
+    fn private(&self) -> HashSet<String> {
+        std::fs::read(self.private_file())
+            .ok()
+            .and_then(|bytes| serde_json::from_slice::<Vec<String>>(&bytes).ok())
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|p| crate::parse_code(p).is_some())
+            .collect()
+    }
+
+    fn save_private(&self, private: &HashSet<String>) -> io::Result<()> {
+        std::fs::create_dir_all(&self.dir)?;
+        let list: Vec<&String> = private.iter().collect();
+        std::fs::write(self.private_file(), serde_json::to_vec(&list)?)
+    }
+
+    /// Borra el historial con `peer` y sus fotos y notas de voz (pisándolas antes).
+    fn wipe(&self, peer: &str) {
+        let peer = normalize(peer);
+        for message in self.history(&peer) {
+            for path in [message.image, message.audio].into_iter().flatten() {
+                if self.is_media(&path) {
+                    if let Ok(meta) = std::fs::metadata(&path) {
+                        let _ = std::fs::write(&path, vec![0u8; meta.len() as usize]);
+                    }
+                    let _ = std::fs::remove_file(&path);
+                }
+            }
+        }
+        let _ = std::fs::remove_file(self.file(&peer));
+        self.known.lock().unwrap().remove(&peer);
     }
 
     /// Si el historial de `peer` ya tiene el mensaje `id`.

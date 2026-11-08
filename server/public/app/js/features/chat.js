@@ -48,6 +48,8 @@ export async function openChat(peer) {
   closeAttachMenu();
   setPaneOpen(true);
   renderStrip();
+  setPrivate(false);
+  invoke('chat_private', { peer: code }).then((on) => chat.peer?.code === code && setPrivate(on), () => {});
   try {
     chat.messages.set(code, await invoke('chat_history', { peer: code }));
   } catch (err) {
@@ -472,6 +474,63 @@ $('#chat-mic').addEventListener('click', () => {
     }
   });
 });
+
+// ---------- chat privado ----------
+// Con el candado, el historial (mensajes, fotos, notas de voz) se borra en
+// los dos equipos al desconectarse. El otro se entera con la señal `private`.
+
+function setPrivate(on) {
+  const button = $('#chat-private');
+  button.classList.toggle('on', on);
+  button.setAttribute('aria-pressed', String(on));
+  button.innerHTML = icon(on ? 'lock' : 'unlock');
+  $('#chat-private-bar').hidden = !on;
+}
+
+$('#chat-private').addEventListener('click', async () => {
+  const peer = chat.peer;
+  if (!peer) return;
+  const on = $('#chat-private').getAttribute('aria-pressed') !== 'true';
+  const button = $('#chat-private');
+  button.disabled = true;
+  try {
+    // Primero el otro: si no se entera, no sería privado en los dos lados.
+    await call('call_signal', { peer: peer.code, call: '', kind: 'private', data: { on } });
+    await call('chat_set_private', { peer: peer.code, on });
+    if (chat.peer?.code === peer.code) setPrivate(on);
+    toast(t(on ? 'private.on' : 'private.off'));
+  } catch {
+    // call() ya avisó (p. ej. el otro no está conectado).
+  } finally {
+    button.disabled = false;
+  }
+});
+
+/** El otro cambió el chat a privado (o no). El backend ya lo guardó. */
+export function onPrivateSignal({ peer, name, signal }) {
+  const on = signal.data?.on === true;
+  if (chat.peer?.code === peer) setPrivate(on);
+  toast(t(on ? 'private.peer_on' : 'private.peer_off', { name }));
+}
+
+/** Se borró el chat privado con `peer` (al desconectarse). */
+export function onChatWiped({ peer }) {
+  chat.messages.delete(peer);
+  chat.unread.delete(peer);
+  emit('chat:unread');
+  if (chat.peer?.code === peer) {
+    nodes.clear();
+    $('#chat-list').replaceChildren();
+    delete $('#chat-list').dataset.peer;
+    renderChat();
+  }
+  toast(t('private.wiped'));
+}
+
+/** Al desconectarse de `peer` (dejó la LAN o nos desconectamos): si su chat es privado, se borra. */
+export function wipeIfPrivate(peer) {
+  if (peer) invoke('chat_wipe', { peer }).catch(() => {});
+}
 
 // ---------- transferencias con este equipo ----------
 

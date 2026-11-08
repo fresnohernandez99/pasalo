@@ -333,3 +333,37 @@ async fn view_once_photo() {
     let (opened, _) = next_chat(&mut a.events).await;
     assert!(opened.opened && opened.outgoing);
 }
+
+/// Un chat privado se borra entero (mensajes y fotos) y, si la app se cierra
+/// sin desconectar, al volver a abrirla.
+#[tokio::test]
+async fn private_chat_is_wiped() {
+    let (a, mut b) = pair().await;
+    a.talk.send_text(&b.code, "secreto".into()).await.unwrap();
+    let image: Vec<u8> = (0..10_000u32).map(|i| i as u8).collect();
+    a.talk.send_image(&b.code, &image, "jpg").await.unwrap();
+    next_chat(&mut b.events).await;
+    let (photo, _) = next_chat(&mut b.events).await;
+    let photo = photo.image.unwrap();
+    assert_eq!(b.talk.history(&a.code).len(), 2);
+
+    // No privado: no se borra nada.
+    assert!(!b.talk.wipe_private(&a.code));
+    assert_eq!(b.talk.history(&a.code).len(), 2);
+
+    b.talk.set_private(&a.code, true).unwrap();
+    assert!(b.talk.is_private(&a.code));
+    assert!(b.talk.wipe_private(&a.code));
+    assert!(b.talk.history(&a.code).is_empty());
+    assert!(!photo.exists());
+
+    // Sigue siendo privado: lo nuevo también se borrará; y al reabrir la app, se borra.
+    a.talk.send_text(&b.code, "otro".into()).await.unwrap();
+    next_chat(&mut b.events).await;
+    assert_eq!(b.talk.history(&a.code).len(), 1);
+    let dir = b._dir.path().join("chat");
+    let (tx, _rx) = unbounded_channel();
+    let reopened = Talk::new(b.remote.clone(), "beto", &dir, tx);
+    assert!(reopened.is_private(&a.code));
+    assert!(reopened.history(&a.code).is_empty());
+}

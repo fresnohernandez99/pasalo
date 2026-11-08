@@ -34,6 +34,8 @@ const PATHS = {
   transfers: '<path d="M7 18V5M3 9l4-4 4 4M17 6v13M13 15l4 4 4-4"/>',
   devices: '<rect x="2" y="4" width="13" height="10" rx="1.5"/><path d="M5.5 18h6"/><rect x="17" y="7" width="5" height="12" rx="1"/>',
   shield: '<path d="M12 3 4 6v6c0 5 3.4 8.3 8 9 4.6-.7 8-4 8-9V6z"/>',
+  lock: '<rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/>',
+  unlock: '<rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 7.5-2"/>',
   // Tipos de equipo
   devPhone: '<rect x="7" y="2.5" width="10" height="19" rx="2"/><path d="M11 18h2"/>',
   devLaptop: '<rect x="5" y="4.5" width="14" height="10" rx="1.5"/><path d="M2.5 18.5h19"/>',

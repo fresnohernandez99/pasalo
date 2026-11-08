@@ -36,6 +36,24 @@ pub async fn chat_send_image(
     state.talk()?.send_image(&peer, &bytes, &ext).await.map_err(CmdError::core)
 }
 
+/// Si el chat con `peer` es privado.
+#[tauri::command]
+pub fn chat_private(state: State<'_, AppState>, peer: String) -> CmdResult<bool> {
+    Ok(state.talk()?.is_private(&peer))
+}
+
+/// Marca el chat con `peer` como privado (o no). La interfaz avisa al otro.
+#[tauri::command]
+pub fn chat_set_private(state: State<'_, AppState>, peer: String, on: bool) -> CmdResult<()> {
+    state.talk()?.set_private(&peer, on).map_err(CmdError::core)
+}
+
+/// Borra el historial con `peer` si el chat es privado (al desconectarse).
+#[tauri::command]
+pub fn chat_wipe(state: State<'_, AppState>, peer: String) -> CmdResult<bool> {
+    Ok(state.talk()?.wipe_private(&peer))
+}
+
 /// Nota de voz (`data` en base64, ya comprimida por la interfaz).
 #[tauri::command]
 pub async fn chat_send_audio(

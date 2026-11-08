@@ -320,4 +320,11 @@ export default {
   'web.app_for': "Pasalo para {platform}: también ve la red local y sigue funcionando en segundo plano",
   'web.no_ios_app': "No hay app para iPhone: añade esta web a la pantalla de inicio y funciona como una",
   'rec.cant_play': "Este equipo no puede reproducir esta nota de voz",
+  'private.toggle': "Chat privado",
+  'private.bar': "Chat privado: se borra en los dos equipos al desconectaros",
+  'private.on': "Chat privado: se borrará en los dos equipos al desconectaros",
+  'private.off': "El chat ya no es privado",
+  'private.peer_on': "{name} hizo privado el chat: se borrará al desconectaros",
+  'private.peer_off': "{name} quitó el chat privado",
+  'private.wiped': "Chat privado borrado",
 };

@@ -291,3 +291,10 @@
 }
 .pp-once.on { border-style: solid; border-color: var(--accent); background: var(--accent); }
 .pp-info { flex: 1; min-width: 0; font-size: 14px; color: rgb(255 255 255 / .75); }
+
+/* ---------- chat privado ---------- */
+
+#chat-private.on { color: var(--accent); background: var(--accent-soft); }
+.chat-private-bar { display: flex; align-items: center; gap: 8px; padding: 6px 14px; font-size: 13px; color: var(--accent); background: var(--accent-soft); }
+.chat-private-bar[hidden] { display: none; }
+.chat-private-bar .i { width: 16px; height: 16px; flex: none; }

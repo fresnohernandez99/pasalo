@@ -96,14 +96,45 @@ export class Talk {
     this.pending = new Map(); // id → mensaje
     this.delivering = new Map(); // id → intento
     this.attempts = 0;
+    this.private = new Set(); // códigos con chat privado (ver init)
   }
 
   async init() {
+    // Los chats privados se borran al desconectarse; si se cerró la página
+    // sin desconectar, al volver a abrirla.
+    this.private = new Set((await store.kvGet('private')) || []);
+    for (const peer of this.private) await store.wipeChat(peer);
     for (const m of await store.pendingMessages()) this.pending.set(m.id, m);
     setInterval(() => {
       this.retryDue();
       this.closeIdle();
     }, 10_000);
+  }
+
+  isPrivate(peer) {
+    return this.private.has(this.normalize(peer));
+  }
+
+  async setPrivate(peer, on) {
+    const code = this.parsePeer(peer);
+    if (on) this.private.add(code);
+    else this.private.delete(code);
+    await store.kvSet('private', [...this.private]);
+  }
+
+  /** Si el chat con `peer` es privado, lo borra (mensajes, fotos, notas de voz y pendientes). */
+  async wipePrivate(peer) {
+    const code = this.normalize(peer);
+    if (!this.private.has(code)) return false;
+    for (const [id, m] of this.pending) {
+      if (m.peer === code) {
+        this.pending.delete(id);
+        this.delivering.delete(id);
+      }
+    }
+    await store.wipeChat(code);
+    this.emit({ kind: 'chat_wiped', peer: code });
+    return true;
   }
 
   setName(name) {

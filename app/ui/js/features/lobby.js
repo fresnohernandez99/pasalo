@@ -18,9 +18,9 @@ import { call, invoke, listen } from '../lib/tauri.js';
 import { toast } from '../lib/toast.js';
 import { app } from '../state.js';
 import { endCallWith } from './call.js';
-import { openChat } from './chat.js';
+import { openChat, wipeIfPrivate } from './chat.js';
 import { keepOnline } from './keepalive.js';
-import { addRemotePeer, avatar, ensureRemotePeer, findPeerByCode, removePeer } from './peers.js';
+import { addRemotePeer, avatar, ensureRemotePeer, findPeerByCode, peers, removePeer } from './peers.js';
 import { pauseFor, resumeFor } from './transfers.js';
 
 const net = {
@@ -187,6 +187,7 @@ $('#net-toggle').addEventListener('click', async () => {
   }
   partnerGone('hangup');
   $('#net-toggle').disabled = true;
+  await wipeRemotePrivate();
   await call('net_disconnect').catch(() => {});
   setNetState('offline');
 });
@@ -287,6 +288,25 @@ function partnerGone(reason) {
   pauseFor(partner.code, true);
   net.partner = null;
   removePeer('partner');
+}
+
+/**
+ * Al desconectarse: los chats privados con equipos de otra red (añadidos por
+ * enlace) se borran aquí y se le pide al otro que borre el suyo. El de la
+ * pareja lo borra el backend al dejarla.
+ */
+async function wipeRemotePrivate() {
+  const remote = [...peers.values()].filter((p) => p.platform === 'remote').map((p) => p.addr);
+  await Promise.all(
+    remote.map(async (code) => {
+      if (!(await invoke('chat_private', { peer: code }).catch(() => false))) return;
+      await Promise.race([
+        invoke('call_signal', { peer: code, call: '', kind: 'wipe', data: null }).catch(() => {}),
+        new Promise((resolve) => setTimeout(resolve, 3000)),
+      ]);
+      wipeIfPrivate(code);
+    }),
+  );
 }
 
 /** La pareja se desconectó: el backend ya volvió a solo red local. */

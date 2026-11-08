@@ -78,6 +78,19 @@ export async function history(peer) {
   return list.sort((a, b) => a.ord - b.ord).map(({ ord, ...m }) => m);
 }
 
+/** Borra todos los mensajes con `peer` y sus fotos y notas de voz. */
+export async function wipeChat(peer) {
+  const list = await run('chat', 'readonly', (s) => s.index('peer').getAll(peer));
+  for (const m of list) {
+    for (const path of [m.image, m.audio]) {
+      if (typeof path === 'string' && path.startsWith('media:')) await del('media', path.slice(6));
+    }
+  }
+  await run('chat', 'readwrite', (s) => {
+    for (const m of list) s.delete(m.id);
+  });
+}
+
 export async function pendingMessages() {
   const all = await run('chat', 'readonly', (s) => s.getAll());
   return all.filter((m) => m.outgoing && m.status === 'pending').map(({ ord, ...m }) => m);

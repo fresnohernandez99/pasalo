@@ -140,7 +140,8 @@ pub fn run() {
             net::net_connect, net::net_direct, net::net_disconnect,
             links::link_take, links::link_parse, links::link_mine, net::lobby_request, net::lobby_cancel, net::lobby_answer,
             chat::chat_history, chat::chat_send, chat::chat_send_image, chat::chat_image, chat::chat_send_audio,
-            chat::chat_send_once, chat::chat_once_open, chat::secure_view,
+            chat::chat_send_once, chat::chat_once_open, chat::secure_view, chat::chat_private,
+            chat::chat_set_private, chat::chat_wipe,
             stats::call_record, stats::stats_pending, stats::stats_upload,
             call::call_signal, call::voice_start, call::voice_mode, call::voice_mute, call::voice_speaker,
             call::voice_stop, call::voice_stats, call::video_start, call::video_recv, call::video_send, call::video_stop

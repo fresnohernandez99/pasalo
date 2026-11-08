@@ -320,4 +320,11 @@ export default {
   'web.app_for': "Pasalo for {platform}: it also sees your local network and keeps working in the background",
   'web.no_ios_app': "There is no iPhone app: add this page to your Home Screen and it works like one",
   'rec.cant_play': "This device can't play this voice note",
+  'private.toggle': "Private chat",
+  'private.bar': "Private chat: deleted on both devices when you disconnect",
+  'private.on': "Private chat: it will be deleted on both devices when you disconnect",
+  'private.off': "The chat is no longer private",
+  'private.peer_on': "{name} made the chat private: it will be deleted when you disconnect",
+  'private.peer_off': "{name} made the chat not private",
+  'private.wiped': "Private chat deleted",
 };

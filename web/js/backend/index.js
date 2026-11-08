@@ -214,6 +214,8 @@ function dropPartner() {
   s.partner = null;
   stopWith(partner.code);
   s.talk.release(partner.code);
+  // Chat privado: al desconectarse, su historial se borra.
+  s.talk.wipePrivate(partner.code);
   s.receiver.only = null;
   s.net.only = null;
   return partner;
@@ -241,6 +243,10 @@ function onEvent(e) {
       dropPartner();
       s.node.setInternet(false).catch(() => {});
     }
+  } else if (e.kind === 'signal' && e.signal?.kind === 'private') {
+    s.talk.setPrivate(e.peer, e.signal.data?.on === true).catch(() => {});
+  } else if (e.kind === 'signal' && e.signal?.kind === 'wipe') {
+    s.talk.wipePrivate(e.peer);
   } else if (e.kind === 'talk_lost') {
     stopWith(e.peer);
   }
@@ -484,6 +490,9 @@ const commands = {
   },
 
   chat_history: ({ peer }) => s.talk.history(peer),
+  chat_private: ({ peer }) => s.talk.isPrivate(peer),
+  chat_set_private: ({ peer, on }) => s.talk.setPrivate(peer, on),
+  chat_wipe: ({ peer }) => s.talk.wipePrivate(peer),
   chat_send: ({ peer, text }) => {
     if (!String(text || '').trim()) throw cmdError('nothing_to_send');
     return s.talk.sendText(peer, text);

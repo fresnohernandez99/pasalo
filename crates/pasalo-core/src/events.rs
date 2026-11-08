@@ -111,6 +111,10 @@ pub enum Event {
     TalkLost {
         peer: String,
     },
+    /// Se borró el historial del chat privado con `peer` (al desconectarse).
+    ChatWiped {
+        peer: String,
+    },
     /// La pareja dejó de responder sin despedirse (se quedó sin red, cerró la
     /// app…). Ya se volvió al server (`online`) o a solo red local.
     PartnerLost {
