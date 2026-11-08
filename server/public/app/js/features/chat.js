@@ -261,11 +261,20 @@ function bubbleHtml(m) {
 
 let playing = null; // el <audio> que suena ahora
 
+/** Una `data:` URL como URL de un blob (más fiable para <audio> en WebKit). */
+function blobUrl(url) {
+  if (!url.startsWith('data:')) return url;
+  const [head, b64] = url.split(',');
+  const type = head.slice(5).split(';')[0];
+  const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
+  return URL.createObjectURL(new Blob([bytes], { type }));
+}
+
 async function toggleNote(note) {
   const audio = note.querySelector('audio');
   if (!audio.src) {
     try {
-      audio.src = await invoke('chat_image', { path: audio.dataset.path });
+      audio.src = blobUrl(await invoke('chat_image', { path: audio.dataset.path }));
     } catch (err) {
       note.classList.add('broken');
       toast(errorText(err), true);
@@ -279,7 +288,15 @@ async function toggleNote(note) {
   }
   if (playing && playing !== audio) playing.pause();
   playing = audio;
-  audio.play().catch((err) => toast(errorText(err), true));
+  audio.play().catch((err) => {
+    // Formato que este equipo no sabe reproducir (p. ej. WebM en un Safari viejo).
+    if (err?.name === 'NotSupportedError') {
+      note.classList.add('broken');
+      toast(t('rec.cant_play'), true);
+    } else {
+      toast(errorText(err), true);
+    }
+  });
 }
 
 function bindNote(note, audio) {

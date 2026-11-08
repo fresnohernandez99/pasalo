@@ -319,4 +319,5 @@ export default {
   'web.get_app': "Descargar",
   'web.app_for': "Pasalo para {platform}: también ve la red local y sigue funcionando en segundo plano",
   'web.no_ios_app': "No hay app para iPhone: añade esta web a la pantalla de inicio y funciona como una",
+  'rec.cant_play': "Este equipo no puede reproducir esta nota de voz",
 };

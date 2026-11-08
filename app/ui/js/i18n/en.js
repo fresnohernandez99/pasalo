@@ -319,4 +319,5 @@ export default {
   'web.get_app': "Download",
   'web.app_for': "Pasalo for {platform}: it also sees your local network and keeps working in the background",
   'web.no_ios_app': "There is no iPhone app: add this page to your Home Screen and it works like one",
+  'rec.cant_play': "This device can't play this voice note",
 };

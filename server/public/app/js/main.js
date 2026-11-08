@@ -22,7 +22,7 @@ window.addEventListener('error', (ev) => {
 });
 window.addEventListener('unhandledrejection', (ev) => {
   const reason = ev.reason;
-  if (reason && typeof reason === 'object' && 'code' in reason) return; // ya lo mostró call()
+  if (reason && typeof reason === 'object' && typeof reason.code === 'string') return; // ya lo mostró call()
   // El portapapeles sin permiso no es un fallo de la app.
   if (reason?.name === 'NotAllowedError') return;
   console.error(reason);

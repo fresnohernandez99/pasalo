@@ -7,14 +7,15 @@ import { errorText, t } from '../i18n/index.js';
 import { $ } from '../lib/dom.js';
 import { toast } from '../lib/toast.js';
 
-// Por orden de preferencia: Opus ocupa la mitad que AAC con la misma calidad de voz.
+// Por orden de preferencia: AAC en MP4 primero, que lo reproducen todos
+// (Safari y la app de Mac no siempre saben con WebM). Opus ocupa algo menos,
+// así que queda para los equipos que no graban AAC.
 const TYPES = [
-  ['audio/webm;codecs=opus', 'webm'],
-  ['audio/ogg;codecs=opus', 'ogg'],
-  ['audio/mp4;codecs=mp4a.40.2', 'm4a'],
-  ['audio/mp4', 'm4a'],
+  ['audio/mp4;codecs=mp4a.40.2', 'm4a', 32_000],
+  ['audio/mp4', 'm4a', 32_000],
+  ['audio/webm;codecs=opus', 'webm', 24_000],
+  ['audio/ogg;codecs=opus', 'ogg', 24_000],
 ];
-const BITRATE = 24_000;
 /** Lo más larga que puede ser una nota de voz. */
 const MAX_MS = 5 * 60_000;
 /** Más corta que esto, se toma por un toque sin querer. */
@@ -24,7 +25,7 @@ let rec = null;
 
 function pickType() {
   if (typeof MediaRecorder === 'undefined') return null;
-  return TYPES.find(([type]) => MediaRecorder.isTypeSupported?.(type)) || ['', 'webm'];
+  return TYPES.find(([type]) => MediaRecorder.isTypeSupported?.(type)) || ['', 'webm', 24_000];
 }
 
 function clock(ms) {
@@ -54,8 +55,14 @@ export async function startRecording(send) {
     toast(errorText({ code: err?.name === 'NotAllowedError' ? 'mic_denied' : 'audio_failed', detail: '' }), true);
     return;
   }
-  const [type, ext] = kind;
-  const recorder = new MediaRecorder(stream, { ...(type ? { mimeType: type } : {}), audioBitsPerSecond: BITRATE });
+  const [type, ext, bitrate] = kind;
+  let recorder;
+  try {
+    recorder = new MediaRecorder(stream, { ...(type ? { mimeType: type } : {}), audioBitsPerSecond: bitrate });
+  } catch {
+    // Algún equipo no acepta el bitrate pedido: con el suyo.
+    recorder = new MediaRecorder(stream, type ? { mimeType: type } : {});
+  }
   const chunks = [];
   const started = performance.now();
   rec = { recorder, stream, chunks, started, ext, send, cancelled: false };
