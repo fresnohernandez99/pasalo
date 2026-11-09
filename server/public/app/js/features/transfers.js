@@ -10,7 +10,10 @@ import { icon } from '../lib/icons.js';
 import { call, invoke } from '../lib/tauri.js';
 import { toast } from '../lib/toast.js';
 import { app, isMobile } from '../state.js';
+import { logToChat } from './chat.js';
 import { noteTransfer } from './nav.js';
+import { forward } from './share.js';
+import { isCode, peerCode, peers } from './peers.js';
 
 /** clave → transferencia o texto */
 export const items = new Map();
@@ -51,6 +54,29 @@ export function liveWith(peer) {
   return [...items.values()].filter((i) => i.kind === 'transfer' && LIVE.includes(i.status) && mine(i));
 }
 
+/** El código del chat de esta transferencia, como en `liveWith`; `null` sin chat. */
+function chatCodeOf(tr) {
+  if (tr.code) return tr.code;
+  const all = [...peers.values()];
+  const p = tr.target ? all.find((p) => p.code === tr.target || p.addr === tr.target) : all.find((p) => p.name === tr.peer && peerCode(p));
+  return (p && peerCode(p)) || (tr.target && isCode(tr.target) ? tr.target : null);
+}
+
+/** Lo enviado o recibido queda en el chat con ese equipo (ver `logBubble` en chat.js). */
+function logFiles(tr) {
+  const code = chatCodeOf(tr);
+  if (!code) return;
+  logToChat(code, {
+    type: 'files',
+    id: String(tr.id),
+    outgoing: tr.direction === 'outgoing',
+    names: tr.roots,
+    files: tr.files || tr.roots.length,
+    total: tr.total,
+    saved: tr.direction === 'incoming' ? tr.saved : [],
+  });
+}
+
 // ---------- enviar ----------
 
 export async function sendPaths(peer, paths) {
@@ -59,6 +85,7 @@ export async function sendPaths(peer, paths) {
   const tr = transfer(id, 'outgoing');
   tr.target = peer.addr;
   tr.peer ||= peer.name;
+  tr.paths = paths; // para reenviarlo
   if (!tr.roots.length) tr.roots = paths.map(basename);
   update(tr);
 }
@@ -133,6 +160,7 @@ function actionsFor(tr) {
   // En la web «mostrar» es guardar (no hay carpeta), también en el móvil.
   const web = !!app.settings?.web;
   if (incoming && s === 'done' && tr.saved.length) a.push(['reveal', t(web ? 'btn.save' : 'btn.reveal')]);
+  if (s === 'done' && forwardPaths(tr).length) a.push(['forward', t('chat.forward')]);
   if (FINISHED.includes(s)) a.push(['remove', t('btn.remove')]);
   return a;
 }
@@ -291,11 +319,19 @@ export async function act(item, action) {
       update(item);
       break;
     }
+    case 'forward':
+      forward({ paths: forwardPaths(item) });
+      break;
     case 'copy':
       await navigator.clipboard.writeText(item.text);
       toast(t('toast.copied'));
       break;
   }
+}
+
+/** Lo que se reenvía de una transferencia: lo recibido o lo enviado en esta sesión. */
+function forwardPaths(tr) {
+  return (tr.direction === 'incoming' ? tr.saved : tr.paths) || [];
 }
 
 /** Lo recibido se abre tocando la tarjeta: su carpeta (en la web, guardar
@@ -354,6 +390,7 @@ export function onTransferEvent(e) {
         peer: e.peer,
         code: e.code || tr.code || null,
         roots: e.roots.length ? e.roots : tr.roots,
+        files: e.files,
         total: e.total_bytes,
         done: e.resumed_bytes,
         resumed: e.resumed_bytes,
@@ -387,6 +424,7 @@ export function onTransferEvent(e) {
       const tr = transfer(e.id, e.direction);
       Object.assign(tr, { status: 'done', done: tr.total, saved: e.saved, error: null, wire: e.wire_bytes });
       update(tr);
+      logFiles(tr);
       if (e.direction === 'incoming') toast(t('toast.received', { name: label(tr.roots), peer: tr.peer }));
       break;
     }

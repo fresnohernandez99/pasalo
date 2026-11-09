@@ -33,3 +33,21 @@ self.addEventListener('fetch', (event) => {
     }),
   );
 });
+
+// Al tocar una notificación (o sus botones), la página hace lo suyo: abrir el
+// chat, contestar o rechazar. Salvo al rechazar, la app pasa al frente.
+self.addEventListener('notificationclick', (event) => {
+  event.notification.close();
+  const data = event.notification.data || {};
+  const message = { type: 'pasalo-notification', action: event.action || data.action, peer: data.peer, call: data.call };
+  event.waitUntil(
+    self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then(async (clients) => {
+      const client = clients[0];
+      if (message.action !== 'decline') {
+        if (client) await client.focus().catch(() => {});
+        else await self.clients.openWindow(self.registration.scope);
+      }
+      client?.postMessage(message);
+    }),
+  );
+});

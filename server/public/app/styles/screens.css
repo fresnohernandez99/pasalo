@@ -40,3 +40,38 @@
 /* Sin hueco debajo: las páginas van pegadas abajo. */
 #discover .screen-body { padding-bottom: 0; }
 #discover-steps { margin: 4px 0 14px; }
+
+/* Permisos: para qué es cada uno, cómo está y el botón para pedirlo. */
+.perm-list { display: flex; flex-direction: column; }
+.perm-row { display: flex; align-items: center; gap: 12px; padding: 12px 0; }
+.perm-row + .perm-row { border-top: 1px solid var(--border); }
+.perm-row:first-child { padding-top: 0; }
+.perm-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.perm-state { font-size: 13px; font-weight: 600; }
+.perm-state.granted { color: var(--ok); }
+.perm-state.ask { color: var(--warn); }
+.perm-state.denied { color: var(--err); }
+.perm-row button { flex: none; }
+
+/* ---------- minijuegos ---------- */
+
+/* Encima de la llamada (z 20) y de ajustes: mientras se juega, nada más. */
+.game { z-index: 30; }
+.game-title { min-width: 0; display: flex; flex-direction: column; }
+.game-title h1 { font-size: 18px; }
+.game-body { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; align-items: center; gap: 18px; padding: 12px 16px calc(24px + var(--nav)); }
+.game-status { margin: 8px 0 0; font-size: 17px; font-weight: 600; text-align: center; }
+.game-board { width: 100%; max-width: 360px; }
+.game-list { display: flex; flex-direction: column; gap: 8px; min-width: min(80vw, 320px); }
+.game-pick { display: flex; align-items: center; gap: 12px; padding: 12px; border-radius: var(--radius-sm); background: var(--surface-2); text-align: left; }
+.game-pick strong, .game-pick small { display: block; }
+.game-icon { display: grid; place-items: center; width: 40px; height: 40px; border-radius: 12px; background: var(--accent-soft); color: var(--accent); flex: none; }
+
+/* Tres en raya */
+.ttt { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+/* Alto fijo y no `aspect-ratio`: los WebView viejos no lo conocen. */
+.ttt-cell { display: grid; place-items: center; height: min(27vw, 112px); border-radius: 14px; background: var(--surface); box-shadow: var(--shadow-1); font-size: 44px; font-weight: 700; color: var(--muted); }
+.ttt-cell.mine { color: var(--accent); }
+.ttt-cell.win { background: var(--accent-soft); }
+.ttt-cell:disabled { opacity: 1; cursor: default; }
+.ttt-cell:not(:disabled):active { transform: scale(.97); }

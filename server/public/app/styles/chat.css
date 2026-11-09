@@ -176,6 +176,9 @@
 .menu button:hover { background: var(--surface-2); }
 .menu .i { color: var(--accent); }
 @keyframes pop { from { opacity: 0; transform: translateY(6px) scale(.98); } }
+/* El de un mensaje va donde se pulsó (lo coloca chat.js). */
+.msg-menu { position: fixed; bottom: auto; min-width: 170px; z-index: 20; }
+.msg.held .bubble { filter: brightness(.92); }
 
 /* ---------- notas de voz ---------- */
 
@@ -298,3 +301,8 @@
 .chat-private-bar { display: flex; align-items: center; gap: 8px; padding: 6px 14px; font-size: 13px; color: var(--accent); background: var(--accent-soft); }
 .chat-private-bar[hidden] { display: none; }
 .chat-private-bar .i { width: 16px; height: 16px; flex: none; }
+
+/* Registros de partidas y archivos: como una llamada; solo se tocan los archivos recibidos. */
+.log-msg div.call-log { cursor: default; }
+.msg.log-msg .bubble { cursor: default; }
+.msg.log-msg button.call-log { cursor: pointer; }

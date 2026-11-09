@@ -15,6 +15,7 @@ import { Lobby } from './lobby.js';
 import { ALPN, Receiver, forgetReceived, manifest, probe, receivedFile, sendEntries, sendText } from './files.js';
 import * as store from './store.js';
 import { ONCE_PREFIX, TALK_ALPN, Talk } from './talk.js';
+import { notifyCommands } from './notify.js';
 import { PasaloError, SHORT, asError, cmdError, cmdFrom, mimeFor, sleep, timed, uuid } from './util.js';
 import { VoiceCall } from './voice.js';
 
@@ -374,6 +375,7 @@ function targetCode(target) {
 // ---------- comandos ----------
 
 const commands = {
+  ...notifyCommands,
   snapshot: () => ({
     name: s.settings.name,
     dir: '',
@@ -428,8 +430,14 @@ const commands = {
     const name = (files[0].webkitRelativePath || '').split('/')[0] || 'carpeta';
     return remember({ kind: 'dir', name, files }, name);
   },
-  send: ({ target, paths }) => {
-    const picks = (paths || []).map((p) => s.picks.get(p)).filter(Boolean);
+  // Lo recibido también se puede reenviar (por su id) mientras no se guarde.
+  send: async ({ target, paths }) => {
+    const picks = [];
+    for (const p of paths || []) {
+      const file = s.picks.has(p) ? null : await receivedAsFile(p).catch(() => null);
+      const pick = file ? { kind: 'file', file } : s.picks.get(p);
+      if (pick) picks.push(pick);
+    }
     if (!picks.length) throw cmdError('nothing_to_send');
     const code = targetCode(target);
     const id = s.nextId++;
@@ -582,6 +590,20 @@ const commands = {
     return out.buffer;
   },
   video_send: (bytes) => s.video?.sender.send(bytes) ?? false,
+
+  // Registro local en el chat: una partida o unos archivos (ver `log_event` en talk.rs).
+  chat_log: async ({ peer, record }) => {
+    const code = targetCode(peer);
+    const kind = String(record?.type || 'log').replace(/[^\w-]/g, '').slice(0, 16) || 'log';
+    const key = String(record?.id || '').replace(/[^\w-]/g, '').slice(0, 80) || uuid();
+    const outgoing = !!record?.outgoing;
+    const message = {
+      id: `${kind}-${key}`, peer: code, outgoing, ts: Date.now(), text: null, image: null,
+      status: outgoing ? 'delivered' : 'received', log: record,
+    };
+    await store.saveMessage(message);
+    return message;
+  },
 
   // Registro de cada llamada: en su chat y en las estadísticas por subir.
   call_record: async ({ peer, record }) => {

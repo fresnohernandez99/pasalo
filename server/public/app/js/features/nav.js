@@ -37,10 +37,13 @@ let unseen = 0;
  */
 export function updateLayers(focus) {
   const call = !$('#call').hidden;
+  const game = !$('#game').hidden;
   const settings = !$('#settings').hidden || !$('#discover').hidden;
   const photo = !$('#photo-preview').hidden || !$('#once-viewer').hidden;
-  $('.app').inert = call || settings || photo;
-  $('#settings').inert = call;
+  $('.app').inert = call || settings || photo || game;
+  $('#settings').inert = call || game;
+  // La partida va encima de la llamada: mientras, solo se cuelga desde ella.
+  $('#call').inert = game;
   if (focus && !focus.hidden) focus.focus({ preventScroll: true });
 }
 
