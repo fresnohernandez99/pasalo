@@ -3,4 +3,9 @@
     <string name="service_online">En línea: otros equipos pueden encontrarte</string>
     <string name="service_call">Llamada en curso</string>
     <string name="service_close">Cerrar</string>
+    <string name="notify_messages">Mensajes</string>
+    <string name="notify_calls">Llamadas</string>
+    <string name="notify_me">Tú</string>
+    <string name="notify_answer">Contestar</string>
+    <string name="notify_decline">Rechazar</string>
 </resources>

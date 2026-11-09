@@ -107,6 +107,12 @@ pub struct ChatMessage {
     /// Una foto de una vez que ya se vio (aquí o, si es nuestra, allí).
     #[serde(default, skip_serializing_if = "is_false")]
     pub opened: bool,
+    /// Registro local de algo que pasó con este equipo fuera del chat (solo
+    /// aquí, no se envía): una partida (`type: game`) o archivos enviados o
+    /// recibidos (`type: files`). Lo que lleva lo decide la interfaz; ver
+    /// [`Talk::log_event`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub log: Option<serde_json::Value>,
 }
 
 fn is_false(value: &bool) -> bool {
@@ -128,6 +134,7 @@ impl ChatMessage {
             duration_ms: None,
             once: false,
             opened: false,
+            log: None,
         }
     }
 }
@@ -529,6 +536,30 @@ impl Talk {
         let mut message =
             ChatMessage::new(id, normalize(peer), outgoing, ts, if outgoing { Status::Delivered } else { Status::Received });
         message.call = Some(record);
+        self.inner.store.append(&message).map_err(Error::Local)?;
+        Ok(message)
+    }
+
+    /// Deja en el chat con `peer` un registro local (`record`, ver
+    /// [`ChatMessage::log`]). Con el mismo `id` (si lo trae), uno nuevo pisa
+    /// al anterior en su sitio; `outgoing` dice de qué lado sale.
+    pub fn log_event(&self, peer: &str, record: serde_json::Value) -> Result<ChatMessage, Error> {
+        parse_peer(peer)?;
+        let clean = |v: Option<&serde_json::Value>, len: usize| -> String {
+            let raw = v.and_then(|v| v.as_str()).unwrap_or_default();
+            raw.chars().filter(|c| c.is_ascii_alphanumeric() || *c == '-').take(len).collect()
+        };
+        let kind = Some(clean(record.get("type"), 16)).filter(|k| !k.is_empty()).unwrap_or_else(|| "log".into());
+        let key = Some(clean(record.get("id"), 80)).filter(|k| !k.is_empty()).unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+        let outgoing = record.get("outgoing").and_then(|v| v.as_bool()).unwrap_or(false);
+        let mut message = ChatMessage::new(
+            format!("{kind}-{key}"),
+            normalize(peer),
+            outgoing,
+            now_ms(),
+            if outgoing { Status::Delivered } else { Status::Received },
+        );
+        message.log = Some(record);
         self.inner.store.append(&message).map_err(Error::Local)?;
         Ok(message)
     }

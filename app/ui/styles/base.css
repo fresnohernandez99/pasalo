@@ -124,10 +124,8 @@ input:focus, textarea:focus, select:focus { border-color: var(--accent); backgro
   font-weight: 650;
   font-size: 16px;
 }
-@media (prefers-color-scheme: dark) {
-  .avatar { background: hsl(var(--hue) 35% 24%); color: hsl(var(--hue) 70% 82%); }
-}
-.avatar.small { width: 36px; height: 36px; font-size: 14px; }
+[data-theme="dark"] .avatar { background: hsl(var(--hue) 35% 24%); color: hsl(var(--hue) 70% 82%); }
+.avatar.small { width: 36px; height: 36px; font-size: 13px; }
 .avatar.big { width: 64px; height: 64px; font-size: 24px; }
 .avatar.huge { width: 112px; height: 112px; font-size: 42px; }
 /* Tipo de equipo, en la esquina inferior derecha. */
@@ -145,8 +143,9 @@ input:focus, textarea:focus, select:focus { border-color: var(--accent); backgro
   box-shadow: 0 0 0 2px var(--surface);
 }
 .avatar .device .i { width: 13px; height: 13px; }
-.avatar.small .device { width: 17px; height: 17px; }
-.avatar.small .device .i { width: 11px; height: 11px; }
+/* En el pequeño, más chico y más hacia fuera: si no, tapaba la segunda inicial. */
+.avatar.small .device { right: -5px; bottom: -5px; width: 15px; height: 15px; }
+.avatar.small .device .i { width: 10px; height: 10px; }
 
 .badge {
   display: inline-grid;
@@ -213,9 +212,7 @@ dialog textarea { resize: vertical; }
 .toast.show { opacity: 1; transform: translate(-50%, 0); }
 .toast.error { background: var(--err); color: #fff; }
 /* En oscuro, --err es claro: el texto blanco no se leería. */
-@media (prefers-color-scheme: dark) {
-  .toast.error { background: #b42318; }
-}
+[data-theme="dark"] .toast.error { background: #b42318; }
 
 /* En el móvil no hay carpetas que elegir, ni arrastrar y soltar, ni Finder. */
 .mobile .desktop-only, .mobile .drag-hint { display: none !important; }

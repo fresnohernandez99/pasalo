@@ -27,31 +27,34 @@
   /* Las pone el plugin de Android: teclado, barra de navegación y barra de
      estado (--sys-top: donde el WebView no da la zona segura de arriba). */
   --kb: 0px;
-  --nav: env(safe-area-inset-bottom, 0px);
+  --nav-bar: env(safe-area-inset-bottom, 0px);
+  /* Lo que tapa la barra de navegación: nada con el teclado abierto, que ya
+     la cubre. Se calcula aquí y no en Android: en Android 10 no siempre
+     llega el aviso de que el teclado se cerró, y la barra tapaba el chat. */
+  --nav: max(0px, calc(var(--nav-bar) - var(--kb)));
   --safe-top: max(env(safe-area-inset-top, 0px), var(--sys-top, 0px));
   color-scheme: light;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --bg: #0f1115;
-    --surface: #181b21;
-    --surface-2: #22262e;
-    --text: #e9ebef;
-    --muted: #9aa2b0;
-    --border: #2a2f38;
-    --accent: #5b8cff;
-    --accent-text: #0b1020;
-    --accent-soft: #1d2a4a;
-    --ok: #4ade80;
-    --warn: #fbbf24;
-    --err: #f87171;
-    --bubble-out: #3f6fe0;
-    --bubble-out-text: #ffffff;
-    --bubble-in: #22262e;
-    --chat-bg: #12151a;
-    --shadow-1: 0 1px 2px rgb(0 0 0 / .4);
-    --shadow-2: 0 10px 30px rgb(0 0 0 / .5);
-    color-scheme: dark;
-  }
+/* Lo pone js/theme.js: el del sistema o el elegido en Ajustes. */
+:root[data-theme="dark"] {
+  --bg: #0f1115;
+  --surface: #181b21;
+  --surface-2: #22262e;
+  --text: #e9ebef;
+  --muted: #9aa2b0;
+  --border: #2a2f38;
+  --accent: #5b8cff;
+  --accent-text: #0b1020;
+  --accent-soft: #1d2a4a;
+  --ok: #4ade80;
+  --warn: #fbbf24;
+  --err: #f87171;
+  --bubble-out: #3f6fe0;
+  --bubble-out-text: #ffffff;
+  --bubble-in: #22262e;
+  --chat-bg: #12151a;
+  --shadow-1: 0 1px 2px rgb(0 0 0 / .4);
+  --shadow-2: 0 10px 30px rgb(0 0 0 / .5);
+  color-scheme: dark;
 }

@@ -95,6 +95,20 @@ impl Android {
         Ok(picked.paths)
     }
 
+    /// Llama a `method` del plugin; si falla, la app sigue sin la notificación.
+    pub async fn plugin(&self, method: &str, args: impl serde::Serialize) {
+        let _ = self.0.run_mobile_plugin_async::<serde_json::Value>(method, args).await;
+    }
+
+    /// Como `plugin`, pero con lo que devuelve.
+    pub async fn call<T: serde::de::DeserializeOwned>(&self, method: &str, args: impl serde::Serialize) -> Option<T> {
+        self.0.run_mobile_plugin_async(method, args).await.ok()
+    }
+
+    pub async fn take_notification(&self) -> crate::notify::Tapped {
+        self.0.run_mobile_plugin_async("takeNotification", ()).await.unwrap_or_default()
+    }
+
     /// Lo que llegó por «Compartir» desde otra app (ya copiado), si hay algo.
     pub async fn take_share(&self) -> Result<crate::files::Shared, String> {
         self.0.run_mobile_plugin_async("takeShare", ()).await.map_err(|e| e.to_string())

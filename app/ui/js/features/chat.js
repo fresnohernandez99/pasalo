@@ -5,17 +5,20 @@
 import { errorText, t } from '../i18n/index.js';
 import { emit, on } from '../lib/bus.js';
 import { $, esc, setHtml } from '../lib/dom.js';
-import { bytes, clock, dayKey, dayLabel, shortCode } from '../lib/format.js';
+import { bytes, clock, dayKey, dayLabel, label, shortCode } from '../lib/format.js';
 import { icon } from '../lib/icons.js';
 import { call, invoke, tryCall } from '../lib/tauri.js';
 import { toast } from '../lib/toast.js';
 import { isMobile } from '../state.js';
 import { onBack, setPaneOpen } from './nav.js';
+import { clearNotification, notifyMessage, onNotification } from './notify.js';
+import { pickGame } from './game.js';
 import { avatar, ensureRemotePeer, findPeerByCode, peerCode } from './peers.js';
 import { act, items, liveWith, sendPaths } from './transfers.js';
 import { openViewer } from './viewer.js';
 import { openPhotoPreview } from './photo-preview.js';
 import { openOnce } from './once.js';
+import { forward } from './share.js';
 import { isRecording, startRecording } from './recorder.js';
 
 const chat = {
@@ -38,6 +41,7 @@ export async function openChat(peer) {
   if (!code) return;
   chat.peer = { code, name: peer.name, os: peer.os || peer.platform, platform: peer.platform, addr: peer.addr };
   chat.unread.delete(code);
+  clearNotification({ peer: code });
   emit('chat:open');
   $('#chat-avatar').outerHTML = avatar(peer.name, chat.peer.os).replace('class="avatar ', 'id="chat-avatar" class="avatar ');
   $('#chat-name').textContent = peer.name;
@@ -69,7 +73,7 @@ export function closeChat() {
 }
 
 onBack(() => {
-  if (closeAttachMenu()) return true;
+  if (closeAttachMenu() || closeMsgMenu()) return true;
   if (!chat.peer || !isMobile()) return false;
   closeChat();
   return true;
@@ -143,7 +147,7 @@ function messageNode(m, first, last) {
     el = document.createElement('div');
     nodes.set(m.id, el);
   }
-  const call = m.call ? ` call-msg${BAD_OUTCOMES.includes(m.call.outcome) ? ' bad' : ''}` : '';
+  const call = m.call ? ` call-msg${BAD_OUTCOMES.includes(m.call.outcome) ? ' bad' : ''}` : m.log ? ' call-msg log-msg' : '';
   el.className = `msg ${m.outgoing ? 'out' : 'in'}${first ? ' first' : ''}${last ? ' last' : ''}${m.image && !m.text && !m.once ? ' photo' : ''}${call}${m.once ? ' once-msg' : ''}`;
   const html = bubbleHtml(m);
   if (el.dataset.html !== html) {
@@ -221,6 +225,43 @@ function openCallDetails(m) {
 
 $('#call-details-close').addEventListener('click', () => $('#call-details').close());
 
+// ---------- registros: partidas y archivos ----------
+
+/** Lo que se ve de un registro (`m.log`): icono, título y detalle. */
+function logParts(m) {
+  const l = m.log;
+  if (l.type === 'game') {
+    return { icon: 'game', title: t(`game.${l.game}`), sub: t(`game.log_${l.result}`, { name: chat.peer?.name || '' }) };
+  }
+  if (l.type === 'files') {
+    const names = Array.isArray(l.names) ? l.names : [];
+    const count = Number(l.files) || names.length;
+    return {
+      icon: count > 1 || l.folder ? 'folder' : 'file',
+      title: label(names) || t('log.files'),
+      sub: `${t(m.outgoing ? 'log.files_sent' : 'log.files_received', { n: count })} · ${bytes(Number(l.total) || 0)}`,
+    };
+  }
+  return { icon: 'chat', title: '', sub: '' };
+}
+
+/** Partida o archivos: como una llamada, y los recibidos se abren al tocarlos. */
+function logBubble(m) {
+  const p = logParts(m);
+  const open = !m.outgoing && m.log.type === 'files' && m.log.saved?.length;
+  const tag = open ? `button type="button" data-log="${esc(m.id)}"` : 'div';
+  return `<div class="bubble"><${tag} class="call-log">
+    <span class="call-icon">${icon(p.icon)}</span>
+    <span class="call-body"><span class="call-title">${esc(p.title)}</span><span class="call-sub">${esc(p.sub)}</span></span>
+    <span class="meta">${clock(m.ts)}</span></${open ? 'button' : 'div'}></div>`;
+}
+
+/** Deja `record` en el chat con `code` (ver `log_event` en talk.rs) y lo enseña. */
+export async function logToChat(code, record) {
+  const message = await invoke('chat_log', { peer: code, record }).catch(() => null);
+  if (message) onChatEvent({ message });
+}
+
 /** Foto de una vez: no se enseña aquí; se abre (y se borra) al tocarla. */
 function onceHtml(m) {
   const label = m.outgoing ? t(m.opened ? 'once.seen' : 'once.sent') : t(m.opened ? 'once.opened' : 'once.view');
@@ -237,6 +278,7 @@ function noteTime(ms) {
 
 function bubbleHtml(m) {
   if (m.call) return callBubble(m);
+  if (m.log) return logBubble(m);
   const pending = m.outgoing && m.status === 'pending';
   const tick = m.outgoing
     ? `<span class="tick ${pending ? 'pending' : ''}" title="${esc(t(pending ? 'chat.pending' : 'chat.delivered'))}">${icon(pending ? 'clock' : 'check')}</span>`
@@ -364,6 +406,13 @@ $('#chat-list').addEventListener('click', (ev) => {
     openOnce(chat.peer.code, once.dataset.once);
     return;
   }
+  const log = ev.target.closest('[data-log]');
+  if (log) {
+    const m = (chat.messages.get(chat.peer?.code) || []).find((x) => x.id === log.dataset.log);
+    // `tryCall` y no `call`: aquí `call` es el botón de una llamada (más abajo).
+    if (m?.log?.saved?.length) tryCall('reveal', { path: m.log.saved[0] });
+    return;
+  }
   const call = ev.target.closest('[data-call]');
   if (call) {
     const m = (chat.messages.get(chat.peer?.code) || []).find((x) => x.id === call.dataset.call);
@@ -372,6 +421,107 @@ $('#chat-list').addEventListener('click', (ev) => {
   }
   const img = ev.target.closest('.msg-img')?.querySelector('img');
   if (img?.src) openViewer(img);
+});
+
+// ---------- reenviar ----------
+// Mantener pulsado un mensaje (o el botón derecho) abre su menú. Las fotos de
+// una vez y las llamadas no se reenvían; los archivos, solo los recibidos (de
+// los enviados no queda la ruta).
+
+const HOLD_MS = 450;
+let held = null; // { m, el } con el menú abierto
+
+/** Lo que se reenvía de `m`, o `null` si no se puede. */
+function forwardable(m) {
+  if (!m || m.once || m.call) return null;
+  if (m.log) return m.log.saved?.length ? { paths: m.log.saved } : null;
+  if (m.audio) return { media: { kind: 'audio', path: m.audio, durationMs: m.duration_ms } };
+  if (m.image) return { media: { kind: 'image', path: m.image } };
+  if (m.text) return { text: m.text };
+  return null;
+}
+
+function closeMsgMenu() {
+  if (!held) return false;
+  held.el.classList.remove('held');
+  held = null;
+  $('#msg-menu').hidden = true;
+  return true;
+}
+
+function openMsgMenu(el, x, y) {
+  const m = (chat.messages.get(chat.peer?.code) || []).find((msg) => nodes.get(msg.id) === el);
+  if (!forwardable(m)) return false;
+  closeAttachMenu();
+  closeMsgMenu();
+  held = { m, el };
+  el.classList.add('held');
+  getSelection()?.removeAllRanges();
+  const menu = $('#msg-menu');
+  menu.querySelector('[data-msg="copy"]').hidden = !m.text;
+  menu.hidden = false;
+  // Junto al dedo, sin salirse de la pantalla.
+  const { width, height } = menu.getBoundingClientRect();
+  menu.style.left = `${Math.max(8, Math.min(x, innerWidth - width - 8))}px`;
+  menu.style.top = `${Math.max(8, Math.min(y, innerHeight - height - 8))}px`;
+  return true;
+}
+
+let hold = null; // { timer, x, y } mientras se mantiene pulsado
+let heldClick = false; // el toque que abrió el menú no abre también la foto
+
+$('#chat-list').addEventListener('touchstart', (ev) => {
+  heldClick = false;
+  const el = ev.target.closest('.msg');
+  if (!el || ev.touches.length > 1) return;
+  const { clientX: x, clientY: y } = ev.touches[0];
+  clearTimeout(hold?.timer);
+  hold = { x, y, timer: setTimeout(() => {
+    hold = null;
+    heldClick = openMsgMenu(el, x, y);
+  }, HOLD_MS) };
+}, { passive: true });
+$('#chat-list').addEventListener('touchmove', (ev) => {
+  const touch = ev.touches[0];
+  if (hold && Math.hypot(touch.clientX - hold.x, touch.clientY - hold.y) > 10) {
+    clearTimeout(hold.timer);
+    hold = null;
+  }
+}, { passive: true });
+for (const type of ['touchend', 'touchcancel']) {
+  $('#chat-list').addEventListener(type, () => {
+    clearTimeout(hold?.timer);
+    hold = null;
+  });
+}
+// Android también lo lanza al mantener pulsado: ahí el menú ya está abierto.
+$('#chat-list').addEventListener('contextmenu', (ev) => {
+  const el = ev.target.closest('.msg');
+  if (!el) return;
+  if (held?.el === el || openMsgMenu(el, ev.clientX, ev.clientY)) ev.preventDefault();
+});
+$('#chat-list').addEventListener('click', (ev) => {
+  if (!heldClick) return;
+  heldClick = false;
+  ev.stopImmediatePropagation();
+}, { capture: true });
+
+document.addEventListener('click', (ev) => {
+  if (!ev.target.closest('#msg-menu')) closeMsgMenu();
+});
+$('#chat-list').addEventListener('scroll', closeMsgMenu, { passive: true });
+
+$('#msg-menu').addEventListener('click', async (ev) => {
+  const what = ev.target.closest('button')?.dataset.msg;
+  const m = held?.m;
+  closeMsgMenu();
+  if (!what || !m) return;
+  if (what === 'copy') {
+    await navigator.clipboard.writeText(m.text);
+    toast(t('toast.copied'));
+  } else {
+    forward(forwardable(m));
+  }
 });
 
 $('#chat-close').addEventListener('click', closeChat);
@@ -443,6 +593,8 @@ $('#attach-menu').addEventListener('click', async (ev) => {
   } else if (what === 'folder') {
     const folder = await call('pick_folder');
     if (folder) sendPaths(peer, [folder]);
+  } else if (what === 'game') {
+    pickGame({ code: peer.code, name: peer.name });
   }
 });
 
@@ -579,9 +731,22 @@ on('peers:changed', () => {
 
 // ---------- eventos ----------
 
+// Tocar la notificación de un mensaje abre su chat.
+onNotification('open', (code) => {
+  const peer = findPeerByCode(code) || (chat.peer?.code === code ? chat.peer : null);
+  if (peer) openChat(peer);
+});
+
 export function onChatEvent({ message, name }) {
   if (name) ensureRemotePeer(message.peer, name);
   upsertMessage(message);
+  // Los registros (partidas, archivos) ya se vieron o avisaron por su lado.
+  if (message.log) {
+    if (chat.peer?.code === message.peer) renderChat();
+    return;
+  }
+  // Aunque sea el chat abierto: con la app en segundo plano no se ve.
+  if (!message.outgoing && !message.call && !message.opened) notifyMessage(message, name || findPeerByCode(message.peer)?.name || shortCode(message.peer));
   if (chat.peer?.code === message.peer) {
     renderChat();
   } else if (message.call) {

@@ -35,6 +35,8 @@ import { activePeer, onChatEvent } from './chat.js';
 import { keepCall } from './keepalive.js';
 import { onHello, onUnpair } from './lobby.js';
 import { onBack, updateLayers } from './nav.js';
+import { clearNotification, notifyCall, notifyMissed, onNotification } from './notify.js';
+import { pickGame, playing } from './game.js';
 import { ensureRemotePeer } from './peers.js';
 import { BackgroundBlur, loadSegmenter } from './blur.js';
 import { VIDEO_MODES, VideoReceiver, VideoSender, decodableCodecs, pickCodec } from './video.js';
@@ -202,7 +204,8 @@ export function onSignal({ peer, name, signal: s }) {
   }
   if (s.kind === 'invite') {
     const media = s.data?.media === 'video' ? 'video' : 'voice';
-    if (live) {
+    // En otra llamada, o en una partida (que va encima y taparía la llamada).
+    if (live || playing()) {
       invoke('call_signal', { peer, call: s.call, kind: 'busy', data: null }).catch(() => {});
       // Como en WhatsApp: queda como perdida.
       ensureRemotePeer(peer, name);
@@ -225,6 +228,7 @@ export function onSignal({ peer, name, signal: s }) {
     });
     showCall();
     startRinging();
+    notifyCall(live);
     // Si la señal de colgar no llega (el otro se quedó sin conexión), no se
     // sigue sonando para siempre.
     live.ringTimer = setTimeout(() => endCall(t('call.missed'), 'missed'), RING_TIMEOUT + 5000);
@@ -281,6 +285,7 @@ async function acceptCall() {
   live.state = 'answering';
   $('#call-accept').disabled = true;
   clearTimeout(live.ringTimer);
+  clearNotification({ call: live.id });
   const data = live.media === 'video' ? { codecs: await decodableCodecs() } : null;
   try {
     await signal('accept', data);
@@ -297,6 +302,14 @@ function declineCall() {
   signal('decline').catch(() => {});
   endCall(null, 'declined');
 }
+
+// Contestar o rechazar desde la notificación de la llamada.
+onNotification('answer', (id) => {
+  if (live?.id === id) acceptCall();
+});
+onNotification('decline', (id) => {
+  if (live?.id === id && live.state === 'incoming') declineCall();
+});
 
 /** Cuelga. `reason` (`no_answer`) se avisa en pantalla. */
 function hangup(reason, outcome) {
@@ -527,7 +540,10 @@ function endCall(message, outcome) {
   if (!live) return;
   const c = live;
   live = null;
-  logCall(c, outcome || (c.state === 'active' ? 'completed' : 'failed'));
+  const result = outcome || (c.state === 'active' ? 'completed' : 'failed');
+  logCall(c, result);
+  clearNotification({ call: c.id });
+  if (result === 'missed' && c.role === 'callee') notifyMissed(c);
   $('#call-accept').disabled = false;
   keepCall(null);
   stopRinging();
@@ -637,6 +653,7 @@ function showCall() {
   $('#call-accept').hidden = c.state !== 'incoming';
   $('#call-decline').hidden = c.state !== 'incoming';
   $('#call-hangup').hidden = c.state === 'incoming';
+  $('#call-game').hidden = c.state !== 'active';
   $('#call-controls-live').hidden = c.state === 'incoming';
   $('#call-speaker').hidden = !isMobile();
   $('#call-cam').hidden = !video;
@@ -677,6 +694,18 @@ function setCamera(on) {
 $('#call-accept').addEventListener('click', acceptCall);
 $('#call-decline').addEventListener('click', declineCall);
 $('#call-hangup').addEventListener('click', () => hangup());
+// Jugar con quien está al otro lado, sin colgar.
+$('#call-game').addEventListener('click', () => {
+  if (live?.state === 'active') pickGame(live.peer);
+});
+
+/** La llamada en curso, si la hay (`{ peer: { code, name } }`). */
+export const activeCall = () => (live?.state === 'active' ? live : null);
+
+/** Cuelga la llamada en curso (desde la partida, p. ej.). */
+export function hangupCall() {
+  if (live) hangup();
+}
 
 $('#call-mute').addEventListener('click', () => {
   if (!live) return;
@@ -726,7 +755,8 @@ $('#call').addEventListener('click', (ev) => {
 });
 
 // En una llamada, Atrás no cuelga: hay que pulsar Colgar.
-onBack(() => !!live);
+// En una partida, Atrás sale de ella (ver game.js), no de aquí.
+onBack(() => !!live && !playing());
 
 $('#call-mode').addEventListener('change', (ev) => {
   if (!live) return;

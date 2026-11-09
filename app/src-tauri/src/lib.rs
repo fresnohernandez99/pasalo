@@ -9,6 +9,7 @@ mod error;
 mod files;
 mod links;
 mod net;
+mod notify;
 mod settings;
 mod state;
 mod stats;
@@ -94,6 +95,8 @@ fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
 
     crate::links::init(app);
     #[cfg(desktop)]
+    notify::init(app.handle());
+    #[cfg(desktop)]
     if let Err(e) = tray::init(app.handle()) {
         eprintln!("sin icono en la bandeja: {e}");
     }
@@ -137,6 +140,8 @@ pub fn run() {
         .manage(links::Pending::default())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init());
+    #[cfg(desktop)]
+    let builder = builder.plugin(tauri_plugin_notification::init());
     #[cfg(target_os = "android")]
     let builder = builder.plugin(android::init());
     #[cfg(desktop)]
@@ -153,10 +158,12 @@ pub fn run() {
             links::link_take, links::link_parse, links::link_mine, net::lobby_request, net::lobby_users, net::lobby_cancel, net::lobby_answer,
             chat::chat_history, chat::chat_send, chat::chat_send_image, chat::chat_image, chat::chat_send_audio,
             chat::chat_send_once, chat::chat_once_open, chat::secure_view, chat::chat_private,
-            chat::chat_set_private, chat::chat_wipe,
+            chat::chat_set_private, chat::chat_wipe, chat::chat_log,
             stats::call_record, stats::stats_pending, stats::stats_upload,
             call::call_signal, call::voice_start, call::voice_mode, call::voice_mute, call::voice_speaker,
-            call::voice_stop, call::voice_stats, call::video_start, call::video_recv, call::video_send, call::video_stop, tray::tray_labels
+            call::voice_stop, call::voice_stats, call::video_start, call::video_recv, call::video_send, call::video_stop, tray::tray_labels,
+            notify::notify_message, notify::notify_call, notify::notify_clear, notify::notify_take,
+            notify::permissions, notify::permission_request
         ])
         .build(tauri::generate_context!())
         .expect("error al iniciar Pasalo")

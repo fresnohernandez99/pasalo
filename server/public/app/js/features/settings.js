@@ -10,11 +10,13 @@ import { app } from '../state.js';
 import { fillCallSettings } from './call.js';
 import { copyMyLink } from './lobby.js';
 import { onBack, updateLayers } from './nav.js';
+import { renderPermissions } from './permissions.js';
 
 export function openSettings() {
   fill();
   fillCallSettings();
   refreshStats();
+  renderPermissions();
   $('#settings').hidden = false;
   updateLayers($('#settings-close'));
 }
@@ -48,6 +50,19 @@ function fill() {
   $('#lang').innerHTML = Object.keys(LANGS)
     .map((code) => `<option value="${code}" ${code === currentLang() ? 'selected' : ''}>${esc(LANGS[code]['lang.name'])}</option>`)
     .join('');
+  const theme = savedTheme();
+  $('#set-theme').innerHTML = ['system', 'light', 'dark']
+    .map((value) => `<option value="${value}" ${value === theme ? 'selected' : ''}>${esc(t(`theme.${value}`))}</option>`)
+    .join('');
+}
+
+// El tema lo aplica js/theme.js (va en el <head> para no pintar en claro primero).
+function savedTheme() {
+  try {
+    return localStorage.getItem('theme') || 'system';
+  } catch {
+    return 'system';
+  }
 }
 
 /** Lo que cambió en los ajustes (nombre, carpeta…), para quien lo enseñe. */
@@ -99,6 +114,14 @@ $('#lang').addEventListener('change', (ev) => {
   fill();
   fillCallSettings();
   emit('lang');
+});
+
+$('#set-theme').addEventListener('change', (ev) => {
+  try {
+    if (ev.target.value === 'system') localStorage.removeItem('theme');
+    else localStorage.setItem('theme', ev.target.value);
+  } catch {}
+  window.applyTheme?.();
 });
 
 $('#set-server').addEventListener('change', async (ev) => {

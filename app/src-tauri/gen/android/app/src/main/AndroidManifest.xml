@@ -17,6 +17,10 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CAMERA" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- Llamadas entrantes a pantalla completa, también con el teléfono bloqueado (Notifications.kt). -->
+    <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
+    <!-- Pedir que Android no lo duerma en segundo plano (Ajustes → Permisos). -->
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
     <!-- Apagar la pantalla con el sensor de proximidad en las llamadas por el auricular. -->
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-feature android:name="android.hardware.camera" android:required="false" />
@@ -39,6 +43,7 @@
             android:launchMode="singleTask"
             android:label="@string/main_activity_title"
             android:name=".MainActivity"
+            android:windowSoftInputMode="adjustResize"
             android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
@@ -91,6 +96,11 @@
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
                 android:value="Keeps a peer-to-peer connection open so other devices can send files, messages and calls" />
         </service>
+
+        <!-- «Rechazar» en la notificación de una llamada. -->
+        <receiver
+            android:name=".CallActionReceiver"
+            android:exported="false" />
 
         <provider
           android:name="androidx.core.content.FileProvider"

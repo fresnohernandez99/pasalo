@@ -54,6 +54,12 @@ pub fn chat_wipe(state: State<'_, AppState>, peer: String) -> CmdResult<bool> {
     Ok(state.talk()?.wipe_private(&peer))
 }
 
+/// Registro local en el chat con `peer`: una partida o unos archivos.
+#[tauri::command]
+pub fn chat_log(state: State<'_, AppState>, peer: String, record: serde_json::Value) -> CmdResult<ChatMessage> {
+    state.talk()?.log_event(&peer, record).map_err(CmdError::core)
+}
+
 /// Nota de voz (`data` en base64, ya comprimida por la interfaz).
 #[tauri::command]
 pub async fn chat_send_audio(

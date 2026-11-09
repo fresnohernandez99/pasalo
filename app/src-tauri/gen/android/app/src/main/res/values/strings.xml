@@ -5,4 +5,9 @@
     <string name="service_online">Online: other devices can reach you</string>
     <string name="service_call">Call in progress</string>
     <string name="service_close">Close</string>
+    <string name="notify_messages">Messages</string>
+    <string name="notify_calls">Calls</string>
+    <string name="notify_me">You</string>
+    <string name="notify_answer">Answer</string>
+    <string name="notify_decline">Decline</string>
 </resources>

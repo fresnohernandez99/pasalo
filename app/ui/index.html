@@ -4,6 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>Pasalo</title>
+  <script src="js/theme.js"></script>
   <link rel="stylesheet" href="styles/tokens.css">
   <link rel="stylesheet" href="styles/base.css">
   <link rel="stylesheet" href="styles/home.css">
@@ -136,6 +137,11 @@
         <div id="chat-private-bar" class="chat-private-bar" hidden><span data-icon="lock"></span><span data-i18n="private.bar"></span></div>
         <div id="chat-strip" class="chat-strip" hidden></div>
         <div id="chat-list" class="chat-list"></div>
+        <!-- Al mantener pulsado un mensaje (o con el botón derecho). -->
+        <div id="msg-menu" class="menu msg-menu" hidden>
+          <button type="button" data-msg="forward"><span data-icon="forward"></span><span data-i18n="chat.forward"></span></button>
+          <button type="button" data-msg="copy"><span data-icon="copy"></span><span data-i18n="btn.copy"></span></button>
+        </div>
         <form id="chat-form" class="composer">
           <div class="attach">
             <button type="button" id="chat-attach" class="icon-btn" data-i18n-title="chat.attach"><span data-icon="plus"></span></button>
@@ -143,6 +149,7 @@
               <button type="button" data-attach="photo"><span data-icon="image"></span><span data-i18n="chat.photo"></span></button>
               <button type="button" data-attach="files"><span data-icon="file"></span><span data-i18n="chat.files"></span></button>
               <button type="button" data-attach="folder" class="desktop-only"><span data-icon="folder"></span><span data-i18n="chat.folder"></span></button>
+              <button type="button" data-attach="game"><span data-icon="game"></span><span data-i18n="chat.game"></span></button>
             </div>
           </div>
           <input type="file" id="chat-file" accept="image/*" multiple hidden>
@@ -235,9 +242,16 @@
         <p class="hint" data-i18n="stats.hint"></p>
       </div>
 
+      <h2 data-i18n="settings.permissions"></h2>
+      <div class="card">
+        <div id="perm-list" class="perm-list"></div>
+        <p class="hint" id="perm-hint" data-i18n="perm.hint"></p>
+      </div>
+
       <h2 data-i18n="settings.general"></h2>
       <div class="card">
         <label class="field"><span data-i18n="settings.language"></span><select id="lang"></select></label>
+        <label class="field"><span data-i18n="settings.theme"></span><select id="set-theme"></select></label>
       </div>
 
       <h2 data-i18n="settings.network"></h2>
@@ -295,6 +309,7 @@
         <button id="call-speaker" class="cbtn" type="button"><span class="ring" data-icon="speaker"></span><span data-i18n="call.speaker"></span></button>
         <button id="call-cam" class="cbtn" type="button"><span class="ring" data-icon="videoOff"></span><span id="call-cam-label"></span></button>
         <button id="call-flip" class="cbtn" type="button"><span class="ring" data-icon="flip"></span><span data-i18n="call.flip"></span></button>
+        <button id="call-game" class="cbtn" type="button" hidden><span class="ring" data-icon="game"></span><span data-i18n="call.game"></span></button>
       </div>
       <div class="call-actions">
         <button id="call-decline" class="round danger" type="button"><span class="disc" data-icon="hangup"></span><span data-i18n="call.decline"></span></button>
@@ -376,6 +391,40 @@
       </div>
     </form>
   </dialog>
+
+  <!-- Minijuegos (ver game.js): elegir, invitación recibida y la partida. -->
+  <dialog id="game-picker" class="game-picker">
+    <h3 data-i18n="game.pick"></h3>
+    <div id="game-list" class="game-list"></div>
+    <div class="dialog-actions">
+      <button type="button" class="ghost" id="game-picker-cancel" data-i18n="btn.cancel"></button>
+    </div>
+  </dialog>
+
+  <dialog id="game-invite">
+    <h3 data-i18n="game.invite_title"></h3>
+    <p id="game-invite-text"></p>
+    <div class="dialog-actions">
+      <button type="button" class="ghost" id="game-invite-decline" data-i18n="game.decline"></button>
+      <button type="button" class="primary" id="game-invite-accept" data-i18n="game.play"></button>
+    </div>
+  </dialog>
+
+  <section id="game" class="game screen" hidden>
+    <header class="screen-head">
+      <button id="game-quit" class="icon-btn" type="button" data-i18n-title="game.quit"><span data-icon="close"></span></button>
+      <div class="game-title grow">
+        <h1 id="game-name"></h1>
+        <span id="game-with" class="sub"></span>
+      </div>
+      <button id="game-hangup" class="icon-btn danger-text" type="button" data-i18n-title="call.hangup" hidden><span data-icon="hangup"></span></button>
+    </header>
+    <div class="game-body">
+      <p id="game-status" class="game-status"></p>
+      <div id="game-board" class="game-board"></div>
+      <button id="game-done" class="primary" type="button" hidden></button>
+    </div>
+  </section>
 
   <div id="toast" class="toast" role="status" hidden></div>
   <script type="module" src="js/main.js"></script>

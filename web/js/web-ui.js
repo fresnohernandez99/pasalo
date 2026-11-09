@@ -12,6 +12,7 @@ import { t } from '../i18n/index.js';
 import { on } from '../lib/bus.js';
 import { bytes } from '../lib/format.js';
 import { toast } from '../lib/toast.js';
+import { askPermission } from './backend/notify.js';
 import { audioContext, unlockAudio } from './backend/voice.js';
 
 const isIos = () => /iPhone|iPad|iPod/.test(navigator.userAgent) || (/Macintosh/.test(navigator.userAgent) && navigator.maxTouchPoints > 1);
@@ -236,6 +237,10 @@ function registerWorker() {
     },
     () => {},
   );
+  // Lo tocado en una notificación (ver sw.js).
+  navigator.serviceWorker.addEventListener('message', (ev) => {
+    if (ev.data?.type === 'pasalo-notification') window.pasaloNotification?.(ev.data);
+  });
   navigator.serviceWorker.addEventListener('controllerchange', () => {
     // La primera instalación también cambia de controlador: ahí no hay nada que recargar.
     if (hadWorker) reloadWhenIdle();
@@ -324,6 +329,8 @@ export function initWebUi(api) {
   }
   for (const type of ['pointerdown', 'touchend', 'keydown']) {
     window.addEventListener(type, unlockAudio, { capture: true, passive: true });
+    // Las notificaciones de mensajes y llamadas: el permiso, al primer toque.
+    window.addEventListener(type, askPermission, { capture: true, passive: true, once: true });
   }
 
   const loaded = () => {

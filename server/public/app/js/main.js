@@ -13,6 +13,8 @@ import { showTab } from './features/nav.js';
 import { initPeers, onPeerEvent } from './features/peers.js';
 import { initPermissions } from './features/permissions.js';
 import './features/settings.js';
+import './features/notify.js';
+import { onGamePeerLost, onGameSignal } from './features/game.js';
 import { takeShare } from './features/share.js';
 import { onTransferEvent } from './features/transfers.js';
 
@@ -42,6 +44,7 @@ listen('pasalo', ({ payload: e }) => {
       break;
     case 'signal':
       if (e.signal?.kind === 'private') onPrivateSignal(e);
+      else if (e.signal?.kind?.startsWith('game_')) onGameSignal(e);
       else if (e.signal?.kind !== 'wipe') onSignal(e);
       break;
     case 'chat_wiped':
@@ -49,6 +52,7 @@ listen('pasalo', ({ payload: e }) => {
       break;
     case 'talk_lost':
       onTalkLost(e);
+      onGamePeerLost(e.peer);
       break;
     case 'lobby_users':
     case 'lobby_request':
@@ -97,6 +101,10 @@ async function init() {
   takeLink();
   // Abierta desde «Compartir» en otra app (lo de después avisa con `pasaloShare`).
   if (snapshot.mobile && !snapshot.web) takeShare();
+  // Abierta desde una notificación (un mensaje) con la app cerrada.
+  invoke('notify_take')
+    .then((tapped) => tapped?.action && window.pasaloNotification(tapped))
+    .catch(() => {});
   // El menú del icono de la bandeja (escritorio), en el idioma elegido.
   if (!snapshot.mobile && !snapshot.web) {
     const trayLabels = () => invoke('tray_labels', { show: t('tray.show'), quit: t('tray.quit') }).catch(() => {});

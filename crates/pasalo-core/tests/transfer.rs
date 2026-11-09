@@ -81,6 +81,28 @@ async fn cutting_proxy(target: SocketAddr, limit: usize) -> SocketAddr {
     addr
 }
 
+/// Todo lo que hay bajo `dir`, con tamaños, para los mensajes de error.
+fn listing(dir: &std::path::Path) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut stack = vec![dir.to_path_buf()];
+    while let Some(d) = stack.pop() {
+        for entry in std::fs::read_dir(&d).into_iter().flatten().flatten() {
+            let path = entry.path();
+            let rel = path.strip_prefix(dir).unwrap_or(&path).display().to_string();
+            match entry.metadata() {
+                Ok(m) if m.is_dir() => {
+                    out.push(format!("{rel}/"));
+                    stack.push(path);
+                }
+                Ok(m) => out.push(format!("{rel} ({} B)", m.len())),
+                Err(_) => out.push(rel),
+            }
+        }
+    }
+    out.sort();
+    out
+}
+
 fn incoming_starts(rx: &mut mpsc::UnboundedReceiver<Event>) -> Vec<u64> {
     let mut resumed = Vec::new();
     while let Ok(event) = rx.try_recv() {
@@ -116,7 +138,11 @@ async fn resumes_interrupted_transfer() {
     send_paths(new_transfer_id(), &Target::Lan(addr), &sender, std::slice::from_ref(&folder), &no_retry, &tx).await.unwrap();
 
     let out = dst.path().join("Fotos");
-    assert_eq!(std::fs::read(out.join("sub/grande.bin")).unwrap(), big);
+    // En Windows falla de vez en cuando aquí (sin reproducirlo aún): que se
+    // vea qué quedó en el destino.
+    let grande = std::fs::read(out.join("sub/grande.bin"))
+        .unwrap_or_else(|e| panic!("{e}; en el destino: {:?}", listing(dst.path())));
+    assert_eq!(grande, big);
     assert_eq!(std::fs::read(out.join("a.bin")).unwrap(), small);
     assert_eq!(std::fs::read(out.join("vacio.txt")).unwrap(), b"");
     assert!(out.join("vacia").is_dir());

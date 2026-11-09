@@ -3,4 +3,9 @@
     <string name="service_online">В сети: другие устройства могут вас найти</string>
     <string name="service_call">Идёт звонок</string>
     <string name="service_close">Закрыть</string>
+    <string name="notify_messages">Сообщения</string>
+    <string name="notify_calls">Звонки</string>
+    <string name="notify_me">Вы</string>
+    <string name="notify_answer">Ответить</string>
+    <string name="notify_decline">Отклонить</string>
 </resources>

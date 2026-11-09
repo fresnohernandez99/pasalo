@@ -61,6 +61,33 @@ class OpenFolderArgs {
   var path: String = ""
 }
 
+@InvokeArg
+class PermissionArgs {
+  var id: String = ""
+}
+
+@InvokeArg
+class NotifyMessageArgs {
+  var peer: String = ""
+  var name: String = ""
+  var text: String = ""
+}
+
+@InvokeArg
+class NotifyCallArgs {
+  var call: String = ""
+  var peer: String = ""
+  var name: String = ""
+  var video: Boolean = false
+  var title: String = ""
+}
+
+@InvokeArg
+class NotifyClearArgs {
+  var call: String? = null
+  var peer: String? = null
+}
+
 @TauriPlugin(permissions = [Permission(strings = [android.Manifest.permission.RECORD_AUDIO], alias = "microphone")])
 class PasaloPlugin(private val activity: Activity) : Plugin(activity) {
   private var webView: WebView? = null
@@ -82,12 +109,140 @@ class PasaloPlugin(private val activity: Activity) : Plugin(activity) {
     passInsetsToPage(webView)
     handleBack(webView)
     this.webView = webView
-    // Abierta desde «Compartir» con la app cerrada.
+    current = this
+    // Abierta desde «Compartir» o desde una notificación con la app cerrada.
     takeShareIntent(activity.intent)
+    takeNotificationIntent(activity.intent)
   }
 
   override fun onNewIntent(intent: Intent) {
     takeShareIntent(intent)
+    takeNotificationIntent(intent)
+  }
+
+  // ---------- permisos (la sección de Ajustes, ver permissions.js) ----------
+
+  /** Permiso de Android de cada uno de la lista, si lo es (los otros son ajustes). */
+  private fun manifestPermission(id: String) = when (id) {
+    "notifications" -> if (Build.VERSION.SDK_INT >= 33) android.Manifest.permission.POST_NOTIFICATIONS else null
+    "microphone" -> android.Manifest.permission.RECORD_AUDIO
+    "camera" -> android.Manifest.permission.CAMERA
+    "local_network" -> LOCAL_NETWORK
+    else -> null
+  }
+
+  private fun granted(permission: String) =
+    ContextCompat.checkSelfPermission(activity, permission) == PackageManager.PERMISSION_GRANTED
+
+  /** `granted`, `ask` (se puede pedir) o `denied` (ya solo desde los ajustes). */
+  private fun permissionState(id: String): String {
+    val ok = when (id) {
+      "notifications" -> androidx.core.app.NotificationManagerCompat.from(activity).areNotificationsEnabled()
+      "full_screen" -> Build.VERSION.SDK_INT < 34 ||
+        activity.getSystemService(android.app.NotificationManager::class.java).canUseFullScreenIntent()
+      "battery" -> (activity.getSystemService(Context.POWER_SERVICE) as PowerManager).isIgnoringBatteryOptimizations(activity.packageName)
+      else -> granted(manifestPermission(id)!!)
+    }
+    if (ok) return "granted"
+    val permission = manifestPermission(id) ?: return "ask"
+    // Los que ya se pidieron antes de esta lista (al arrancar o al conectarse).
+    val before = when (id) {
+      "notifications" -> "asked_notifications"
+      "local_network" -> "asked_local_network"
+      else -> ""
+    }
+    val asked = prefs().getBoolean("asked_$permission", false) || prefs().getBoolean(before, false)
+    return if (asked && !ActivityCompat.shouldShowRequestPermissionRationale(activity, permission)) "denied" else "ask"
+  }
+
+  @Command
+  fun permissions(invoke: Invoke) {
+    val ids = mutableListOf("notifications", "microphone", "camera")
+    if (Build.VERSION.SDK_INT >= 34) ids += "full_screen"
+    if (Build.VERSION.SDK_INT >= 37) ids += "local_network"
+    ids += "battery"
+    val list = JSArray()
+    for (id in ids) list.put(JSObject().put("id", id).put("state", permissionState(id)))
+    invoke.resolve(JSObject().put("list", list))
+  }
+
+  /** Lo pide al sistema o, si ya no se puede, abre la pantalla de ajustes donde se concede. */
+  @Command
+  fun requestPermission(invoke: Invoke) {
+    val id = invoke.parseArgs(PermissionArgs::class.java).id
+    val pkg = Uri.fromParts("package", activity.packageName, null)
+    val permission = manifestPermission(id)
+    val intent = when {
+      permission != null && permissionState(id) == "ask" -> {
+        ActivityCompat.requestPermissions(activity, arrayOf(permission), 4648)
+        prefs().edit().putBoolean("asked_$permission", true).apply()
+        null
+      }
+      id == "notifications" -> Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE, activity.packageName)
+      id == "full_screen" -> Intent("android.settings.MANAGE_APP_USE_FULL_SCREEN_INTENT", pkg)
+      id == "battery" -> Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, pkg)
+      else -> Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, pkg)
+    }
+    if (intent != null) {
+      try {
+        activity.startActivity(intent)
+      } catch (_: Exception) {
+        activity.startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, pkg))
+      }
+    }
+    invoke.resolve()
+  }
+
+  // ---------- notificaciones (ver Notifications.kt) ----------
+
+  /** Lo tocado en una notificación antes de que existiera la página. */
+  @Volatile private var pendingNotification: JSObject? = null
+
+  private fun takeNotificationIntent(intent: Intent?) {
+    when (intent?.action) {
+      Notifications.ACTION_OPEN -> intent.getStringExtra(Notifications.EXTRA_PEER)?.let { deliver("open", peer = it) }
+      Notifications.ACTION_ANSWER -> intent.getStringExtra(Notifications.EXTRA_CALL)?.let { deliver("answer", call = it) }
+      else -> return
+    }
+    intent.action = Intent.ACTION_MAIN
+  }
+
+  private fun deliver(action: String, peer: String? = null, call: String? = null) {
+    val payload = JSObject().put("action", action).put("peer", peer).put("call", call)
+    pendingNotification = payload
+    activity.runOnUiThread {
+      webView?.evaluateJavascript("typeof pasaloNotification === 'function' && (pasaloNotification($payload), true)") { done ->
+        if (done == "true") pendingNotification = null
+      }
+    }
+  }
+
+  @Command
+  fun takeNotification(invoke: Invoke) {
+    val out = pendingNotification ?: JSObject()
+    pendingNotification = null
+    invoke.resolve(out)
+  }
+
+  @Command
+  fun notifyMessage(invoke: Invoke) {
+    val args = invoke.parseArgs(NotifyMessageArgs::class.java)
+    Notifications.message(activity, args.peer, args.name, args.text)
+    invoke.resolve()
+  }
+
+  @Command
+  fun notifyCall(invoke: Invoke) {
+    val args = invoke.parseArgs(NotifyCallArgs::class.java)
+    Notifications.call(activity, args.call, args.peer, args.name, args.video, args.title)
+    invoke.resolve()
+  }
+
+  @Command
+  fun notifyClear(invoke: Invoke) {
+    val args = invoke.parseArgs(NotifyClearArgs::class.java)
+    Notifications.clear(activity, args.call != null, args.peer)
+    invoke.resolve()
   }
 
   /**
@@ -155,6 +310,9 @@ class PasaloPlugin(private val activity: Activity) : Plugin(activity) {
    * `--kb` (teclado) y `--nav` (barra de navegación).
    */
   private fun passInsetsToPage(webView: WebView) {
+    // Antes de Android 11 la ventana no va bajo las barras (MainActivity) y
+    // el teclado la encoge: no hay nada que restar.
+    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) return
     // En el contenedor y no en el WebView: Tauri tiene su propio listener en
     // el WebView (el margen de la barra de estado) y no hay que pisarlo. El
     // contenedor pasa los insets intactos a sus hijos.
@@ -174,7 +332,7 @@ class PasaloPlugin(private val activity: Activity) : Plugin(activity) {
       webView.evaluateJavascript(
         // Puede llegar antes de que exista la página: entonces no hace nada.
         "if(document.documentElement){var s=document.documentElement.style;s.setProperty('--kb','${ime}px');" +
-          "s.setProperty('--nav','${if (ime > 0) 0f else nav}px');s.setProperty('--sys-top','${top}px');}",
+          "s.setProperty('--nav-bar','${nav}px');s.setProperty('--sys-top','${top}px');}",
         null,
       )
       insets
@@ -301,6 +459,13 @@ class PasaloPlugin(private val activity: Activity) : Plugin(activity) {
 
   companion object {
     private const val LOCAL_NETWORK = "android.permission.ACCESS_LOCAL_NETWORK"
+
+    /** El plugin en marcha, para lo que llega de fuera (el «Rechazar» de la notificación). */
+    @Volatile private var current: PasaloPlugin? = null
+
+    fun notificationAction(action: String, peer: String? = null, call: String? = null) {
+      current?.deliver(action, peer, call)
+    }
   }
 
   /**
