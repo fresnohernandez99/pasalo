@@ -1,5 +1,9 @@
 //! Conexión con otras redes: entrar en el server, pedir o aceptar conectarse
 //! con alguien y quedarse solo con esa pareja.
+//!
+//! With the "chat with several people" setting (`multi_chat`) the app stays
+//! on the server after accepting: everyone accepted goes to
+//! `AppState::partners`, and connections from others are still allowed.
 
 use std::time::Duration;
 
@@ -46,18 +50,18 @@ async fn join(app: &AppHandle, state: &AppState) -> CmdResult<()> {
     if lobby.is_some() {
         return Ok(());
     }
-    let (server, me) = {
+    let (server, me, multi) = {
         let settings = state.settings.lock().unwrap();
         let local = state.local.lock().unwrap();
-        let me = LobbyUser { id: pasalo_core::session_id(), name: local.name.clone(), platform: local.platform.clone() };
-        (settings.server.clone(), me)
+        let me = LobbyUser { id: pasalo_core::session_id(), name: local.name.clone(), platform: local.platform.clone(), code: None };
+        (settings.server.clone(), me, settings.multi_chat)
     };
     if server.is_empty() {
         return Err(CmdError::new("no_server", ""));
     }
     reach_internet(app, remote).await?;
     step(app, "server");
-    match Lobby::join(&server, remote, me, state.events.clone()).await {
+    match Lobby::join(&server, remote, me, multi, state.events.clone()).await {
         Ok(joined) => {
             *lobby = Some(joined);
             Ok(())
@@ -84,10 +88,22 @@ pub async fn net_disconnect(app: AppHandle, state: State<'_, AppState>) -> CmdRe
     if let Some(lobby) = state.lobby.lock().await.take() {
         lobby.leave().await;
     }
-    let partner = state.partner.lock().unwrap().clone();
-    if let (Some(partner), Some(talk)) = (&partner, &state.talk) {
-        let bye = Signal { call: String::new(), kind: "unpair".into(), data: serde_json::Value::Null };
-        let _ = tokio::time::timeout(Duration::from_secs(5), talk.signal(&partner.code, bye)).await;
+    let mut partners = state.partners.lock().unwrap().clone();
+    partners.extend(state.partner.lock().unwrap().clone());
+    if let Some(talk) = &state.talk {
+        // Everyone is told at once, so several partners don't add up the waits.
+        let mut byes = tokio::task::JoinSet::new();
+        for partner in partners {
+            let talk = talk.clone();
+            byes.spawn(async move {
+                let bye = Signal { call: String::new(), kind: "unpair".into(), data: serde_json::Value::Null };
+                let _ = tokio::time::timeout(Duration::from_secs(5), talk.signal(&partner.code, bye)).await;
+            });
+        }
+        byes.join_all().await;
+    }
+    for partner in state.partners.lock().unwrap().clone() {
+        drop_one(&app, &state, &partner.code);
     }
     drop_partner(&app, &state);
     if let Some(remote) = &state.remote {
@@ -99,6 +115,10 @@ pub async fn net_disconnect(app: AppHandle, state: State<'_, AppState>) -> CmdRe
 /// Deja la pareja (si la hay): corta la llamada y la conexión con ella y
 /// vuelve a aceptar a cualquiera. Devuelve la pareja que había.
 fn drop_partner(app: &AppHandle, state: &AppState) -> Option<Partner> {
+    // Sin pareja ya no se está ocupado: fuera del server.
+    if let Some(busy) = state.busy.lock().unwrap().take() {
+        tauri::async_runtime::spawn(async move { busy.leave().await });
+    }
     let partner = state.partner.lock().unwrap().take()?;
     crate::call::stop_with(app, state, &partner.code);
     if let Some(talk) = &state.talk {
@@ -111,6 +131,25 @@ fn drop_partner(app: &AppHandle, state: &AppState) -> Option<Partner> {
         remote.set_only(None);
     }
     Some(partner)
+}
+
+/// Drops one of the `partners` (multi mode): its call and connection go, the
+/// app stays on the server. Returns whether it was one.
+fn drop_one(app: &AppHandle, state: &AppState, code: &str) -> bool {
+    let removed = {
+        let mut partners = state.partners.lock().unwrap();
+        let before = partners.len();
+        partners.retain(|p| p.code != code);
+        partners.len() != before
+    };
+    if removed {
+        crate::call::stop_with(app, state, code);
+        if let Some(talk) = &state.talk {
+            talk.release(code);
+            talk.wipe_private(code);
+        }
+    }
+    removed
 }
 
 /// Lo que se espera a la pareja recién emparejada (puede tardar en enterarse
@@ -126,8 +165,17 @@ fn watch_partner(app: AppHandle, partner: Partner) {
         let state = app.state::<AppState>();
         let Some(talk) = state.talk.clone() else { return };
         let released = talk.hold(&partner.code, FIRST_CONTACT, RECONNECT).await;
+        if released {
+            return;
+        }
+        // One of several: only that one goes, the app is still on the server.
+        if drop_one(&app, &state, &partner.code) {
+            eprintln!("{} dejó de responder", partner.name);
+            let _ = state.events.send(Event::PartnerLost { code: partner.code, name: partner.name, online: true });
+            return;
+        }
         let ours = state.partner.lock().unwrap().as_ref().is_some_and(|p| p.code == partner.code);
-        if released || !ours {
+        if !ours {
             return;
         }
         eprintln!("la pareja {} dejó de responder", partner.name);
@@ -141,9 +189,16 @@ async fn lobby(state: &AppState) -> CmdResult<Lobby> {
     state.lobby.lock().await.clone().ok_or_else(|| CmdError::new("not_online", ""))
 }
 
+/// Pide conectarse con `to`; `friend` si es un amigo (se le dice quién es).
 #[tauri::command]
-pub async fn lobby_request(state: State<'_, AppState>, to: LobbyUser) -> CmdResult<String> {
-    lobby(&state).await?.request(&to).await.map_err(CmdError::core)
+pub async fn lobby_request(state: State<'_, AppState>, to: LobbyUser, friend: Option<bool>) -> CmdResult<String> {
+    lobby(&state).await?.request(&to, friend.unwrap_or(false)).await.map_err(CmdError::core)
+}
+
+/// Cuáles de los amigos (por su código) están en el server: libres u ocupados.
+#[tauri::command]
+pub async fn lobby_friends(state: State<'_, AppState>, codes: Vec<String>) -> CmdResult<Vec<pasalo_core::Friend>> {
+    lobby(&state).await?.friends(&codes).await.map_err(|e| CmdError::new("server", e.detail()))
 }
 
 /// Una página de los que están en línea, con búsqueda (pantalla Descubrir).
@@ -167,9 +222,24 @@ pub async fn lobby_answer(state: State<'_, AppState>, request: String, accept: b
 pub async fn on_event(app: &AppHandle, event: &Event) {
     let state = app.state::<AppState>();
     match event {
-        // Emparejados: fuera del server y solo la pareja puede llegar.
+        // Emparejados: fuera de la lista (la sesión solo avisa de que se
+        // está ocupado) y solo la pareja puede llegar.
+        // Several people: it stays on the server, open to everyone.
+        Event::LobbyPaired { partner } if state.lobby.lock().await.as_ref().is_some_and(Lobby::is_multi) => {
+            let fresh = {
+                let mut partners = state.partners.lock().unwrap();
+                let fresh = !partners.iter().any(|p| p.code == partner.code);
+                if fresh {
+                    partners.push(partner.clone());
+                }
+                fresh
+            };
+            if fresh {
+                watch_partner(app.clone(), partner.clone());
+            }
+        }
         Event::LobbyPaired { partner } => {
-            state.lobby.lock().await.take();
+            *state.busy.lock().unwrap() = state.lobby.lock().await.take();
             *state.partner.lock().unwrap() = Some(partner.clone());
             state.receiver.set_only(Some(partner.id.clone()));
             if let Some(remote) = &state.remote {
@@ -178,6 +248,7 @@ pub async fn on_event(app: &AppHandle, event: &Event) {
             watch_partner(app.clone(), partner.clone());
         }
         // La pareja se despidió: se vuelve a solo red local.
+        Event::Signal { peer, signal, .. } if signal.kind == "unpair" && drop_one(app, &state, peer) => {}
         Event::Signal { peer, signal, .. } if signal.kind == "unpair" => {
             let ours = state.partner.lock().unwrap().as_ref().is_some_and(|p| p.code == *peer);
             if ours {

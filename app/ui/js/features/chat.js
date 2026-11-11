@@ -18,6 +18,7 @@ import { act, items, liveWith, sendPaths } from './transfers.js';
 import { openViewer } from './viewer.js';
 import { openPhotoPreview } from './photo-preview.js';
 import { openOnce } from './once.js';
+import { askDelete, deleting, loadChats, noteChat, pastPeer, rememberPeer } from './chats.js';
 import { forward } from './share.js';
 import { isRecording, startRecording } from './recorder.js';
 
@@ -40,13 +41,16 @@ export async function openChat(peer) {
   const code = peerCode(peer);
   if (!code) return;
   chat.peer = { code, name: peer.name, os: peer.os || peer.platform, platform: peer.platform, addr: peer.addr };
+  if (peer.platform !== 'past') rememberPeer(code, peer.name, peer.os || peer.platform);
+  // Before `chat:open`: its listeners must not compare with the previous chat.
+  chat.gone = !findPeerByCode(code);
   chat.unread.delete(code);
   clearNotification({ peer: code });
   emit('chat:open');
   $('#chat-avatar').outerHTML = avatar(peer.name, chat.peer.os).replace('class="avatar ', 'id="chat-avatar" class="avatar ');
   $('#chat-name').textContent = peer.name;
-  $('#chat-sub').textContent = peer.platform === 'remote' || peer.platform === 'partner' ? t('chat.remote') : t('chat.lan');
   $('#chat-sub').title = shortCode(code);
+  setGone(!findPeerByCode(code));
   $('#chat').hidden = false;
   $('#pane-empty').hidden = true;
   closeAttachMenu();
@@ -668,6 +672,7 @@ export function onPrivateSignal({ peer, name, signal }) {
 
 /** Se borró el chat privado con `peer` (al desconectarse). */
 export function onChatWiped({ peer }) {
+  loadChats();
   chat.messages.delete(peer);
   chat.unread.delete(peer);
   emit('chat:unread');
@@ -677,7 +682,7 @@ export function onChatWiped({ peer }) {
     delete $('#chat-list').dataset.peer;
     renderChat();
   }
-  toast(t('private.wiped'));
+  if (!deleting.has(peer)) toast(t('private.wiped'));
 }
 
 /** Al desconectarse de `peer` (dejó la LAN o nos desconectamos): si su chat es privado, se borra. */
@@ -720,25 +725,50 @@ $('#chat-strip').addEventListener('click', (ev) => {
 
 on('transfers:changed', renderStrip);
 
-// El equipo del chat abierto se fue (dejó la LAN o la pareja se desconectó):
-// se sale del chat. Lo que quedó sin entregar se envía cuando vuelva.
+// ---------- peer gone: read-only ----------
+// When the peer of the open chat leaves (the LAN, or the partner disconnects)
+// the chat stays open with its history, but without composer or calls until
+// it comes back. What was left undelivered is sent when it does.
+
+function setGone(gone) {
+  const peer = chat.peer;
+  chat.gone = gone;
+  $('#chat').classList.toggle('gone', gone);
+  $('#chat-form').hidden = gone;
+  for (const id of ['#chat-voice', '#chat-video', '#chat-private']) $(id).hidden = gone;
+  $('#chat-gone-bar').hidden = !gone;
+  if (gone) $('#chat-gone-text').textContent = t('past.read_only', { name: peer.name });
+  const live = !gone && findPeerByCode(peer.code);
+  $('#chat-sub').textContent = gone
+    ? t('past.gone')
+    : live?.platform === 'remote' || live?.platform === 'partner' ? t('chat.remote') : t('chat.lan');
+  if (gone) closeAttachMenu();
+}
+
+$('#chat-delete').addEventListener('click', () => {
+  if (chat.peer) askDelete(chat.peer);
+});
+
 on('peers:changed', () => {
-  if (!chat.peer || findPeerByCode(chat.peer.code)) return;
-  const { name } = chat.peer;
-  closeChat();
-  toast(t('toast.peer_gone', { name }));
+  if (!chat.peer) return;
+  const gone = !findPeerByCode(chat.peer.code);
+  if (gone === !!chat.gone) return;
+  setGone(gone);
+  toast(t(gone ? 'toast.peer_gone' : 'past.back', { name: chat.peer.name }));
 });
 
 // ---------- eventos ----------
 
 // Tocar la notificación de un mensaje abre su chat.
 onNotification('open', (code) => {
-  const peer = findPeerByCode(code) || (chat.peer?.code === code ? chat.peer : null);
-  if (peer) openChat(peer);
+  openChat(findPeerByCode(code) || pastPeer(code));
 });
 
 export function onChatEvent({ message, name }) {
   if (name) ensureRemotePeer(message.peer, name);
+  const live = findPeerByCode(message.peer);
+  rememberPeer(message.peer, name || live?.name, live?.os || live?.platform);
+  noteChat(message.peer, message.ts);
   upsertMessage(message);
   // Los registros (partidas, archivos) ya se vieron o avisaron por su lado.
   if (message.log) {

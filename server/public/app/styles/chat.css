@@ -23,6 +23,16 @@
 .strip-title { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .strip-status { flex: none; color: var(--muted); font-variant-numeric: tabular-nums; }
 .strip-row .bar { height: 4px; }
+/* Solicitud de amistad del otro, arriba del chat. */
+.chat-friend-bar { border-bottom: 1px solid var(--border); font-size: 14px; }
+.chat-friend-bar .grow { flex: 1; min-width: 0; }
+.chat-friend-bar .strip-icon { color: var(--warn); }
+/* Peer gone: the history stays, read-only. */
+.chat-gone-bar { border-bottom: 1px solid var(--border); font-size: 13px; color: var(--muted); }
+.chat-gone-bar[hidden] { display: none; }
+/* Amigo guardado: la estrella rellena. */
+.icon-btn.star.on { color: var(--warn); }
+.icon-btn.star.on svg { fill: currentColor; }
 
 /* ---------- mensajes ---------- */
 

@@ -131,8 +131,12 @@ pub fn device_name() -> String {
     }
 }
 
+/// The public folder received files go to, where the user finds them.
+pub const PUBLIC_DIR: &str = "/storage/emulated/0/Download/Pasalo";
+
 /// La carpeta pública `Download/Pasalo` se puede escribir sin permisos desde
-/// Android 10; en versiones anteriores se recibe en la carpeta de la app.
+/// Android 11; before that it needs the storage permission (see
+/// `settings::storage_public`), and until it is granted files go to the app's folder.
 pub fn receive_dir(preferred: PathBuf, fallback: PathBuf) -> PathBuf {
     let probe = preferred.join(".pasalo-probe");
     let writable = std::fs::create_dir_all(&preferred).is_ok() && std::fs::write(&probe, b"").is_ok();

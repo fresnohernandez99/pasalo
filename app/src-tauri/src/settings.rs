@@ -21,6 +21,9 @@ pub struct Settings {
     pub dir: PathBuf,
     #[serde(default = "default_server")]
     pub server: String,
+    /// Chat with several people at once from the server (off: one partner, as before).
+    #[serde(default)]
+    pub multi_chat: bool,
 }
 
 fn default_server() -> String {
@@ -44,6 +47,9 @@ pub struct Snapshot {
     /// En internet sin server: alcanzable por su enlace.
     direct: bool,
     partner: Option<Partner>,
+    /// With `multi_chat`: everyone accepted from the server so far.
+    partners: Vec<Partner>,
+    multi_chat: bool,
     /// Versión instalada.
     version: &'static str,
 }
@@ -73,6 +79,7 @@ pub async fn snapshot(state: State<'_, AppState>) -> CmdResult<Snapshot> {
     let mobile = cfg!(mobile);
     let online = state.lobby.lock().await.is_some();
     let partner = state.partner.lock().unwrap().clone();
+    let partners = state.partners.lock().unwrap().clone();
     let internet = match &state.remote {
         Some(remote) => remote.internet().await,
         None => false,
@@ -90,6 +97,8 @@ pub async fn snapshot(state: State<'_, AppState>) -> CmdResult<Snapshot> {
         online,
         direct,
         partner,
+        partners,
+        multi_chat: settings.multi_chat,
         version: env!("CARGO_PKG_VERSION"),
     })
 }
@@ -184,6 +193,13 @@ pub async fn set_server(state: State<'_, AppState>, server: String) -> CmdResult
     state.save_settings()
 }
 
+/// The "chat with several people" setting. It applies the next time the app joins the server.
+#[tauri::command]
+pub async fn set_multi_chat(state: State<'_, AppState>, on: bool) -> CmdResult<()> {
+    state.settings.lock().unwrap().multi_chat = on;
+    state.save_settings()
+}
+
 /// Busca en GitHub si hay una versión más nueva que la instalada.
 #[tauri::command]
 pub async fn check_update(state: State<'_, AppState>) -> CmdResult<pasalo_core::update::Release> {
@@ -214,6 +230,30 @@ pub fn open_release(app: AppHandle, url: String) -> CmdResult<()> {
         return Err(CmdError::other("enlace no válido"));
     }
     app.opener().open_url(url, None::<&str>).map_err(CmdError::other)
+}
+
+/// Android: whether received files go to the public `Download/Pasalo`. If
+/// they don't yet and it can be written now (the storage permission was just
+/// granted), it switches to it. `None` outside Android.
+#[tauri::command]
+pub fn storage_public(state: State<'_, AppState>) -> CmdResult<Option<bool>> {
+    #[cfg(target_os = "android")]
+    {
+        let public = PathBuf::from(crate::android::PUBLIC_DIR);
+        let current = state.settings.lock().unwrap().dir.clone();
+        let dir = crate::android::receive_dir(public.clone(), current.clone());
+        if dir != current {
+            state.settings.lock().unwrap().dir = dir.clone();
+            state.receiver.set_dest(dir.clone());
+            state.save_settings()?;
+        }
+        return Ok(Some(dir == public));
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        let _ = state;
+        Ok(None)
+    }
 }
 
 /// Permiso de red local de Android 17+ (`None` donde no hace falta). Con
@@ -253,6 +293,12 @@ pub fn load_settings(path: &Path, app: &AppHandle) -> Settings {
         if settings.server.is_empty() {
             settings.server = default_server();
         }
+        // Received files always go to the public Downloads folder when it can
+        // be written: checked on every start, not only the first one.
+        #[cfg(target_os = "android")]
+        {
+            settings.dir = crate::android::receive_dir(PathBuf::from(crate::android::PUBLIC_DIR), settings.dir);
+        }
         return settings;
     }
     let server = default_server();
@@ -261,10 +307,10 @@ pub fn load_settings(path: &Path, app: &AppHandle) -> Settings {
     #[cfg(target_os = "android")]
     let (name, dir) = {
         // `download_dir()` da la carpeta privada de la app, que el usuario no ve.
-        let public = PathBuf::from("/storage/emulated/0/Download/Pasalo");
+        let public = PathBuf::from(crate::android::PUBLIC_DIR);
         (crate::android::device_name(), crate::android::receive_dir(public, dir))
     };
     #[cfg(not(target_os = "android"))]
     let name = pasalo_core::default_device_name();
-    Settings { name, dir, server }
+    Settings { name, dir, server, multi_chat: false }
 }

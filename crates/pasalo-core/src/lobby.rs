@@ -8,6 +8,14 @@
 //! Mientras se está en el server, una petición larga (`sync`) espera hasta
 //! 20 s a que cambie algo, así que estar conectado sin hacer nada cuesta una
 //! petición pequeña cada 20 s.
+//!
+//! Emparejado, la sesión sigue en el server con un `ping` cada
+//! [`PING_EVERY`] (sin recibir nada) para que los amigos lo vean ocupado,
+//! hasta [`Lobby::leave`].
+//!
+//! With `multi` (the "chat with several people" setting) pairing doesn't end
+//! the session: it keeps syncing, stays listed and can accept more requests,
+//! each one a new [`Event::LobbyPaired`].
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -22,6 +30,8 @@ use crate::{Error, Event, EventSender, Remote};
 
 /// Lo que el server espera como mucho antes de contestar un `sync` sin novedades.
 const SYNC_WAIT: Duration = Duration::from_secs(20);
+/// Cada cuánto avisa una pareja de que sigue ocupada (el server la olvida a los 45 s).
+const PING_EVERY: Duration = Duration::from_secs(25);
 
 /// Un equipo conectado al server, tal como lo ven los demás.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -29,6 +39,26 @@ pub struct LobbyUser {
     pub id: String,
     pub name: String,
     pub platform: String,
+    /// Su código de iroh: solo viene en las solicitudes de un amigo.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub code: Option<String>,
+}
+
+/// Un amigo que está en el server (ver [`Lobby::friends`]).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Friend {
+    pub code: String,
+    /// El id de su sesión de ahora, para pedirle conectarse.
+    pub id: String,
+    pub name: String,
+    pub platform: String,
+    /// Emparejado con otro: no se le puede pedir nada.
+    pub busy: bool,
+}
+
+#[derive(Deserialize)]
+struct Friends {
+    friends: Vec<Friend>,
 }
 
 /// El otro equipo de una conexión aceptada.
@@ -59,6 +89,10 @@ struct Inner {
     /// Solicitudes enviadas sin respuesta, por id.
     outgoing: Mutex<HashMap<String, LobbyUser>>,
     left: AtomicBool,
+    /// Emparejado: ya solo se hace `ping`.
+    paired: AtomicBool,
+    /// Several partners at once: pairing never stops the `sync` loop.
+    multi: bool,
 }
 
 #[derive(Deserialize)]
@@ -113,8 +147,9 @@ pub fn session_id() -> String {
 
 impl Lobby {
     /// Entra en el server `base` (p. ej. `https://pasalo.vercel.app`) como
-    /// `me`, y se queda escuchando hasta [`Lobby::leave`] o hasta emparejarse.
-    pub async fn join(base: &str, remote: &Remote, me: LobbyUser, events: EventSender) -> Result<Self, Error> {
+    /// `me`, y se queda escuchando hasta [`Lobby::leave`] o hasta emparejarse
+    /// (with `multi`, until it leaves).
+    pub async fn join(base: &str, remote: &Remote, me: LobbyUser, multi: bool, events: EventSender) -> Result<Self, Error> {
         let http = reqwest::Client::builder()
             .tls_backend_preconfigured(remote.endpoint().tls_config().clone())
             .connect_timeout(Duration::from_secs(15))
@@ -132,6 +167,8 @@ impl Lobby {
                 incoming: Mutex::default(),
                 outgoing: Mutex::default(),
                 left: AtomicBool::new(false),
+                paired: AtomicBool::new(false),
+                multi,
             }),
         };
         lobby.enter().await?;
@@ -144,9 +181,15 @@ impl Lobby {
         &self.inner.me
     }
 
-    /// Pide conectarse con `to` (uno de la lista) y devuelve el id de la solicitud.
-    pub async fn request(&self, to: &LobbyUser) -> Result<String, Error> {
-        let created: Created = self.post("request", json!({ "to": to.id })).await?;
+    /// Whether this session accepts several partners (see the module docs).
+    pub fn is_multi(&self) -> bool {
+        self.inner.multi
+    }
+
+    /// Pide conectarse con `to` (uno de la lista) y devuelve el id de la
+    /// solicitud. A un amigo (`friend`) se le dice quién es.
+    pub async fn request(&self, to: &LobbyUser, friend: bool) -> Result<String, Error> {
+        let created: Created = self.post("request", json!({ "to": to.id, "friend": friend })).await?;
         self.inner.outgoing.lock().unwrap().insert(created.id.clone(), to.clone());
         Ok(created.id)
     }
@@ -154,6 +197,11 @@ impl Lobby {
     /// Una página de los que están en línea, con búsqueda por nombre (`q`).
     pub async fn users(&self, q: &str, offset: u64, limit: u64) -> Result<UsersPage, Error> {
         self.post("users", json!({ "q": q, "offset": offset, "limit": limit })).await
+    }
+
+    /// Cuáles de estos códigos (los amigos) están en el server, libres u ocupados.
+    pub async fn friends(&self, codes: &[String]) -> Result<Vec<Friend>, Error> {
+        Ok(self.post::<Friends>("friends", json!({ "codes": codes })).await?.friends)
     }
 
     /// Retira una solicitud enviada.
@@ -187,7 +235,8 @@ impl Lobby {
         }
     }
 
-    /// Sale del server. Las solicitudes pendientes se cancelan.
+    /// Sale del server (también la pareja, que deja de salir ocupada). Las
+    /// solicitudes pendientes se cancelan.
     pub async fn leave(&self) {
         if self.inner.left.swap(true, Ordering::Relaxed) {
             return;
@@ -201,26 +250,53 @@ impl Lobby {
 
     async fn enter(&self) -> Result<(), Error> {
         let me = &self.inner.me;
-        let body = json!({ "name": me.name, "platform": me.platform, "code": self.inner.code });
+        let busy = self.inner.paired.load(Ordering::Relaxed);
+        let body = json!({ "name": me.name, "platform": me.platform, "code": self.inner.code, "busy": busy, "multi": self.inner.multi });
         self.post::<serde_json::Value>("join", body).await.map(|_| ())
     }
 
     async fn paired(&self, partner: Partner) {
-        self.inner.left.store(true, Ordering::Relaxed);
+        if !self.inner.multi {
+            self.inner.paired.store(true, Ordering::Relaxed);
+        }
         let _ = self.inner.events.send(Event::LobbyPaired { partner });
-        // El server ya nos olvidó al aceptar; por si acaso.
-        let _ = self.post::<serde_json::Value>("leave", json!({})).await;
+    }
+
+    pub fn is_paired(&self) -> bool {
+        self.inner.paired.load(Ordering::Relaxed)
+    }
+
+    /// Emparejado: solo se avisa de que se sigue (ocupado) hasta salir.
+    async fn keep_busy(&self) {
+        while !self.has_left() {
+            tokio::time::sleep(PING_EVERY).await;
+            if self.has_left() {
+                return;
+            }
+            match self.post::<serde_json::Value>("ping", json!({})).await {
+                // El server nos olvidó (p. ej. un corte largo): se vuelve a entrar, ocupado.
+                Err(Error::Server(s)) if s.starts_with("401") && !self.has_left() => {
+                    let _ = self.enter().await;
+                }
+                // Un server sin `ping` (anterior a los amigos): no hay a quién avisar.
+                Err(Error::Server(s)) if s.starts_with("404") => return,
+                _ => {}
+            }
+        }
     }
 
     /// Escucha al server hasta salir: lista de equipos, solicitudes recibidas
-    /// y respuestas a las enviadas.
+    /// y respuestas a las enviadas. Al emparejarse pasa a [`Self::keep_busy`].
     async fn run(&self) {
         let mut v = String::new();
         let mut fails = 0u32;
         while !self.has_left() {
+            if self.is_paired() {
+                return self.keep_busy().await;
+            }
             let reply = self.post::<SyncReply>("sync", json!({ "v": v })).await;
-            if self.has_left() {
-                return;
+            if self.has_left() || self.is_paired() {
+                continue;
             }
             let reply = match reply {
                 Ok(reply) => reply,
@@ -252,7 +328,10 @@ impl Lobby {
                 match (answer.state.as_str(), answer.code) {
                     ("accepted", Some(code)) => {
                         let partner = Partner { id: to.id, name: to.name, platform: to.platform, code };
-                        return self.paired(partner).await;
+                        self.paired(partner).await;
+                        if !self.inner.multi {
+                            break;
+                        }
                     }
                     (state, _) => {
                         let _ = self.inner.events.send(Event::LobbyAnswer {

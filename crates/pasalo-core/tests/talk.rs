@@ -367,3 +367,32 @@ async fn private_chat_is_wiped() {
     assert!(reopened.is_private(&a.code));
     assert!(reopened.history(&a.code).is_empty());
 }
+
+/// Saved chats are listed (newest first) and "Delete chat" removes one, private or not.
+#[tokio::test]
+async fn conversations_are_listed_and_deleted() {
+    let (a, mut b) = pair().await;
+    assert!(b.talk.conversations().is_empty());
+    a.talk.send_text(&b.code, "hello".into()).await.unwrap();
+    let image: Vec<u8> = (0..10_000u32).map(|i| i as u8).collect();
+    a.talk.send_image(&b.code, &image, "jpg").await.unwrap();
+    next_chat(&mut b.events).await;
+    let (photo, _) = next_chat(&mut b.events).await;
+    let photo = photo.image.unwrap();
+
+    let list = b.talk.conversations();
+    assert_eq!(list.len(), 1);
+    assert_eq!(list[0].0, a.code);
+    assert_eq!(list[0].1, photo_ts(&b, &a.code));
+
+    // Not private, still deleted, and its photo with it.
+    b.talk.delete(&a.code).unwrap();
+    assert!(b.talk.history(&a.code).is_empty());
+    assert!(!photo.exists());
+    assert!(b.talk.conversations().is_empty());
+    assert!(b.talk.delete("not a code").is_err());
+}
+
+fn photo_ts(side: &Side, peer: &str) -> u64 {
+    side.talk.history(peer).iter().map(|m| m.ts).max().unwrap()
+}

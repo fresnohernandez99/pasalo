@@ -137,6 +137,19 @@ export class Talk {
     return true;
   }
 
+  /** Deletes the chat with `peer`, private or not ("Delete chat"). */
+  async deleteChat(peer) {
+    const code = this.parsePeer(peer);
+    this.private.add(code);
+    await this.wipePrivate(code);
+    this.private.delete(code);
+    await store.kvSet('private', [...this.private]);
+  }
+
+  conversations() {
+    return store.conversations();
+  }
+
   setName(name) {
     this.name = name;
   }

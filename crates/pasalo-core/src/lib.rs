@@ -24,7 +24,7 @@ pub use discovery::{Discovery, Peer};
 pub use error::Error;
 pub use events::{Direction, Event, EventSender, TransferId, new_transfer_id};
 pub use iroh::EndpointId;
-pub use lobby::{Lobby, LobbyUser, Partner, UsersPage, session_id};
+pub use lobby::{Friend, Lobby, LobbyUser, Partner, UsersPage, session_id};
 pub use receiver::Receiver;
 pub use remote::{ALPN, Remote, parse_code};
 pub use stats::CallStats;

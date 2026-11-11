@@ -54,6 +54,25 @@ pub fn chat_wipe(state: State<'_, AppState>, peer: String) -> CmdResult<bool> {
     Ok(state.talk()?.wipe_private(&peer))
 }
 
+/// Deletes the whole chat with `peer`, private or not.
+#[tauri::command]
+pub fn chat_delete(state: State<'_, AppState>, peer: String) -> CmdResult<()> {
+    state.talk()?.delete(&peer).map_err(CmdError::core)
+}
+
+/// A saved conversation: the peer's code and when the last message was.
+#[derive(serde::Serialize)]
+pub struct Conversation {
+    peer: String,
+    ts: u64,
+}
+
+/// Peers with a saved history, newest first (the chat list keeps them after they leave).
+#[tauri::command]
+pub fn chat_list(state: State<'_, AppState>) -> CmdResult<Vec<Conversation>> {
+    Ok(state.talk()?.conversations().into_iter().map(|(peer, ts)| Conversation { peer, ts }).collect())
+}
+
 /// Registro local en el chat con `peer`: una partida o unos archivos.
 #[tauri::command]
 pub fn chat_log(state: State<'_, AppState>, peer: String, record: serde_json::Value) -> CmdResult<ChatMessage> {

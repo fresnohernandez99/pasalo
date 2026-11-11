@@ -501,6 +501,28 @@ impl Talk {
         if !self.inner.private.lock().unwrap().contains(&peer) {
             return false;
         }
+        self.wipe(peer);
+        true
+    }
+
+    /// Deletes the chat with `peer` whether it is private or not (the user
+    /// chose "Delete chat"): history, media and anything still pending.
+    pub fn delete(&self, peer: &str) -> Result<(), Error> {
+        let peer = parse_peer(peer)?.to_string();
+        self.wipe(peer.clone());
+        let mut private = self.inner.private.lock().unwrap();
+        if private.remove(&peer) {
+            self.inner.store.save_private(&private).map_err(Error::Local)?;
+        }
+        Ok(())
+    }
+
+    /// Peers with a saved history, most recent first, with the time of their last message.
+    pub fn conversations(&self) -> Vec<(String, u64)> {
+        self.inner.store.conversations()
+    }
+
+    fn wipe(&self, peer: String) {
         // Lo pendiente para ese equipo (y su entrega en curso), fuera.
         let gone: Vec<String> = {
             let mut pending = self.inner.pending.lock().unwrap();
@@ -517,7 +539,6 @@ impl Talk {
         drop(delivering);
         self.inner.store.wipe(&peer);
         let _ = self.inner.events.send(Event::ChatWiped { peer });
-        true
     }
 
     /// Deja en el historial de `peer` el registro de una llamada (`record`
@@ -1317,6 +1338,23 @@ impl Store {
 
     fn history(&self, peer: &str) -> Vec<ChatMessage> {
         read_history(&self.file(peer))
+    }
+
+    /// Every `<code>.jsonl` with at least one message, newest first.
+    fn conversations(&self) -> Vec<(String, u64)> {
+        let Ok(entries) = std::fs::read_dir(&self.dir) else { return Vec::new() };
+        let mut list: Vec<(String, u64)> = entries
+            .flatten()
+            .filter(|e| e.path().extension().is_some_and(|x| x == "jsonl"))
+            .filter_map(|e| {
+                let peer = e.path().file_stem()?.to_str()?.to_string();
+                crate::parse_code(&peer)?;
+                let last = read_history(&e.path()).iter().map(|m| m.ts).max()?;
+                Some((peer, last))
+            })
+            .collect();
+        list.sort_by(|a, b| b.1.cmp(&a.1));
+        list
     }
 
     fn pending(&self) -> Vec<ChatMessage> {

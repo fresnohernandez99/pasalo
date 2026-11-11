@@ -205,3 +205,54 @@ export function mimeFor(name) {
     }[ext] || 'application/octet-stream'
   );
 }
+
+/**
+ * iroh nombra sus relays con un punto final (`euc1-1.relay.n0.iroh.link.`,
+ * un nombre DNS completo) y Safari (WebKit) no acepta el certificado de un
+ * nombre así: sin esto, en el iPhone nunca hay relay y no se puede conectar.
+ * Se le quita el punto a lo que el WASM pide al navegador (WebSocket, fetch
+ * y Request); dentro de iroh las URLs siguen igual, como en las apps.
+ */
+export function stripHostDots() {
+  const g = globalThis;
+  if (g.__pasaloHostDots) return;
+  g.__pasaloHostDots = true;
+  const fix = (url) => {
+    try {
+      const u = new URL(String(url), location.href);
+      if (!u.hostname.endsWith('.')) return url;
+      u.hostname = u.hostname.replace(/\.+$/, '');
+      return u.href;
+    } catch {
+      return url;
+    }
+  };
+  const NativeRequest = g.Request;
+  const fixInput = (input) => {
+    if (input instanceof NativeRequest) {
+      const url = fix(input.url);
+      return url === input.url ? input : new NativeRequest(url, input);
+    }
+    return typeof input === 'string' || input instanceof URL ? fix(input) : input;
+  };
+  if (NativeRequest) {
+    g.Request = class Request extends NativeRequest {
+      constructor(input, init) {
+        super(fixInput(input), init);
+      }
+    };
+  }
+  if (g.fetch) {
+    const nativeFetch = g.fetch.bind(g);
+    g.fetch = (input, init) => nativeFetch(fixInput(input), init);
+  }
+  if (g.WebSocket) {
+    const NativeWebSocket = g.WebSocket;
+    g.WebSocket = class WebSocket extends NativeWebSocket {
+      constructor(url, protocols) {
+        if (protocols === undefined) super(fix(url));
+        else super(fix(url), protocols);
+      }
+    };
+  }
+}

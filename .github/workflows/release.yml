@@ -129,9 +129,16 @@ jobs:
 
       # One APK per architecture: each phone downloads only its own (the
       # universal one carries every native library and weighs twice as much).
+      # The universal one is also published: some phones (Redmi 9C...) have a
+      # 64-bit CPU but a 32-bit Android and cannot install the arm64 APK, and
+      # the web cannot tell them apart, so it offers the universal one.
+      # The second build reuses the Rust libraries of the first one and only
+      # assembles the "universal" flavor (the split outputs stay in place).
       - name: Build the APKs
         working-directory: app/src-tauri
-        run: cargo tauri android build --apk --split-per-abi --target aarch64 armv7
+        run: |
+          cargo tauri android build --apk --split-per-abi --target aarch64 armv7
+          cargo tauri android build --apk --target aarch64 armv7
 
       - name: Sign and publish
         env:
@@ -160,7 +167,8 @@ jobs:
           files=()
           # Gradle names the folders after the flavor (arm64, arm); the file
           # carries the Android ABI so each phone knows which one to download.
-          for pair in arm64:arm64-v8a arm:armeabi-v7a; do
+          # "universal" carries both libraries (arm64-v8a and armeabi-v7a).
+          for pair in arm64:arm64-v8a arm:armeabi-v7a universal:universal; do
             flavor="${pair%%:*}" abi="${pair##*:}"
             unsigned="$outputs/$flavor/release/app-$flavor-release-unsigned.apk"
             out="Pasalo-$version-android-$abi.apk"

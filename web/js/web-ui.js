@@ -269,7 +269,9 @@ const RELEASES = `https://github.com/${REPO}/releases/latest`;
 /** El archivo de la última versión que sirve en este sistema (como `is_our_asset` en la app). */
 function ourAsset(name) {
   const ua = navigator.userAgent;
-  if (/Android/.test(ua)) return name.endsWith('arm64-v8a.apk');
+  // La universal: el navegador no dice si el Android es de 32 o 64 bits
+  // (un Redmi 9C tiene CPU de 64 y Android de 32 y no instala la arm64).
+  if (/Android/.test(ua)) return name.endsWith('-android-universal.apk');
   if (/Mac/.test(ua)) return name.endsWith('.dmg');
   if (/Win/.test(ua)) return name.endsWith('-setup.exe');
   return name.endsWith('.AppImage');

@@ -3,9 +3,17 @@
 // solicitud se acepta, cada lado recibe el código de iroh del otro, los dos
 // se van del server y desde ahí hablan directamente.
 //
+// Amigos (v1): cada app guarda los códigos de sus amigos y, al abrir
+// Descubrir, pregunta cuáles están (`friends`). Los emparejados siguen en el
+// server con `ping` mientras hablan, para que sus amigos los vean ocupados.
+//
+// Multi (v1): a device that joins with `multi` can chat with several people.
+// Pairing doesn't take it off the list or make it busy, and accepting one
+// request doesn't cancel its other ones; it keeps syncing.
+//
 // Colecciones:
-//   users     { _id, token, name, platform, code, seen, paired }
-//   requests  { _id, from, to, fromName, fromPlatform, state, code, at }
+//   users     { _id, token, name, platform, code, seen, paired, multi }
+//   requests  { _id, from, to, fromName, fromPlatform, fromCode?, state, code, at }
 // `state` de una solicitud: pending, accepted, declined, cancelled, expired.
 
 import { createHash, randomUUID } from 'node:crypto';
@@ -24,6 +32,8 @@ const MAX_PAGE = 50;
 const REQUEST_GAP_MS = 1000;
 /** Equipos nuevos por IP y minuto. */
 const MAX_JOINS_PER_IP = 10;
+/** Códigos por consulta de amigos. */
+const MAX_FRIENDS = 200;
 
 export class HttpError extends Error {
   constructor(status, message) {
@@ -36,6 +46,7 @@ export class HttpError extends Error {
 export async function setup(db) {
   await Promise.all([
     db.collection('users').createIndex({ seen: 1 }, { expireAfterSeconds: 120 }),
+    db.collection('users').createIndex({ code: 1 }),
     db.collection('requests').createIndex({ at: 1 }, { expireAfterSeconds: 300 }),
     db.collection('requests').createIndex({ to: 1, state: 1 }),
     db.collection('requests').createIndex({ from: 1, state: 1 }),
@@ -58,6 +69,8 @@ export async function handle(db, action, body, { now = () => new Date(), sleep =
   const id = text(body.id, 64, 'id');
   const token = text(body.token, 128, 'token');
   const online = () => ({ seen: { $gte: new Date(now().getTime() - ONLINE_MS) } });
+  // Who can still be asked: not paired, or paired but chatting with several.
+  const free = () => ({ $or: [{ paired: false }, { multi: true }] });
 
   // Toda acción salvo `join` es de alguien que ya entró con ese token.
   async function me() {
@@ -92,7 +105,9 @@ export async function handle(db, action, body, { now = () => new Date(), sleep =
         platform: text(body.platform, 16, 'platform'),
         code: text(body.code, 64, 'code'),
         seen: now(),
-        paired: false,
+        // Una pareja que vuelve tras perder la sesión sigue ocupada (v1).
+        paired: version >= 1 && body.busy === true,
+        multi: version >= 1 && body.multi === true,
         ...(body.ipHash ? { ip: body.ipHash } : {}),
         ...(existing ? {} : { joined: now() }),
       };
@@ -118,7 +133,7 @@ export async function handle(db, action, body, { now = () => new Date(), sleep =
       const user = await me();
       const to = text(body.to, 64, 'to');
       if (to === id) throw new HttpError(400, 'no puedes conectarte contigo');
-      const target = await users.findOne({ _id: to, paired: false, ...online() });
+      const target = await users.findOne({ _id: to, ...free(), ...online() });
       if (!target) throw new HttpError(404, 'ya no está conectado');
       const theirs = await requests.findOne({ from: to, to: id, state: 'pending' });
       if (theirs) throw new HttpError(409, 'ya te pidió conectarse: contesta su solicitud');
@@ -140,6 +155,8 @@ export async function handle(db, action, body, { now = () => new Date(), sleep =
         to,
         fromName: user.name,
         fromPlatform: user.platform,
+        // A un amigo se le dice quién es: ya tiene su código guardado.
+        ...(version >= 1 && body.friend === true ? { fromCode: user.code } : {}),
         state: 'pending',
         at: now(),
       };
@@ -164,7 +181,7 @@ export async function handle(db, action, body, { now = () => new Date(), sleep =
         await requests.updateOne({ _id: request._id }, { $set: { state: 'declined' } });
         return { ok: true };
       }
-      const from = await users.findOne({ _id: request.from, paired: false, ...online() });
+      const from = await users.findOne({ _id: request.from, ...free(), ...online() });
       if (!from) {
         await requests.updateOne({ _id: request._id }, { $set: { state: 'expired' } });
         throw new HttpError(404, 'ya no está conectado');
@@ -173,9 +190,13 @@ export async function handle(db, action, body, { now = () => new Date(), sleep =
       // vamos ya. Desde ahora los dos solo están el uno para el otro.
       await requests.updateOne({ _id: request._id }, { $set: { state: 'accepted', code: user.code } });
       await users.updateOne({ _id: from._id }, { $set: { paired: true } });
-      await cancelAll(id, request._id);
-      await cancelAll(from._id, request._id);
-      await users.deleteOne({ _id: id });
+      // Someone chatting with several keeps the rest of their requests.
+      if (!user.multi) await cancelAll(id, request._id);
+      if (!from.multi) await cancelAll(from._id, request._id);
+      // Desde v1 los dos se quedan (fuera de la lista) con `ping`, para que
+      // sus amigos los vean ocupados; antes se iban del todo.
+      if (version >= 1) await users.updateOne({ _id: id }, { $set: { paired: true, seen: now() } });
+      else await users.deleteOne({ _id: id });
       return { partner: { id: from._id, name: from.name, platform: from.platform, code: from.code } };
     }
 
@@ -187,13 +208,44 @@ export async function handle(db, action, body, { now = () => new Date(), sleep =
       const q = typeof body.q === 'string' ? body.q.trim().slice(0, 64) : '';
       const offset = Number.isInteger(body.offset) && body.offset >= 0 ? Math.min(body.offset, 100_000) : 0;
       const limit = Number.isInteger(body.limit) ? Math.min(Math.max(body.limit, 1), MAX_PAGE) : MAX_PAGE;
-      const filter = { _id: { $ne: id }, paired: false, ...online() };
+      const filter = { _id: { $ne: id }, ...free(), ...online() };
       if (q) filter.name = { $regex: q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), $options: 'i' };
       const [list, total] = await Promise.all([
         users.find(filter, { projection: { name: 1, platform: 1 } }).collation({ locale: 'en', strength: 1 }).sort({ name: 1, _id: 1 }).skip(offset).limit(limit).toArray(),
         users.countDocuments(filter),
       ]);
       return { users: list.map((u) => ({ id: u._id, name: u.name, platform: u.platform })), total, offset };
+    }
+
+    // Cuáles de estos códigos (los amigos de quien pregunta) están en el
+    // server: libres, con el id de su sesión para pedirles conectarse, u
+    // ocupados con su pareja.
+    case 'friends': {
+      if (version < 1) throw new HttpError(404, 'acción desconocida');
+      await me();
+      if (!Array.isArray(body.codes) || body.codes.length > MAX_FRIENDS) throw new HttpError(400, 'codes no válido');
+      const codes = body.codes.filter((c) => typeof c === 'string' && c.length <= 64);
+      const list = await users
+        .find({ _id: { $ne: id }, code: { $in: codes }, ...online() }, { projection: { code: 1, name: 1, platform: 1, paired: 1, multi: 1, seen: 1 } })
+        .sort({ seen: -1 })
+        .toArray();
+      // Si un código tiene dos sesiones (una a punto de caducar), la más reciente.
+      const seen = new Set();
+      const friends = [];
+      for (const u of list) {
+        if (seen.has(u.code)) continue;
+        seen.add(u.code);
+        friends.push({ code: u.code, id: u._id, name: u.name, platform: u.platform, busy: !!u.paired && !u.multi });
+      }
+      return { friends };
+    }
+
+    // Una pareja sigue en el server mientras habla (ocupada para sus amigos).
+    case 'ping': {
+      if (version < 1) throw new HttpError(404, 'acción desconocida');
+      await me();
+      await users.updateOne({ _id: id }, { $set: { seen: now(), paired: true } });
+      return { ok: true };
     }
 
     case 'leave': {
@@ -210,7 +262,7 @@ export async function handle(db, action, body, { now = () => new Date(), sleep =
   // respuestas a las suyas, con una versión para saber si cambió algo.
   async function snapshot() {
     const list = await users
-      .find({ _id: { $ne: id }, paired: false, ...online() }, { projection: { name: 1, platform: 1 } })
+      .find({ _id: { $ne: id }, ...free(), ...online() }, { projection: { name: 1, platform: 1 } })
       .sort({ name: 1 })
       .limit(200)
       .toArray();
@@ -231,7 +283,10 @@ export async function handle(db, action, body, { now = () => new Date(), sleep =
       users: list.map((u) => ({ id: u._id, name: u.name, platform: u.platform })),
       requests: incoming
         .filter((r) => visible.has(r.from))
-        .map((r) => ({ id: r._id, from: { id: r.from, name: r.fromName, platform: r.fromPlatform } })),
+        .map((r) => ({
+          id: r._id,
+          from: { id: r.from, name: r.fromName, platform: r.fromPlatform, ...(r.fromCode ? { code: r.fromCode } : {}) },
+        })),
       answers: answered.map((r) => (r.code ? { id: r._id, state: r.state, code: r.code } : { id: r._id, state: r.state })),
     };
     const v = createHash('sha1').update(JSON.stringify(state)).digest('base64url').slice(0, 12);

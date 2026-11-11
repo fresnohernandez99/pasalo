@@ -91,10 +91,67 @@ test('solicitud aceptada: cada uno recibe el código del otro y se van del serve
   assert.deepEqual(forAna.answers, [{ id, state: 'accepted', code: code('b') }]);
   await ana.leave();
 
-  // Para los demás ya no están, y a beto ya no se le puede escribir.
+  // Para los demás ya no están, y a ninguno se le puede escribir.
   assert.deepEqual((await carla.sync()).users, []);
-  await assert.rejects(beto.sync(), { status: 401 });
   await assert.rejects(carla.request('ana'), { status: 404 });
+  await assert.rejects(carla.request('beto'), { status: 404 });
+});
+
+test('sin versión, quien acepta se va del server', async () => {
+  await ana.join();
+  await beto.join();
+  const { id } = await ana.request('beto');
+  await handle(db, 'answer', { id: 'beto', token: 't-beto', request: id, accept: true }, { now, sleep, version: 0 });
+  await assert.rejects(beto.sync(), { status: 401 });
+});
+
+const friends = (user, codes) => call('friends', { id: user, token: `t-${user}`, codes });
+const ping = (user) => call('ping', { id: user, token: `t-${user}` });
+
+test('amigos: libres con su id de ahora, ocupados mientras hablan con su pareja', async () => {
+  await ana.join();
+  await beto.join();
+  await carla.join();
+  assert.deepEqual((await friends('carla', [code('a'), code('b'), code('z')])).friends.sort((x, y) => x.id.localeCompare(y.id)), [
+    { code: code('a'), id: 'ana', name: 'Ana', platform: 'android', busy: false },
+    { code: code('b'), id: 'beto', name: 'Beto', platform: 'macos', busy: false },
+  ]);
+
+  const { id } = await ana.request('beto');
+  await beto.answer(id, true);
+  await ana.sync();
+  // Los dos siguen en el server con `ping`: ocupados, fuera de la lista.
+  clock += ONLINE_MS - 5000;
+  await ping('ana');
+  await ping('beto');
+  clock += 10_000;
+  const busy = (await friends('carla', [code('a'), code('b')])).friends;
+  assert.deepEqual(busy.map((f) => [f.id, f.busy]).sort(), [['ana', true], ['beto', true]]);
+  assert.deepEqual((await carla.sync()).users, []);
+  await assert.rejects(carla.request('ana'), { status: 404 });
+
+  // Al despedirse ya no salen.
+  await ana.leave();
+  assert.deepEqual((await friends('carla', [code('a')])).friends, []);
+  // Y sin `ping` caducan.
+  clock += ONLINE_MS;
+  assert.deepEqual((await friends('carla', [code('b')])).friends, []);
+});
+
+test('la solicitud a un amigo lleva el código de quien la manda', async () => {
+  await ana.join();
+  await beto.join();
+  const { id } = await call('request', { id: 'ana', token: 't-ana', to: 'beto', friend: true });
+  assert.deepEqual((await beto.sync()).requests, [{ id, from: { id: 'ana', name: 'Ana', platform: 'android', code: code('a') } }]);
+});
+
+test('amigos: lista limitada y solo en v1', async () => {
+  await ana.join();
+  await assert.rejects(friends('ana', 'x'), { status: 400 });
+  await assert.rejects(friends('ana', Array(201).fill(code('b'))), { status: 400 });
+  const body = { id: 'ana', token: 't-ana', codes: [] };
+  await assert.rejects(handle(db, 'friends', body, { now, sleep, version: 0 }), { status: 404 });
+  await assert.rejects(handle(db, 'ping', body, { now, sleep, version: 0 }), { status: 404 });
 });
 
 test('aceptar cancela las demás solicitudes de los dos', async () => {
@@ -246,4 +303,43 @@ test('la API sin versión no tiene `users`; la v1 sí', async () => {
   const body = { id: 'ana', token: 't-ana' };
   await assert.rejects(handle(db, 'users', body, { now, sleep, version: 0 }), { status: 404 });
   assert.equal((await handle(db, 'users', body, { now, sleep, version: 1 })).total, 0);
+});
+
+test('multi: accepting keeps the other requests, stays listed and is never busy', async () => {
+  const multiBeto = as({ id: 'beto', name: 'Beto', platform: 'macos', code: code('b'), multi: true });
+  await ana.join();
+  await multiBeto.join();
+  await carla.join();
+  const ab = await ana.request('beto');
+  const cb = await carla.request('beto');
+  const { partner } = await multiBeto.answer(ab.id, true);
+  assert.equal(partner.id, 'ana');
+  // Carla's request is still there and Beto still shows up for her.
+  const forBeto = await multiBeto.sync();
+  assert.deepEqual(forBeto.requests.map((r) => r.id), [cb.id]);
+  const forCarla = await carla.sync();
+  assert.ok(forCarla.users.some((u) => u.id === 'beto'));
+  assert.equal(forCarla.answers.length, 0);
+  // She is accepted too: Beto now chats with both.
+  const second = await multiBeto.answer(cb.id, true);
+  assert.equal(second.partner.id, 'carla');
+  const friends = await call('friends', { id: 'ana', token: 't-ana', codes: [code('b')] });
+  assert.equal(friends.friends[0].busy, false);
+});
+
+test('multi only from v1; the one who asked a multi user still pairs alone', async () => {
+  await handle(db, 'join', { id: 'beto', token: 't-beto', name: 'Beto', platform: 'macos', code: code('b'), multi: true }, { now, sleep, version: 0 });
+  assert.equal((await db.collection('users').findOne({ _id: 'beto' })).multi, false);
+  const multiBeto = as({ id: 'beto', name: 'Beto', platform: 'macos', code: code('b'), multi: true });
+  await multiBeto.join();
+  await ana.join();
+  await carla.join();
+  const ab = await ana.request('beto');
+  clock += 1000;
+  const ac = await ana.request('carla');
+  await multiBeto.answer(ab.id, true);
+  // Ana isn't multi: her other request is cancelled and she leaves the list.
+  const forCarla = await carla.sync();
+  assert.ok(!forCarla.users.some((u) => u.id === 'ana'));
+  assert.ok(!forCarla.requests.some((r) => r.id === ac.id));
 });

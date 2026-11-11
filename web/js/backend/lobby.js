@@ -1,13 +1,16 @@
 // Cliente del server de conexión (`server/`), como `lobby.rs`: entra con el
 // código de iroh, espera novedades con `sync` (hasta 20 s por petición) y
-// lleva las solicitudes. Al aceptarse una, los dos se van del server.
+// lleva las solicitudes. Al aceptarse una, los dos salen de la lista y solo
+// hacen `ping` (ocupados para sus amigos) hasta `leave`.
 
 import { PasaloError, sleep } from './util.js';
 
 const SYNC_WAIT = 20_000;
+/** Cada cuánto avisa una pareja de que sigue ocupada (el server la olvida a los 45 s). */
+const PING_EVERY = 25_000;
 
 export class Lobby {
-  constructor(base, me, code, emit) {
+  constructor(base, me, code, emit, multi = false) {
     this.base = base.trim().replace(/\/+$/, '');
     this.me = me; // { id, name, platform }
     this.code = code;
@@ -17,18 +20,22 @@ export class Lobby {
     this.incoming = new Map(); // id → usuario
     this.outgoing = new Map(); // id → usuario
     this.left = false;
+    this.paired = false; // emparejado: ya solo se hace `ping`
+    // Several partners at once: pairing never stops the `sync` loop.
+    this.multi = multi;
   }
 
   /** Entra y se queda escuchando hasta `leave` o hasta emparejarse. */
-  static async join(base, me, code, emit) {
-    const lobby = new Lobby(base, me, code, emit);
+  static async join(base, me, code, emit, multi = false) {
+    const lobby = new Lobby(base, me, code, emit, multi);
     await lobby.enter();
     lobby.run();
     return lobby;
   }
 
-  async request(to) {
-    const created = await this.post('request', { to: to.id });
+  /** A un amigo (`friend`) se le dice quién es. */
+  async request(to, friend = false) {
+    const created = await this.post('request', { to: to.id, friend });
     this.outgoing.set(created.id, to);
     return created.id;
   }
@@ -36,6 +43,11 @@ export class Lobby {
   /** Una página de los que están en línea, con búsqueda por nombre. */
   users(q, offset, limit) {
     return this.post('users', { q, offset, limit });
+  }
+
+  /** Cuáles de estos códigos (los amigos) están en el server, libres u ocupados. */
+  async friends(codes) {
+    return (await this.post('friends', { codes })).friends;
   }
 
   async cancel(request) {
@@ -55,7 +67,7 @@ export class Lobby {
       throw err;
     }
     if (accept && reply.partner) {
-      await this.paired(reply.partner);
+      this.pair(reply.partner);
       return reply.partner;
     }
     return null;
@@ -68,24 +80,41 @@ export class Lobby {
   }
 
   enter() {
-    return this.post('join', { name: this.me.name, platform: this.me.platform, code: this.code });
+    return this.post('join', { name: this.me.name, platform: this.me.platform, code: this.code, busy: this.paired, multi: this.multi });
   }
 
-  async paired(partner) {
-    this.left = true;
+  pair(partner) {
+    if (!this.multi) this.paired = true;
     this.emit({ kind: 'lobby_paired', partner });
-    await this.post('leave', {}).catch(() => {});
+  }
+
+  /** Emparejado: solo se avisa de que se sigue (ocupado) hasta salir. */
+  async keepBusy() {
+    while (!this.left) {
+      await sleep(PING_EVERY);
+      if (this.left) return;
+      try {
+        await this.post('ping', {});
+      } catch (err) {
+        const detail = String(err.detail);
+        // El server nos olvidó (p. ej. un corte largo): se vuelve a entrar, ocupado.
+        if (detail.startsWith('401') && !this.left) await this.enter().catch(() => {});
+        // Un server sin `ping` (anterior a los amigos): no hay a quién avisar.
+        if (detail.startsWith('404')) return;
+      }
+    }
   }
 
   async run() {
     let v = '';
     let fails = 0;
     while (!this.left) {
+      if (this.paired) return this.keepBusy();
       let reply;
       try {
         reply = await this.post('sync', { v });
       } catch (err) {
-        if (this.left) return;
+        if (this.left || this.paired) continue;
         this.emit({ kind: 'lobby_error', detail: err.detail || String(err) });
         fails++;
         await sleep(5000 * 2 ** Math.min(fails, 3));
@@ -94,7 +123,7 @@ export class Lobby {
         v = '';
         continue;
       }
-      if (this.left) return;
+      if (this.left || this.paired) continue;
       if (fails) {
         fails = 0;
         this.emit({ kind: 'lobby_error', detail: '' });
@@ -107,7 +136,9 @@ export class Lobby {
         if (!to) continue;
         this.outgoing.delete(answer.id);
         if (answer.state === 'accepted' && answer.code) {
-          return this.paired({ id: to.id, name: to.name, platform: to.platform, code: answer.code });
+          this.pair({ id: to.id, name: to.name, platform: to.platform, code: answer.code });
+          if (this.multi) continue;
+          break;
         }
         this.emit({ kind: 'lobby_answer', request: answer.id, accepted: false, reason: answer.state });
       }

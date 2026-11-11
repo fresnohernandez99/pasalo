@@ -92,6 +92,12 @@
             <div id="peers" class="peers"></div>
             <p id="peers-hint" class="hint"><span data-i18n="peers.chat_or_send"></span> <span class="drag-hint" data-i18n="peers.hint"></span></p>
           </div>
+
+          <!-- Chats with peers that are no longer here: read-only until they come back. -->
+          <div id="past-section" class="section" hidden>
+            <div class="section-head"><h2 data-i18n="past.title"></h2></div>
+            <div id="past" class="peers"></div>
+          </div>
         </section>
 
         <section class="tab-page" data-page="transfers" hidden>
@@ -139,10 +145,16 @@
             <div id="chat-name" class="chat-name"></div>
             <div id="chat-sub" class="sub"></div>
           </div>
+          <button id="chat-friend" class="icon-btn star" type="button" aria-pressed="false" hidden></button>
           <button id="chat-private" class="icon-btn" type="button" aria-pressed="false" data-i18n-title="private.toggle"><span data-icon="unlock"></span></button>
           <button id="chat-voice" class="icon-btn" type="button" data-i18n-title="call.voice"><span data-icon="phone"></span></button>
           <button id="chat-video" class="icon-btn" type="button" data-i18n-title="call.video"><span data-icon="video"></span></button>
         </header>
+        <div id="chat-friend-bar" class="strip-row chat-friend-bar" hidden></div>
+        <div id="chat-gone-bar" class="strip-row chat-gone-bar" hidden>
+          <span class="grow" id="chat-gone-text"></span>
+          <button type="button" class="ghost small danger-text" id="chat-delete" data-i18n="past.delete"></button>
+        </div>
         <div id="chat-private-bar" class="chat-private-bar" hidden><span data-icon="lock"></span><span data-i18n="private.bar"></span></div>
         <div id="chat-strip" class="chat-strip" hidden></div>
         <div id="chat-list" class="chat-list"></div>
@@ -188,6 +200,9 @@
     <div class="screen-body">
       <ol id="discover-steps" class="net-steps" hidden></ol>
       <p id="discover-status" class="sub" hidden></p>
+      <h2 class="discover-head" data-i18n="friends.title"></h2>
+      <div id="friends-list" class="lobby-list friends-list"></div>
+      <h2 id="discover-online-title" class="discover-head" data-i18n="lobby.title"></h2>
       <input id="discover-search" type="search" autocomplete="off" spellcheck="false" data-i18n-placeholder="discover.search" data-i18n-title="discover.search">
       <div id="discover-list" class="lobby-list discover-list"></div>
       <div id="discover-pager" class="discover-pager" hidden>
@@ -267,6 +282,7 @@
       <div class="card">
         <label class="field"><span data-i18n="settings.server"></span><input id="set-server" placeholder="https://…vercel.app" autocomplete="off" spellcheck="false"></label>
         <p class="hint" data-i18n="settings.server_hint"></p>
+        <label class="switch-row field-switch"><span><span data-i18n="settings.multi_chat"></span><small class="sub" data-i18n="settings.multi_chat_hint"></small></span><input type="checkbox" id="set-multi"></label>
       </div>
 
       <h2 data-i18n="settings.about"></h2>
@@ -370,6 +386,15 @@
     </div>
   </dialog>
 
+  <dialog id="delete-dialog">
+    <h3 id="delete-title"></h3>
+    <p data-i18n="past.delete_hint"></p>
+    <div class="dialog-actions">
+      <button type="button" class="ghost" id="delete-cancel" data-i18n="btn.cancel"></button>
+      <button type="button" class="danger" id="delete-go" data-i18n="past.delete"></button>
+    </div>
+  </dialog>
+
   <dialog id="add-dialog">
     <form id="manual">
       <h3 data-i18n="peers.add_title"></h3>
@@ -437,5 +462,7 @@
 
   <div id="toast" class="toast" role="status" hidden></div>
   <script type="module" src="js/main.js"></script>
+  <!-- An outdated WebView can't run the app: say what to update (see legacy.js). -->
+  <script src="js/legacy.js"></script>
 </body>
 </html>

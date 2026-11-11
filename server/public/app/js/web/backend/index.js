@@ -16,7 +16,7 @@ import { ALPN, Receiver, forgetReceived, manifest, probe, receivedFile, sendEntr
 import * as store from './store.js';
 import { ONCE_PREFIX, TALK_ALPN, Talk } from './talk.js';
 import { notifyCommands } from './notify.js';
-import { PasaloError, SHORT, asError, cmdError, cmdFrom, mimeFor, sleep, timed, uuid } from './util.js';
+import { PasaloError, SHORT, asError, cmdError, cmdFrom, mimeFor, sleep, stripHostDots, timed, uuid } from './util.js';
 import { VoiceCall } from './voice.js';
 
 const DEFAULT_SERVER = 'https://pasalo-server.vercel.app';
@@ -67,6 +67,8 @@ const s = {
   lobby: null,
   joining: null,
   partner: null,
+  partners: [], // with the "several people" setting: everyone accepted, still on the server
+  busy: null, // la sesión del server mientras hay pareja: solo avisa de que se está ocupado
   voice: null,
   video: null, // { peer, sender, queue: [imagen], wake: () => void }
   joinGen: 0, // sube al desconectar: un `join` en marcha ya no cuenta
@@ -141,6 +143,7 @@ async function acceptLoop() {
 
 /** Arranca todo. La interfaz espera a esto antes de cargar. */
 export async function start() {
+  stripHostDots();
   await init();
   store.persist();
   const detected = detectPlatform();
@@ -194,7 +197,7 @@ async function join() {
     const me = { ...local(), id: uuid() };
     let lobby;
     try {
-      lobby = await Lobby.join(s.settings.server, me, s.node.code, emit);
+      lobby = await Lobby.join(s.settings.server, me, s.node.code, emit, s.settings.multi_chat === true);
     } catch (err) {
       await s.node.setInternet(false).catch(() => {});
       throw cmdError('server', err.detail || String(err));
@@ -210,6 +213,9 @@ async function join() {
 }
 
 function dropPartner() {
+  // Sin pareja ya no se está ocupado: fuera del server.
+  s.busy?.leave();
+  s.busy = null;
   const partner = s.partner;
   if (!partner) return null;
   s.partner = null;
@@ -222,9 +228,25 @@ function dropPartner() {
   return partner;
 }
 
+/** Drops one of `s.partners` (multi mode); the app stays on the server. */
+function dropOne(code) {
+  const before = s.partners.length;
+  s.partners = s.partners.filter((p) => p.code !== code);
+  if (s.partners.length === before) return false;
+  stopWith(code);
+  s.talk.release(code);
+  s.talk.wipePrivate(code);
+  return true;
+}
+
 async function watchPartner(partner) {
   const released = await s.talk.hold(partner.code, FIRST_CONTACT, RECONNECT);
-  if (released || s.partner?.code !== partner.code) return;
+  if (released) return;
+  if (dropOne(partner.code)) {
+    emit({ kind: 'partner_lost', code: partner.code, name: partner.name, online: true });
+    return;
+  }
+  if (s.partner?.code !== partner.code) return;
   console.warn(`la pareja ${partner.name} dejó de responder`);
   dropPartner();
   const online = await join().then(() => true, () => false);
@@ -232,7 +254,15 @@ async function watchPartner(partner) {
 }
 
 function onEvent(e) {
-  if (e.kind === 'lobby_paired') {
+  if (e.kind === 'lobby_paired' && s.lobby?.multi) {
+    const partner = { ...e.partner, code: s.net.parse(e.partner.code) || e.partner.code };
+    e.partner = partner;
+    if (!s.partners.some((p) => p.code === partner.code)) {
+      s.partners.push(partner);
+      watchPartner(partner);
+    }
+  } else if (e.kind === 'lobby_paired') {
+    s.busy = s.lobby;
     s.lobby = null;
     s.partner = { ...e.partner, code: s.net.parse(e.partner.code) || e.partner.code };
     e.partner = s.partner;
@@ -240,6 +270,7 @@ function onEvent(e) {
     s.net.only = s.partner.code;
     watchPartner(s.partner);
   } else if (e.kind === 'signal' && e.signal?.kind === 'unpair') {
+    if (dropOne(e.peer)) return;
     if (s.partner?.code === e.peer) {
       dropPartner();
       s.node.setInternet(false).catch(() => {});
@@ -388,6 +419,8 @@ const commands = {
     online: !!s.lobby,
     direct: s.node.internet && !s.lobby && !s.partner,
     partner: s.partner,
+    partners: s.partners,
+    multi_chat: s.settings.multi_chat === true,
     version: VERSION,
     web: true,
   }),
@@ -412,6 +445,10 @@ const commands = {
     server = String(server || '').trim().replace(/\/+$/, '');
     if (!/^https?:\/\//.test(server)) throw cmdError('invalid_server', server);
     s.settings.server = server;
+    await saveSettings();
+  },
+  set_multi_chat: async ({ on }) => {
+    s.settings.multi_chat = on === true;
     await saveSettings();
   },
   check_update: () => ({ version: VERSION, newer: false, url: '', download: null }),
@@ -472,15 +509,15 @@ const commands = {
     const lobby = s.lobby;
     s.lobby = null;
     await lobby?.leave();
-    const partner = s.partner;
-    if (partner) {
-      const bye = { call: '', kind: 'unpair', data: null };
-      await timed(5000, s.talk.signal(partner.code, bye)).catch(() => {});
-    }
+    const bye = { call: '', kind: 'unpair', data: null };
+    const everyone = [...s.partners, ...(s.partner ? [s.partner] : [])];
+    await Promise.all(everyone.map((p) => timed(5000, s.talk.signal(p.code, bye)).catch(() => {})));
+    for (const p of [...s.partners]) dropOne(p.code);
     dropPartner();
     await s.node.setInternet(false);
   },
-  lobby_request: ({ to }) => lobbyOr().request(to),
+  lobby_request: ({ to, friend }) => lobbyOr().request(to, friend === true),
+  lobby_friends: ({ codes }) => lobbyOr().friends(codes || []),
   lobby_users: ({ q, offset, limit }) => lobbyOr().users(q || '', offset || 0, limit || 20),
   lobby_cancel: ({ request }) => lobbyOr().cancel(request),
   lobby_answer: ({ request, accept }) => lobbyOr().answer(request, accept),
@@ -502,6 +539,8 @@ const commands = {
   chat_private: ({ peer }) => s.talk.isPrivate(peer),
   chat_set_private: ({ peer, on }) => s.talk.setPrivate(peer, on),
   chat_wipe: ({ peer }) => s.talk.wipePrivate(peer),
+  chat_delete: ({ peer }) => s.talk.deleteChat(peer),
+  chat_list: () => s.talk.conversations(),
   chat_send: ({ peer, text }) => {
     if (!String(text || '').trim()) throw cmdError('nothing_to_send');
     return s.talk.sendText(peer, text);

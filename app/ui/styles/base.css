@@ -162,8 +162,9 @@ input:focus, textarea:focus, select:focus { border-color: var(--accent); backgro
 
 .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); flex: none; }
 .dot.connecting { background: var(--warn); animation: pulse 1s infinite alternate; }
-.dot.online { background: var(--warn); }
-.dot.paired { background: var(--ok); }
+.dot.online { background: var(--ok); }
+/* Ocupado: en un chat con su pareja. */
+.dot.busy { background: var(--warn); }
 @keyframes pulse { to { opacity: .3; } }
 
 .empty { color: var(--muted); text-align: center; padding: 36px 20px; font-size: 14px; display: grid; justify-items: center; gap: 6px; }

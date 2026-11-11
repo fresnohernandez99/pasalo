@@ -36,6 +36,11 @@
 /* El buscador y las páginas se quedan a la vista al bajar por la lista. */
 #discover-search { position: sticky; top: 0; z-index: 1; width: 100%; margin: 0 0 12px; box-shadow: 0 -4px 0 4px var(--bg), 0 8px 8px -4px var(--bg); }
 .discover-list { display: grid; gap: 8px; padding-bottom: 12px; }
+#discover .discover-head { margin: 4px 6px 8px; }
+.friends-list { margin-bottom: 16px; }
+.friends-list .pname { display: flex; align-items: center; gap: 6px; }
+.friends-list .pname .dot { margin-left: 1px; }
+.friends-list .empty { padding: 12px; }
 .discover-pager { position: sticky; bottom: 0; display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 4px 0 calc(10px + env(safe-area-inset-bottom)); background: var(--bg); }
 /* Sin hueco debajo: las páginas van pegadas abajo. */
 #discover .screen-body { padding-bottom: 0; }
@@ -75,3 +80,28 @@
 .ttt-cell.win { background: var(--accent-soft); }
 .ttt-cell:disabled { opacity: 1; cursor: default; }
 .ttt-cell:not(:disabled):active { transform: scale(.97); }
+
+/* Conecta 4: 7×6 huecos; la ficha cae desde arriba (--fall filas). */
+.c4 { display: grid; grid-template-columns: repeat(7, 1fr); gap: 5px; padding: 8px; border-radius: 16px; background: var(--accent); }
+.c4-cell { position: relative; aspect-ratio: 1; padding: 0; border-radius: 50%; background: var(--bg); }
+.c4-cell:disabled { opacity: 1; cursor: default; }
+.c4-cell:not(:disabled):hover { background: var(--accent-soft); }
+.c4-disc { position: absolute; inset: 3px; border-radius: 50%; }
+.c4-cell[data-who="mine"] .c4-disc { background: #f5b800; }
+.c4-cell[data-who="theirs"] .c4-disc { background: #e5383b; }
+.c4-cell.drop .c4-disc { z-index: 1; animation: c4-fall calc(.06s * var(--fall) + .1s) ease-in; }
+.c4-cell.win .c4-disc { box-shadow: 0 0 0 3px var(--surface), 0 0 0 5px var(--ok); }
+@keyframes c4-fall { from { transform: translateY(calc(var(--fall) * -112%)); } }
+
+/* Piedra, papel o tijera. */
+.rps { display: flex; flex-direction: column; align-items: center; gap: 22px; }
+.rps-score { font-size: 15px; font-weight: 650; font-variant-numeric: tabular-nums; }
+.rps-arena { display: flex; align-items: center; gap: 18px; }
+.rps-hand { display: grid; place-items: center; width: 92px; height: 92px; border-radius: 50%; background: var(--surface); box-shadow: var(--shadow-1); font-size: 48px; }
+.rps-vs { color: var(--muted); font-weight: 650; }
+.rps-picks { display: flex; gap: 12px; }
+.rps-pick { width: 76px; height: 76px; border-radius: 18px; background: var(--surface); box-shadow: var(--shadow-1); font-size: 38px; }
+.rps-pick.chosen { background: var(--accent-soft); box-shadow: 0 0 0 2px var(--accent); }
+.rps-pick:disabled { cursor: default; }
+.rps-pick:disabled:not(.chosen) { opacity: .45; }
+.rps-pick:not(:disabled):active { transform: scale(.95); }

@@ -8,8 +8,10 @@ import { toast } from './lib/toast.js';
 import { app } from './state.js';
 import { onSignal, onTalkLost } from './features/call.js';
 import { onChatEvent, onChatWiped, onPrivateSignal } from './features/chat.js';
+import { onFriendSignal } from './features/befriend.js';
 import { initNet, onLobbyEvent, renderHeader, takeLink } from './features/lobby.js';
 import { showTab } from './features/nav.js';
+import { loadChats } from './features/chats.js';
 import { initPeers, onPeerEvent } from './features/peers.js';
 import { initPermissions } from './features/permissions.js';
 import './features/settings.js';
@@ -17,6 +19,9 @@ import './features/notify.js';
 import { onGamePeerLost, onGameSignal } from './features/game.js';
 import { takeShare } from './features/share.js';
 import { onTransferEvent } from './features/transfers.js';
+
+// Every module parsed: this WebView can run the app (see legacy.js).
+window.pasaloStarted = true;
 
 // En el móvil no hay consola a mano: un error de JavaScript se ve como aviso.
 // Sin jerga de programador: se enseña un aviso traducido y el detalle va a la consola.
@@ -44,6 +49,7 @@ listen('pasalo', ({ payload: e }) => {
       break;
     case 'signal':
       if (e.signal?.kind === 'private') onPrivateSignal(e);
+      else if (e.signal?.kind?.startsWith('friend_')) onFriendSignal(e);
       else if (e.signal?.kind?.startsWith('game_')) onGameSignal(e);
       else if (e.signal?.kind !== 'wipe') onSignal(e);
       break;
@@ -94,6 +100,7 @@ async function init() {
   document.body.classList.toggle('mobile', snapshot.mobile);
   renderHeader();
   initPeers(snapshot);
+  loadChats();
   initNet(snapshot);
   if (snapshot.mobile) initPermissions();
   // Abierta con un enlace de otro equipo (o llega uno con la app abierta).

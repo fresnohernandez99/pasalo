@@ -5,6 +5,15 @@
 // quedan conectados solo entre ellos. Las solicitudes que llegan se ven en la
 // pantalla principal, para no perderlas.
 //
+// Arriba en Descubrir salen los amigos (ver friends.js), con un punto verde si
+// están en línea y amarillo si están ocupados con su pareja. Su estado se
+// pide solo al entrar en Descubrir; a un amigo libre se le pide conectarse
+// con el id de su sesión de ahora y le llega «quiere chatear contigo otra vez».
+//
+// With "chat with several people" (Settings) accepting doesn't leave the
+// server: every accepted person is a partner (`net.partners`), the app stays
+// online for more requests, and "Disconnect" ends them all.
+//
 // Con el enlace de un equipo no hace falta el server: los dos salen a
 // internet (estado `direct`) y se hablan por su código, por los relays de iroh.
 //
@@ -21,6 +30,7 @@ import { toast } from '../lib/toast.js';
 import { app } from '../state.js';
 import { endCallWith } from './call.js';
 import { openChat, wipeIfPrivate } from './chat.js';
+import { friendOf, friends, removeFriend, renameFriend } from './friends.js';
 import { keepOnline } from './keepalive.js';
 import { onBack, updateLayers } from './nav.js';
 import { addRemotePeer, avatar, ensureRemotePeer, findPeerByCode, peers, removePeer } from './peers.js';
@@ -32,6 +42,10 @@ const net = {
   incoming: new Map(), // id de solicitud → { id, name, platform }
   outgoing: new Map(), // id de usuario → id de solicitud
   partner: null, // { id, name, platform, code }
+  partners: new Map(), // code → partner, in multi mode
+  multi: false, // whether the current server session is multi (the setting when it joined)
+  presence: new Map(), // código de un amigo → { id, name, platform, busy }, si está en el server
+  presenceLoaded: false,
   error: '',
   steps: [], // pasos de la conexión en curso (ver `net_step` en net.rs)
   step: '',
@@ -42,8 +56,10 @@ const STEPS_SERVER = ['internet', 'relay', 'server'];
 const STEPS_DIRECT = ['internet', 'relay'];
 
 export function initNet(snapshot) {
-  if (snapshot.partner) setPartner(snapshot.partner);
-  else setNetState(snapshot.online ? 'online' : snapshot.direct ? 'direct' : 'offline');
+  if (snapshot.partner) return setPartner(snapshot.partner);
+  net.multi = snapshot.online && snapshot.multi_chat;
+  for (const partner of snapshot.partners || []) addPartner(partner);
+  setNetState(snapshot.online ? 'online' : snapshot.direct ? 'direct' : 'offline');
 }
 
 function setNetState(state) {
@@ -53,9 +69,12 @@ function setNetState(state) {
     net.users = [];
     net.incoming.clear();
     net.outgoing.clear();
+    net.presence.clear();
+    net.presenceLoaded = false;
     net.error = '';
   }
   if (state !== 'connecting') net.steps = [];
+  if (state === 'offline') for (const code of [...net.partners.keys()]) partnerGone('hangup', code);
   renderHeader();
   renderLobby();
   renderSteps();
@@ -118,9 +137,15 @@ export function renderHeader() {
     $('#me-sub').textContent = t('me.sub', { ips, port: s.port });
     if (s.code) $('#me-code').textContent = shortCode(s.code);
   }
+  const chatting = net.partners.size;
   $('#net-state').textContent =
-    state === 'paired' ? t('net.paired', { name: partner.name }) : t(state === 'offline' ? 'net.local' : `net.${state}`);
-  $('#net-dot').className = `dot ${state === 'direct' ? 'online' : state}`;
+    state === 'paired'
+      ? t('net.paired', { name: partner.name })
+      : state === 'online' && chatting
+        ? t('net.online_multi', { n: chatting })
+        : t(state === 'offline' ? 'net.local' : `net.${state}`);
+  // Verde en línea, amarillo en un chat con la pareja (ocupado para los amigos).
+  $('#net-dot').className = `dot ${state === 'direct' ? 'online' : state === 'paired' ? 'busy' : state}`;
   // «Descubrir» abre la pantalla de quién está en línea (y entra en el
   // server si hace falta); el otro botón cancela o desconecta.
   $('#net-discover').hidden = !(state === 'offline' || state === 'online') || !s.code;
@@ -140,11 +165,13 @@ function renderLobby() {
   $('#lobby-status').textContent = net.error ? t('lobby.unreachable') : '';
   const rows = [];
   for (const [request, from] of net.incoming) {
+    const friend = from.code && friendOf(from.code);
+    const name = friend?.name || from.name;
     rows.push(`
       <div class="lobby-row request" data-request="${esc(request)}">
         <div class="lobby-who">
-          ${avatar(from.name, from.platform, 'small')}
-          <div class="info"><div class="pname">${esc(from.name)}</div><div class="sub">${esc(t('lobby.wants'))}</div></div>
+          ${avatar(name, from.platform, 'small')}
+          <div class="info"><div class="pname">${esc(name)}</div><div class="sub">${esc(t(friend ? 'lobby.friend_wants' : 'lobby.wants'))}</div></div>
         </div>
         <div class="lobby-actions">
           <button class="ghost small" data-act="decline">${esc(t('btn.decline'))}</button>
@@ -175,10 +202,73 @@ function userRow(user) {
     </div>`;
 }
 
+/** Un amigo en Descubrir: su punto (gris, verde u ocupado) y, si está libre, «Chatear». */
+function friendRow(friend) {
+  const here = net.presence.get(friend.code);
+  const state = !here ? 'offline' : here.busy ? 'busy' : 'online';
+  const pending = here && net.outgoing.has(here.id);
+  const chatting = net.partners.has(friend.code);
+  const status = chatting
+    ? t('friends.chatting')
+    : net.state !== 'online' || !net.presenceLoaded ? '' : pending ? t('lobby.waiting') : t(`friends.${state}`);
+  const action = chatting
+    ? ''
+    : pending
+    ? `<button class="ghost small" data-act="cancel">${esc(t('btn.cancel'))}</button>`
+    : state === 'online'
+      ? `<button class="primary small" data-act="request">${esc(t('friends.chat'))}</button>`
+      : '';
+  return `
+    <div class="lobby-row friend" data-friend="${esc(friend.code)}" ${here ? `data-user="${esc(here.id)}"` : ''}>
+      <div class="lobby-who">
+        ${avatar(friend.name, friend.os || here?.platform, 'small')}
+        <div class="info">
+          <div class="pname"><span class="dot ${state}"></span>${esc(friend.name)}</div>
+          ${status ? `<div class="sub">${esc(status)}</div>` : ''}
+        </div>
+      </div>
+      <div class="lobby-actions">
+        ${action}
+        <button class="icon-btn subtle" data-act="unfriend" title="${esc(t('friends.remove'))}" aria-label="${esc(t('friends.remove'))}">${icon('close')}</button>
+      </div>
+    </div>`;
+}
+
+function renderFriends() {
+  const list = [...friends.values()].sort((a, b) => {
+    // Primero los libres, luego los ocupados y al final los que no están.
+    const rank = (f) => {
+      const here = net.presence.get(f.code);
+      return !here ? 2 : here.busy ? 1 : 0;
+    };
+    return rank(a) - rank(b) || a.name.localeCompare(b.name);
+  });
+  setHtml(
+    $('#friends-list'),
+    list.length ? list.map(friendRow).join('') : `<div class="empty small">${esc(t('friends.empty'))}</div>`,
+  );
+}
+
+/** Pregunta al server cuáles de los amigos están: solo al entrar en Descubrir. */
+async function loadFriends() {
+  if (net.state !== 'online' || !friends.size) return;
+  try {
+    const list = await invoke('lobby_friends', { codes: [...friends.keys()] });
+    net.presence = new Map(list.map((f) => [f.code.toLowerCase(), f]));
+    net.presenceLoaded = true;
+    for (const f of list) renameFriend(f.code, f.name, f.platform);
+  } catch {
+    // Sin respuesta: se quedan sin estado (gris).
+  }
+  renderDiscover();
+}
+
 function renderDiscover() {
   if ($('#discover').hidden) return;
+  renderFriends();
   const online = net.state === 'online';
   $('#discover-search').hidden = !online;
+  $('#discover-online-title').hidden = !online;
   const status = $('#discover-status');
   status.hidden = net.state !== 'offline' && !(online && net.error);
   status.textContent = online ? t('lobby.unreachable') : t('discover.offline');
@@ -187,7 +277,8 @@ function renderDiscover() {
     $('#discover-pager').hidden = true;
     return;
   }
-  const asking = new Set([...net.incoming.values()].map((u) => u.id));
+  // Los amigos ya salen arriba.
+  const asking = new Set([...net.incoming.values(), ...net.presence.values()].map((u) => u.id));
   const rows = discover.users.filter((u) => !asking.has(u.id)).map(userRow);
   const empty = discover.q ? t('discover.no_match') : `${t('lobby.empty')} ${t('discover.hint')}`;
   setHtml($('#discover-list'), rows.length ? rows.join('') : `<div class="empty small">${esc(empty)}</div>`);
@@ -225,6 +316,7 @@ export async function openDiscover() {
   renderDiscover();
   if (net.state === 'offline') await connectServer();
   loadPage();
+  loadFriends();
 }
 
 function closeDiscover() {
@@ -262,6 +354,8 @@ let attempt = 0;
 /** Entra en el server (los pasos se ven en la cabecera y en Descubrir). */
 async function connectServer() {
   const mine = ++attempt;
+  // The backend reads the setting when it joins: so does this session.
+  net.multi = !!app.settings?.multi_chat;
   startConnecting(STEPS_SERVER);
   try {
     await call('net_connect');
@@ -281,6 +375,7 @@ $('#net-toggle').addEventListener('click', async () => {
     return;
   }
   partnerGone('hangup');
+  for (const code of [...net.partners.keys()]) partnerGone('hangup', code);
   $('#net-toggle').disabled = true;
   await wipeRemotePrivate();
   await call('net_disconnect').catch(() => {});
@@ -296,13 +391,34 @@ async function onLobbyClick(ev) {
   if (!button) return;
   const row = button.closest('.lobby-row');
   const act = button.dataset.act;
+  if (act === 'unfriend') {
+    const friend = friendOf(row.dataset.friend);
+    removeFriend(row.dataset.friend);
+    if (friend) toast(t('toast.friend_removed', { name: friend.name }));
+    return;
+  }
   if (act === 'request' && Date.now() - lastRequest < REQUEST_GAP_MS) {
     toast(t('discover.slow'));
     return;
   }
   button.disabled = true;
   try {
-    if (act === 'request') {
+    if (act === 'request' && row.dataset.friend) {
+      // A un amigo: con el id de su sesión de ahora y diciéndole quién es.
+      const friend = friendOf(row.dataset.friend);
+      const here = net.presence.get(row.dataset.friend);
+      if (!friend || !here) return;
+      lastRequest = Date.now();
+      const to = { id: here.id, name: friend.name, platform: here.platform };
+      try {
+        net.outgoing.set(here.id, await call('lobby_request', { to, friend: true }));
+      } catch (err) {
+        // Ya no está (o se ocupó): su estado, al día.
+        loadFriends();
+        throw err;
+      }
+      toast(t('toast.request_sent', { name: friend.name }));
+    } else if (act === 'request') {
       const user = discover.users.find((u) => u.id === row.dataset.user) || net.users.find((u) => u.id === row.dataset.user);
       if (!user) return;
       lastRequest = Date.now();
@@ -337,6 +453,7 @@ async function onLobbyClick(ev) {
 
 $('#lobby-list').addEventListener('click', onLobbyClick);
 $('#discover-list').addEventListener('click', onLobbyClick);
+$('#friends-list').addEventListener('click', onLobbyClick);
 
 export function onLobbyEvent(e) {
   switch (e.kind) {
@@ -347,10 +464,13 @@ export function onLobbyEvent(e) {
       // Cambió quién está: la página de Descubrir, al día.
       loadPage();
       break;
-    case 'lobby_request':
+    case 'lobby_request': {
       net.incoming.set(e.request, e.from);
-      toast(t('toast.wants_connect', { name: e.from.name }));
+      const friend = e.from.code && friendOf(e.from.code);
+      if (friend) toast(t('toast.friend_chat', { name: friend.name }));
+      else toast(t('toast.wants_connect', { name: e.from.name }));
       break;
+    }
     case 'lobby_request_gone':
       net.incoming.delete(e.request);
       break;
@@ -358,16 +478,29 @@ export function onLobbyEvent(e) {
       const entry = [...net.outgoing].find(([, request]) => request === e.request);
       if (!entry) break;
       net.outgoing.delete(entry[0]);
-      const name = net.users.find((u) => u.id === entry[0])?.name || '';
+      const friend = [...net.presence].find(([, f]) => f.id === entry[0]);
+      const name = (friend && friendOf(friend[0])?.name) || net.users.find((u) => u.id === entry[0])?.name || '';
       if (e.reason === 'declined') toast(t('toast.connect_declined', { name }));
       break;
     }
     case 'lobby_paired':
       closeDiscover();
-      setPartner(e.partner);
+      if (net.multi) {
+        addPartner(e.partner);
+        renderHeader();
+        openChat(findPeerByCode(e.partner.code));
+      } else {
+        setPartner(e.partner);
+      }
       toast(t('toast.paired', { name: e.partner.name }));
       return;
     case 'partner_lost':
+      if (net.partners.has(e.code)) {
+        partnerGone('lost', e.code);
+        toast(t('toast.partner_lost_online', { name: e.name }), true);
+        renderHeader();
+        return;
+      }
       // Dejó de responder: el backend ya dejó la pareja y volvió al server si pudo.
       if (net.partner?.code === e.code) partnerGone('lost');
       setNetState(e.online ? 'online' : 'offline');
@@ -379,6 +512,13 @@ export function onLobbyEvent(e) {
   }
   renderLobby();
   renderDiscover();
+}
+
+/** One more person to chat with, in multi mode: the app stays online. */
+function addPartner(partner) {
+  net.partners.set(partner.code, partner);
+  addRemotePeer({ code: partner.code, name: partner.name, os: partner.platform, partner: 'multi' });
+  resumeFor(partner.code);
 }
 
 function setPartner(partner) {
@@ -393,7 +533,14 @@ function setPartner(partner) {
  * Fuera la pareja: se cuelga la llamada con ella, lo que se le envía queda
  * en pausa y su chat se cierra (al quitarla de la lista).
  */
-function partnerGone(reason) {
+function partnerGone(reason, code = null) {
+  if (code) {
+    if (!net.partners.delete(code)) return;
+    endCallWith(code, reason);
+    pauseFor(code, true);
+    removePeer(`partner:${code}`);
+    return;
+  }
   const partner = net.partner;
   if (!partner) return;
   endCallWith(partner.code, reason);
@@ -423,6 +570,12 @@ async function wipeRemotePrivate() {
 
 /** La pareja se desconectó: el backend ya volvió a solo red local. */
 export function onUnpair(peer, name) {
+  if (net.partners.has(peer)) {
+    partnerGone('hangup', peer);
+    renderHeader();
+    toast(t('toast.partner_left', { name }));
+    return;
+  }
   if (net.partner?.code !== peer) return;
   partnerGone('hangup');
   setNetState('offline');
@@ -586,6 +739,7 @@ document.addEventListener('visibilitychange', () => {
 });
 
 on('settings', renderHeader);
+on('friends:changed', renderDiscover);
 on('lang', () => {
   renderHeader();
   renderLobby();

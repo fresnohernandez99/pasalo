@@ -36,6 +36,12 @@ pub struct AppState {
     pub lobby: tokio::sync::Mutex<Option<Lobby>>,
     /// El otro equipo, tras aceptar una conexión.
     pub partner: Mutex<Option<Partner>>,
+    /// With the "several people" setting: everyone accepted while staying on
+    /// the server (`partner` stays empty then).
+    pub partners: Mutex<Vec<Partner>>,
+    /// La sesión del server mientras hay pareja: solo avisa de que se está
+    /// ocupado, para los amigos.
+    pub busy: Mutex<Option<Lobby>>,
     pub chat_dir: PathBuf,
     /// Llamadas terminadas, para subir sus estadísticas cuando el usuario lo pida.
     pub call_stats: CallStats,

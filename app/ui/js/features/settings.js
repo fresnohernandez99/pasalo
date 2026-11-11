@@ -46,6 +46,7 @@ function fill() {
   $('#dir-label').textContent = s.dir;
   $('#open-dir').title = t('dir.open_title', { dir: s.dir });
   $('#set-server').value = s.server || '';
+  $('#set-multi').checked = !!s.multi_chat;
   $('#set-version').textContent = s.version || '';
   $('#lang').innerHTML = Object.keys(LANGS)
     .map((code) => `<option value="${code}" ${code === currentLang() ? 'selected' : ''}>${esc(LANGS[code]['lang.name'])}</option>`)
@@ -135,6 +136,17 @@ $('#set-server').addEventListener('change', async (ev) => {
     toast(t('toast.saved'));
   } catch {
     ev.target.value = app.settings.server || '';
+  }
+});
+
+$('#set-multi').addEventListener('change', async (ev) => {
+  const on = ev.target.checked;
+  try {
+    await call('set_multi_chat', { on });
+    updateSettings({ multi_chat: on });
+    toast(t('toast.saved'));
+  } catch {
+    ev.target.checked = !on;
   }
 });
 

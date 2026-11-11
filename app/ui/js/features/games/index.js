@@ -14,8 +14,10 @@
 //             equipos sale lo mismo, cada uno lo calcula con las jugadas)
 //   y devuelve { receive(data) } para las jugadas del otro.
 
+import connect4 from './connect4.js';
+import rps from './rps.js';
 import tictactoe from './tictactoe.js';
 
-export const GAMES = [tictactoe];
+export const GAMES = [tictactoe, connect4, rps];
 
 export const findGame = (id) => GAMES.find((g) => g.id === id) || null;

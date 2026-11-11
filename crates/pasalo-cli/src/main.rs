@@ -170,8 +170,8 @@ async fn main() -> Result<()> {
             }
             let lobby = match (&server, &remote) {
                 (Some(server), Some(remote)) => {
-                    let me = LobbyUser { id: pasalo_core::session_id(), name: local.name.clone(), platform: local.platform.clone() };
-                    let lobby = Lobby::join(server, remote, me, tx.clone()).await.context("no se pudo entrar en el server")?;
+                    let me = LobbyUser { id: pasalo_core::session_id(), name: local.name.clone(), platform: local.platform.clone(), code: None };
+                    let lobby = Lobby::join(server, remote, me, false, tx.clone()).await.context("no se pudo entrar en el server")?;
                     println!("En el server {server}. Esperando solicitudes…");
                     Some(lobby)
                 }
@@ -222,7 +222,7 @@ async fn main() -> Result<()> {
                         if let (Some(lobby), Some(name)) = (&lobby, &connect)
                             && let Some(user) = users.iter().find(|u| u.name.eq_ignore_ascii_case(name))
                         {
-                            match lobby.request(user).await {
+                            match lobby.request(user, false).await {
                                 Ok(_) => println!("Solicitud enviada a {}.", user.name),
                                 Err(e) => println!("No se pudo pedir: {e}"),
                             }
@@ -254,6 +254,10 @@ async fn main() -> Result<()> {
                             remote.set_only(None);
                         }
                         receiver.set_only(None);
+                        // Ya no sale ocupado para sus amigos.
+                        if let Some(lobby) = &lobby {
+                            lobby.leave().await;
+                        }
                         println!("{name} se desconectó.");
                         continue;
                     }

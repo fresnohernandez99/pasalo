@@ -128,6 +128,8 @@ class PasaloPlugin(private val activity: Activity) : Plugin(activity) {
     "microphone" -> android.Manifest.permission.RECORD_AUDIO
     "camera" -> android.Manifest.permission.CAMERA
     "local_network" -> LOCAL_NETWORK
+    // Up to Android 10 the public Downloads folder needs it (see `storage_public`).
+    "storage" -> if (Build.VERSION.SDK_INT <= 29) android.Manifest.permission.WRITE_EXTERNAL_STORAGE else null
     else -> null
   }
 
@@ -141,6 +143,7 @@ class PasaloPlugin(private val activity: Activity) : Plugin(activity) {
       "full_screen" -> Build.VERSION.SDK_INT < 34 ||
         activity.getSystemService(android.app.NotificationManager::class.java).canUseFullScreenIntent()
       "battery" -> (activity.getSystemService(Context.POWER_SERVICE) as PowerManager).isIgnoringBatteryOptimizations(activity.packageName)
+      "storage" -> granted(manifestPermission(id)!!) && granted(android.Manifest.permission.READ_EXTERNAL_STORAGE)
       else -> granted(manifestPermission(id)!!)
     }
     if (ok) return "granted"
@@ -158,6 +161,7 @@ class PasaloPlugin(private val activity: Activity) : Plugin(activity) {
   @Command
   fun permissions(invoke: Invoke) {
     val ids = mutableListOf("notifications", "microphone", "camera")
+    if (Build.VERSION.SDK_INT <= 29) ids += "storage"
     if (Build.VERSION.SDK_INT >= 34) ids += "full_screen"
     if (Build.VERSION.SDK_INT >= 37) ids += "local_network"
     ids += "battery"
@@ -174,7 +178,9 @@ class PasaloPlugin(private val activity: Activity) : Plugin(activity) {
     val permission = manifestPermission(id)
     val intent = when {
       permission != null && permissionState(id) == "ask" -> {
-        ActivityCompat.requestPermissions(activity, arrayOf(permission), 4648)
+        // Up to Android 9, creating the folder also needs read access (same dialog).
+        val also = if (id == "storage") arrayOf(android.Manifest.permission.READ_EXTERNAL_STORAGE) else emptyArray()
+        ActivityCompat.requestPermissions(activity, arrayOf(permission) + also, 4648)
         prefs().edit().putBoolean("asked_$permission", true).apply()
         null
       }

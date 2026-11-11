@@ -23,6 +23,9 @@
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
     <!-- Apagar la pantalla con el sensor de proximidad en las llamadas por el auricular. -->
     <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <!-- The public Download/Pasalo folder: only needed up to Android 10 (11+ writes it without permission). -->
+    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="29" />
+    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="29" />
     <uses-feature android:name="android.hardware.camera" android:required="false" />
     <uses-feature android:name="android.hardware.microphone" android:required="false" />
 

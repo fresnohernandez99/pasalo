@@ -91,6 +91,14 @@ export async function wipeChat(peer) {
   });
 }
 
+/** Peers with saved messages and the time of the last one, newest first. */
+export async function conversations() {
+  const all = await run('chat', 'readonly', (s) => s.getAll());
+  const last = new Map();
+  for (const m of all) last.set(m.peer, Math.max(last.get(m.peer) || 0, m.ts || 0));
+  return [...last].map(([peer, ts]) => ({ peer, ts })).sort((a, b) => b.ts - a.ts);
+}
+
 export async function pendingMessages() {
   const all = await run('chat', 'readonly', (s) => s.getAll());
   return all.filter((m) => m.outgoing && m.status === 'pending').map(({ ord, ...m }) => m);

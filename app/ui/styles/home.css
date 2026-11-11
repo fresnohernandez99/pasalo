@@ -110,6 +110,7 @@ body.pane-open .pane { transform: none; visibility: visible; transition: transfo
   transition: background .12s;
 }
 .peer + .peer { border-top: 1px solid var(--border); }
+.peer.past .avatar { filter: grayscale(.7); opacity: .75; }
 .peer:hover, .peer:active { background: var(--surface-2); }
 .peer.open { background: var(--accent-soft); }
 .peer.drop { background: var(--accent-soft); outline: 2px dashed var(--accent); outline-offset: -4px; }
@@ -149,6 +150,7 @@ body.pane-open .pane { transform: none; visibility: visible; transition: transfo
 /* Si no caben al lado, los botones bajan a su propia línea. */
 .lobby-actions { display: flex; gap: 8px; margin-left: auto; }
 .lobby-list .empty { background: var(--surface); border-radius: var(--radius); }
+
 
 /* ---------- transferencias ---------- */
 

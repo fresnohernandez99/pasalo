@@ -86,7 +86,9 @@ function addManualPeer(input, save = true) {
 // chat sin estar en la lista. No se guardan: al abrir la app se empieza
 // desconectado.
 export function addRemotePeer({ code, name, os, partner = false }) {
-  const key = partner ? 'partner' : `remote:${code}`;
+  // With "several people" there can be more than one partner, one key each.
+  const key = partner === 'multi' ? `partner:${code}` : partner ? 'partner' : `remote:${code}`;
+  if (partner) peers.delete(`remote:${code}`);
   peers.set(key, { device_id: key, name, platform: partner ? 'partner' : 'remote', os, addr: code });
   renderPeers();
 }
@@ -110,9 +112,9 @@ export function findPeerByCode(code) {
 export function renderPeers() {
   // La pareja, si además está en la LAN (o se añadió antes por enlace), sale
   // una sola vez (como pareja).
-  const partner = peers.get('partner')?.addr;
+  const partners = new Set([...peers.values()].filter((p) => p.platform === 'partner').map((p) => p.addr));
   const list = [...peers.values()]
-    .filter((p) => p.platform === 'partner' || !partner || (p.code !== partner && p.addr !== partner))
+    .filter((p) => p.platform === 'partner' || (!partners.has(p.code) && !partners.has(p.addr)))
     .sort((a, b) => (b.platform === 'partner') - (a.platform === 'partner') || a.name.localeCompare(b.name));
   const html = list.length
     ? list.map(peerRow).join('')

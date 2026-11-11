@@ -16,6 +16,25 @@ async function check(ask = false) {
   const granted = await invoke('local_network', { ask }).catch(() => null);
   // `null`: este sistema no lo necesita.
   $('#perm-banner').hidden = granted !== false;
+  checkStorage();
+}
+
+// Up to Android 10, received files only reach the public Downloads folder
+// with the storage permission: it is asked once at start, and the backend
+// switches to that folder as soon as it can (`storage_public`).
+let storageAsked = false;
+async function checkStorage() {
+  const ok = await invoke('storage_public').catch(() => null);
+  if (ok !== false || storageAsked) return;
+  storageAsked = true;
+  const state = (await invoke('permissions').catch(() => [])).find((p) => p.id === 'storage')?.state;
+  if (state !== 'ask') return;
+  await invoke('permission_request', { id: 'storage' }).catch(() => {});
+  // The system dialog doesn't always hide the page: look again for a while.
+  for (let i = 0; i < 20; i++) {
+    await new Promise((resolve) => setTimeout(resolve, 1500));
+    if (await invoke('storage_public').catch(() => null)) return;
+  }
 }
 
 export function initPermissions() {
