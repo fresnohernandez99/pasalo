@@ -67,7 +67,7 @@ Get the latest version from [Releases](https://github.com/fresnohernandez99/pasa
 
 | Device | File |
 |---|---|
-| Android | `Pasalo-<version>-android-universal.apk` (or `-arm64-v8a.apk` / `-armeabi-v7a.apk`, smaller) |
+| Android | `Pasalo-<version>-android-universal.apk` (or `-arm64-v8a.apk` / `-armeabi-v7a.apk`, smaller); `-x86.apk` for emulators and Chromebooks |
 | Mac | `Pasalo_<version>_universal.dmg` |
 | Windows | `Pasalo_<version>_x64-setup.exe` |
 | Linux | `.AppImage`, `.deb` or `.rpm` |

@@ -212,7 +212,12 @@ pub async fn check_update(state: State<'_, AppState>) -> CmdResult<pasalo_core::
 /// El archivo de la release que le sirve a este equipo.
 fn is_our_asset(name: &str) -> bool {
     if cfg!(target_os = "android") {
-        name.ends_with(if cfg!(target_arch = "aarch64") { "arm64-v8a.apk" } else { "armeabi-v7a.apk" })
+        name.ends_with(match () {
+            _ if cfg!(target_arch = "aarch64") => "arm64-v8a.apk",
+            // The x86 APK carries both x86 and x86_64 (emulators, Chromebooks).
+            _ if cfg!(any(target_arch = "x86", target_arch = "x86_64")) => "android-x86.apk",
+            _ => "armeabi-v7a.apk",
+        })
     } else if cfg!(target_os = "macos") {
         name.ends_with(".dmg")
     } else if cfg!(target_os = "windows") {

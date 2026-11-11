@@ -67,7 +67,7 @@
 
 | Устройство | Файл |
 |---|---|
-| Android | `Pasalo-<версия>-android-universal.apk` (или `-arm64-v8a.apk` / `-armeabi-v7a.apk`, легче) |
+| Android | `Pasalo-<версия>-android-universal.apk` (или `-arm64-v8a.apk` / `-armeabi-v7a.apk`, легче); `-x86.apk` для эмуляторов и Chromebook |
 | Mac | `Pasalo_<версия>_universal.dmg` |
 | Windows | `Pasalo_<версия>_x64-setup.exe` |
 | Linux | `.AppImage`, `.deb` или `.rpm` |

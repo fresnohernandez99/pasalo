@@ -67,7 +67,7 @@ Baja la última versión de [Releases](https://github.com/fresnohernandez99/pasa
 
 | Equipo | Archivo |
 |---|---|
-| Android | `Pasalo-<versión>-android-universal.apk` (o `-arm64-v8a.apk` / `-armeabi-v7a.apk`, más ligeras) |
+| Android | `Pasalo-<versión>-android-universal.apk` (o `-arm64-v8a.apk` / `-armeabi-v7a.apk`, más ligeras); `-x86.apk` para emuladores y Chromebooks |
 | Mac | `Pasalo_<versión>_universal.dmg` |
 | Windows | `Pasalo_<versión>_x64-setup.exe` |
 | Linux | `.AppImage`, `.deb` o `.rpm` |

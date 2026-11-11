@@ -115,7 +115,7 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@stable
         with:
-          targets: aarch64-linux-android,armv7-linux-androideabi
+          targets: aarch64-linux-android,armv7-linux-androideabi,i686-linux-android,x86_64-linux-android
 
       - uses: Swatinem/rust-cache@v2
         with:
@@ -134,11 +134,21 @@ jobs:
       # the web cannot tell them apart, so it offers the universal one.
       # The second build reuses the Rust libraries of the first one and only
       # assembles the "universal" flavor (the split outputs stay in place).
+      # A third build packs x86 and x86_64 together (emulators, Chromebooks);
+      # it also lands in the "universal" folder, so the ARM one is moved aside.
       - name: Build the APKs
         working-directory: app/src-tauri
         run: |
           cargo tauri android build --apk --split-per-abi --target aarch64 armv7
           cargo tauri android build --apk --target aarch64 armv7
+          outputs=gen/android/app/build/outputs/apk
+          mkdir -p "$outputs/universal-arm/release"
+          mv "$outputs/universal/release/app-universal-release-unsigned.apk" \
+            "$outputs/universal-arm/release/app-universal-arm-release-unsigned.apk"
+          cargo tauri android build --apk --target i686 x86_64
+          mkdir -p "$outputs/x86/release"
+          mv "$outputs/universal/release/app-universal-release-unsigned.apk" \
+            "$outputs/x86/release/app-x86-release-unsigned.apk"
 
       - name: Sign and publish
         env:
@@ -167,8 +177,9 @@ jobs:
           files=()
           # Gradle names the folders after the flavor (arm64, arm); the file
           # carries the Android ABI so each phone knows which one to download.
-          # "universal" carries both libraries (arm64-v8a and armeabi-v7a).
-          for pair in arm64:arm64-v8a arm:armeabi-v7a universal:universal; do
+          # "universal" carries both ARM libraries (arm64-v8a and armeabi-v7a);
+          # "x86" carries x86 and x86_64.
+          for pair in arm64:arm64-v8a arm:armeabi-v7a universal-arm:universal x86:x86; do
             flavor="${pair%%:*}" abi="${pair##*:}"
             unsigned="$outputs/$flavor/release/app-$flavor-release-unsigned.apk"
             out="Pasalo-$version-android-$abi.apk"

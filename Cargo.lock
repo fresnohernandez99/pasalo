@@ -4003,7 +4003,7 @@ dependencies = [
 
 [[package]]
 name = "pasalo-app"
-version = "1.0.6"
+version = "1.0.7"
 dependencies = [
  "base64 0.22.1",
  "bytes",
@@ -4025,7 +4025,7 @@ dependencies = [
 
 [[package]]
 name = "pasalo-call"
-version = "1.0.6"
+version = "1.0.7"
 dependencies = [
  "codec2",
  "cpal",
@@ -4036,7 +4036,7 @@ dependencies = [
 
 [[package]]
 name = "pasalo-cli"
-version = "1.0.6"
+version = "1.0.7"
 dependencies = [
  "anyhow",
  "bytes",
@@ -4051,7 +4051,7 @@ dependencies = [
 
 [[package]]
 name = "pasalo-core"
-version = "1.0.6"
+version = "1.0.7"
 dependencies = [
  "blake3",
  "bytes",
