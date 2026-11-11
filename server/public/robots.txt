@@ -1,0 +1,6 @@
+# Pasalo: la página de los enlaces y la app web se pueden indexar; la API no.
+User-agent: *
+Allow: /
+Disallow: /api/
+
+Sitemap: https://pasalo-server.vercel.app/sitemap.xml
