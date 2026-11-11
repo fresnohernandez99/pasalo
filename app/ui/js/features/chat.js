@@ -540,12 +540,19 @@ function autosize() {
   $('#chat-send').disabled = !input.value.trim();
 }
 
+// Like WhatsApp: sending keeps the keyboard open. Tapping the button would take
+// the focus from the field (and the keyboard goes away), so it never takes it.
+$('#chat-send').addEventListener('mousedown', (ev) => ev.preventDefault());
+
 $('#chat-form').addEventListener('submit', async (ev) => {
   ev.preventDefault();
   const text = input.value;
   if (!text.trim() || !chat.peer) return;
+  const typing = document.activeElement === input;
   input.value = '';
   autosize();
+  // Still inside the tap: iOS only lets the keyboard stay up from a gesture.
+  if (typing) input.focus({ preventScroll: true });
   const m = await tryCall('chat_send', { peer: chat.peer.code, text });
   if (m) {
     upsertMessage(m);
