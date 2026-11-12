@@ -4,6 +4,10 @@
 //! With the "chat with several people" setting (`multi_chat`) the app stays
 //! on the server after accepting: everyone accepted goes to
 //! `AppState::partners`, and connections from others are still allowed.
+//!
+//! "Disconnect" only leaves the server: the chats already connected (over
+//! iroh) go on, and each one is ended on its own with `partner_leave`. The
+//! internet connection is dropped only once nothing uses it any more.
 
 use std::time::Duration;
 
@@ -24,15 +28,34 @@ fn step(app: &AppHandle, step: &str) {
 
 /// Sale a internet y espera a tener relay: entonces el código de este equipo
 /// ya sirve para llegar desde otra red.
-async fn reach_internet(app: &AppHandle, remote: &pasalo_core::Remote) -> CmdResult<()> {
+async fn reach_internet(app: &AppHandle, state: &AppState, remote: &pasalo_core::Remote) -> CmdResult<()> {
     step(app, "internet");
     remote.set_internet(true).await.map_err(CmdError::other)?;
     step(app, "relay");
     if tokio::time::timeout(RELAY_WAIT, remote.online()).await.is_err() {
-        let _ = remote.set_internet(false).await;
+        if !chatting(state) {
+            let _ = remote.set_internet(false).await;
+        }
         return Err(CmdError::new("no_relay", ""));
     }
     Ok(())
+}
+
+/// Whether someone is still connected over iroh: the partner, or any of the
+/// partners in multi mode. While they are, the internet connection stays.
+fn chatting(state: &AppState) -> bool {
+    state.partner.lock().unwrap().is_some() || !state.partners.lock().unwrap().is_empty()
+}
+
+/// Back to local network only, unless the server or a chat still needs the
+/// internet connection.
+async fn go_local_if_idle(state: &AppState) {
+    if chatting(state) || state.lobby.lock().await.is_some() {
+        return;
+    }
+    if let Some(remote) = &state.remote {
+        let _ = remote.set_internet(false).await;
+    }
 }
 
 /// Sale a internet y entra en el server. Hasta aquí la app no intenta nada fuera de la LAN.
@@ -59,7 +82,7 @@ async fn join(app: &AppHandle, state: &AppState) -> CmdResult<()> {
     if server.is_empty() {
         return Err(CmdError::new("no_server", ""));
     }
-    reach_internet(app, remote).await?;
+    reach_internet(app, state, remote).await?;
     step(app, "server");
     match Lobby::join(&server, remote, me, multi, state.events.clone()).await {
         Ok(joined) => {
@@ -67,7 +90,8 @@ async fn join(app: &AppHandle, state: &AppState) -> CmdResult<()> {
             Ok(())
         }
         Err(e) => {
-            let _ = remote.set_internet(false).await;
+            drop(lobby);
+            go_local_if_idle(state).await;
             Err(CmdError::new("server", e.detail()))
         }
     }
@@ -78,37 +102,38 @@ async fn join(app: &AppHandle, state: &AppState) -> CmdResult<()> {
 #[tauri::command]
 pub async fn net_direct(app: AppHandle, state: State<'_, AppState>) -> CmdResult<()> {
     let remote = state.remote.as_ref().ok_or_else(|| CmdError::new("remote_unavailable", ""))?;
-    reach_internet(&app, remote).await
+    reach_internet(&app, &state, remote).await
 }
 
-/// Sale del server y de la conexión con la pareja (avisándola), y vuelve a
-/// solo red local.
+/// Leaves the server. The chats already connected go on; only when there is
+/// none left does the app go back to local network only.
 #[tauri::command]
-pub async fn net_disconnect(app: AppHandle, state: State<'_, AppState>) -> CmdResult<()> {
+pub async fn net_disconnect(state: State<'_, AppState>) -> CmdResult<()> {
     if let Some(lobby) = state.lobby.lock().await.take() {
         lobby.leave().await;
     }
-    let mut partners = state.partners.lock().unwrap().clone();
-    partners.extend(state.partner.lock().unwrap().clone());
+    go_local_if_idle(&state).await;
+    Ok(())
+}
+
+/// Ends the chat with `code` (telling them): the partner, or one of the
+/// partners in multi mode. The app stays on the server if it was there, and
+/// goes back to local network only once nothing else uses the internet.
+#[tauri::command]
+pub async fn partner_leave(app: AppHandle, state: State<'_, AppState>, code: String) -> CmdResult<()> {
+    let known = state.partners.lock().unwrap().iter().any(|p| p.code == code)
+        || state.partner.lock().unwrap().as_ref().is_some_and(|p| p.code == code);
+    if !known {
+        return Ok(());
+    }
     if let Some(talk) = &state.talk {
-        // Everyone is told at once, so several partners don't add up the waits.
-        let mut byes = tokio::task::JoinSet::new();
-        for partner in partners {
-            let talk = talk.clone();
-            byes.spawn(async move {
-                let bye = Signal { call: String::new(), kind: "unpair".into(), data: serde_json::Value::Null };
-                let _ = tokio::time::timeout(Duration::from_secs(5), talk.signal(&partner.code, bye)).await;
-            });
-        }
-        byes.join_all().await;
+        let bye = Signal { call: String::new(), kind: "unpair".into(), data: serde_json::Value::Null };
+        let _ = tokio::time::timeout(Duration::from_secs(5), talk.signal(&code, bye)).await;
     }
-    for partner in state.partners.lock().unwrap().clone() {
-        drop_one(&app, &state, &partner.code);
+    if !drop_one(&app, &state, &code) {
+        drop_partner(&app, &state);
     }
-    drop_partner(&app, &state);
-    if let Some(remote) = &state.remote {
-        remote.set_internet(false).await.map_err(CmdError::other)?;
-    }
+    go_local_if_idle(&state).await;
     Ok(())
 }
 
@@ -168,10 +193,13 @@ fn watch_partner(app: AppHandle, partner: Partner) {
         if released {
             return;
         }
-        // One of several: only that one goes, the app is still on the server.
+        // One of several: only that one goes; the app stays on the server if
+        // it was there (and online as long as someone else is still chatting).
         if drop_one(&app, &state, &partner.code) {
             eprintln!("{} dejó de responder", partner.name);
-            let _ = state.events.send(Event::PartnerLost { code: partner.code, name: partner.name, online: true });
+            go_local_if_idle(&state).await;
+            let online = state.lobby.lock().await.is_some();
+            let _ = state.events.send(Event::PartnerLost { code: partner.code, name: partner.name, online });
             return;
         }
         let ours = state.partner.lock().unwrap().as_ref().is_some_and(|p| p.code == partner.code);
@@ -247,15 +275,15 @@ pub async fn on_event(app: &AppHandle, event: &Event) {
             }
             watch_partner(app.clone(), partner.clone());
         }
-        // La pareja se despidió: se vuelve a solo red local.
-        Event::Signal { peer, signal, .. } if signal.kind == "unpair" && drop_one(app, &state, peer) => {}
+        // They ended the chat: one of several goes (the rest go on), or the
+        // partner goes. Without the server or anyone else, back to local only.
         Event::Signal { peer, signal, .. } if signal.kind == "unpair" => {
             let ours = state.partner.lock().unwrap().as_ref().is_some_and(|p| p.code == *peer);
-            if ours {
-                drop_partner(app, &state);
-                if let Some(remote) = &state.remote {
-                    let _ = remote.set_internet(false).await;
+            if drop_one(app, &state, peer) || ours {
+                if ours {
+                    drop_partner(app, &state);
                 }
+                go_local_if_idle(&state).await;
             }
         }
         // El otro marcó (o desmarcó) el chat como privado: aquí también.

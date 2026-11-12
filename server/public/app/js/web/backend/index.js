@@ -179,9 +179,20 @@ async function reachInternet() {
   await s.node.setInternet(true);
   step('relay');
   if (!(await s.node.online(RELAY_WAIT))) {
-    await s.node.setInternet(false).catch(() => {});
+    if (!chatting()) await s.node.setInternet(false).catch(() => {});
     throw cmdError('no_relay');
   }
+}
+
+/** Whether someone is still connected over iroh: the partner, or any of `s.partners`. */
+function chatting() {
+  return !!s.partner || s.partners.length > 0;
+}
+
+/** Back to local network only, unless the server or a chat still needs the internet. */
+async function goLocalIfIdle() {
+  if (chatting() || s.lobby || s.joining) return;
+  await s.node.setInternet(false).catch(() => {});
 }
 
 async function join() {
@@ -199,7 +210,7 @@ async function join() {
     try {
       lobby = await Lobby.join(s.settings.server, me, s.node.code, emit, s.settings.multi_chat === true);
     } catch (err) {
-      await s.node.setInternet(false).catch(() => {});
+      if (!chatting()) await s.node.setInternet(false).catch(() => {});
       throw cmdError('server', err.detail || String(err));
     }
     // Se canceló mientras entraba: se sale.
@@ -242,8 +253,11 @@ function dropOne(code) {
 async function watchPartner(partner) {
   const released = await s.talk.hold(partner.code, FIRST_CONTACT, RECONNECT);
   if (released) return;
+  // One of several: only that one goes; the app stays on the server if it
+  // was there (and online as long as someone else is still chatting).
   if (dropOne(partner.code)) {
-    emit({ kind: 'partner_lost', code: partner.code, name: partner.name, online: true });
+    await goLocalIfIdle();
+    emit({ kind: 'partner_lost', code: partner.code, name: partner.name, online: !!s.lobby });
     return;
   }
   if (s.partner?.code !== partner.code) return;
@@ -270,10 +284,12 @@ function onEvent(e) {
     s.net.only = s.partner.code;
     watchPartner(s.partner);
   } else if (e.kind === 'signal' && e.signal?.kind === 'unpair') {
-    if (dropOne(e.peer)) return;
-    if (s.partner?.code === e.peer) {
-      dropPartner();
-      s.node.setInternet(false).catch(() => {});
+    // They ended the chat: one of several goes (the rest go on), or the
+    // partner goes. Without the server or anyone else, back to local only.
+    const ours = s.partner?.code === e.peer;
+    if (dropOne(e.peer) || ours) {
+      if (ours) dropPartner();
+      goLocalIfIdle();
     }
   } else if (e.kind === 'signal' && e.signal?.kind === 'private') {
     s.talk.setPrivate(e.peer, e.signal.data?.on === true).catch(() => {});
@@ -504,17 +520,26 @@ const commands = {
     await join();
   },
   net_direct: () => reachInternet(),
+  // Leaves the server only: the chats already connected go on, and the app
+  // goes back to local network only once there is none left.
   net_disconnect: async () => {
     s.joinGen++;
+    // A join still in progress ends first (and leaves, as it was cancelled).
+    await s.joining?.catch(() => {});
     const lobby = s.lobby;
     s.lobby = null;
     await lobby?.leave();
+    await goLocalIfIdle();
+  },
+  // Ends the chat with `code` (telling them): the partner, or one of
+  // `s.partners`. The app stays on the server if it was there.
+  partner_leave: async ({ code }) => {
+    const known = s.partners.some((p) => p.code === code) || s.partner?.code === code;
+    if (!known) return;
     const bye = { call: '', kind: 'unpair', data: null };
-    const everyone = [...s.partners, ...(s.partner ? [s.partner] : [])];
-    await Promise.all(everyone.map((p) => timed(5000, s.talk.signal(p.code, bye)).catch(() => {})));
-    for (const p of [...s.partners]) dropOne(p.code);
-    dropPartner();
-    await s.node.setInternet(false);
+    await timed(5000, s.talk.signal(code, bye)).catch(() => {});
+    if (!dropOne(code)) dropPartner();
+    await goLocalIfIdle();
   },
   lobby_request: ({ to, friend }) => lobbyOr().request(to, friend === true),
   lobby_friends: ({ codes }) => lobbyOr().friends(codes || []),

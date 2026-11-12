@@ -11,7 +11,7 @@ import { call, invoke, listen } from '../lib/tauri.js';
 import { toast } from '../lib/toast.js';
 import { app, isMobile } from '../state.js';
 import { activePeerCode, openChat, unreadCount, wipeIfPrivate } from './chat.js';
-import { openLink } from './lobby.js';
+import { leavePartner, openLink } from './lobby.js';
 import { sharing, shareTo } from './share.js';
 import { openTextDialog, pauseFor, resumeFor, sendPaths } from './transfers.js';
 
@@ -133,6 +133,8 @@ function peerRow(p) {
   const unread = code ? unreadCount(code) : 0;
   const open = code && code === activePeerCode();
   const removable = ['manual', 'remote'].includes(p.platform);
+  // Someone connected through the server: their chat is ended on its own.
+  const leave = p.platform === 'partner';
   return `
     <div class="peer ${open ? 'open' : ''}" data-id="${esc(p.device_id)}" role="button" tabindex="0">
       ${avatar(p.name, p.os || p.platform)}
@@ -143,6 +145,7 @@ function peerRow(p) {
       ${unread ? `<span class="badge">${unread}</span>` : ''}
       <button class="icon-btn" data-act="files" title="${esc(t('peers.send_files'))}" aria-label="${esc(t('peers.send_files'))}">${icon('upload')}</button>
       ${removable ? `<button class="icon-btn subtle" data-act="remove" title="${esc(t('btn.remove'))}" aria-label="${esc(t('btn.remove'))}">${icon('close')}</button>` : ''}
+      ${leave ? `<button class="icon-btn subtle" data-act="leave" title="${esc(t('chat.end'))}" aria-label="${esc(t('chat.end'))}">${icon('close')}</button>` : ''}
     </div>`;
 }
 
@@ -158,7 +161,7 @@ $('#peers').addEventListener('click', async (ev) => {
   const peer = row && peers.get(row.dataset.id);
   if (!peer) return;
   const act = ev.target.closest('button')?.dataset.act;
-  if (sharing() && act !== 'remove') {
+  if (sharing() && act !== 'remove' && act !== 'leave') {
     shareTo(peer, !!peerCode(peer));
   } else if (act === 'files') {
     sendPaths(peer, await call('pick_files'));
@@ -166,6 +169,9 @@ $('#peers').addEventListener('click', async (ev) => {
     peers.delete(peer.device_id);
     saveManualPeers();
     renderPeers();
+  } else if (act === 'leave') {
+    ev.target.closest('button').disabled = true;
+    leavePartner(peer.addr);
   } else {
     openPeer(peer);
   }

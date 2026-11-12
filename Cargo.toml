@@ -5,7 +5,7 @@ members = ["crates/pasalo-core", "crates/pasalo-cli", "crates/pasalo-call", "app
 exclude = ["web"]
 
 [workspace.package]
-version = "1.0.8"
+version = "1.0.9"
 edition = "2024"
 license = "MIT"
 

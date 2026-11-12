@@ -55,7 +55,7 @@ If a device doesn't show up, type its IP in **Add by IP**. That usually happens 
 2. **Discover** lists everyone else who is connected, with a search box and pages. One of you presses **Connect** next to the other.
 3. The other gets the request and presses **Accept** (or **Decline**).
 4. You're connected: both of you leave the server, nobody else can see you or reach you, and each of you shows up in the other's **Devices** to send files, chat and call as on the local network.
-5. **Disconnect** ends the connection on both sides and goes back to local network only. Closing the app also starts disconnected next time.
+5. **Disconnect** only leaves the server: the chats already connected go on (the header says *Online by link · chatting with N*, and **Discover** takes you back). Each chat is ended on its own, with **End chat** in its row in **Devices** or in the chat header: the other side is told, the call with them ends and, if the chat was private, its history is deleted on both devices. Once nobody is connected and you are off the server, the app goes back to local network only. Closing the app also starts disconnected next time.
 
 The server ([`server/`](../server/README.md), for Vercel with MongoDB) only introduces you: no files, messages or calls go through it. iroh connects the two devices directly when the networks allow it, and otherwise through an n0 relay. The server address goes in ⚙ Settings.
 

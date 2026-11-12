@@ -11,8 +11,13 @@
 // con el id de su sesión de ahora y le llega «quiere chatear contigo otra vez».
 //
 // With "chat with several people" (Settings) accepting doesn't leave the
-// server: every accepted person is a partner (`net.partners`), the app stays
-// online for more requests, and "Disconnect" ends them all.
+// server: every accepted person is a partner (`net.partners`) and the app
+// stays online for more requests.
+//
+// "Disconnect" only leaves the server: the chats already connected over iroh
+// go on (state `direct`, with "Discover" to come back), and each one is ended
+// on its own, from its row in the list or from the chat (`leavePartner`).
+// Only when nothing is connected any more does the app go back to local only.
 //
 // Con el enlace de un equipo no hace falta el server: los dos salen a
 // internet (estado `direct`) y se hablan por su código, por los relays de iroh.
@@ -143,17 +148,21 @@ export function renderHeader() {
       ? t('net.paired', { name: partner.name })
       : state === 'online' && chatting
         ? t('net.online_multi', { n: chatting })
-        : t(state === 'offline' ? 'net.local' : `net.${state}`);
+        : state === 'direct' && chatting
+          ? t('net.chatting', { n: chatting })
+          : t(state === 'offline' ? 'net.local' : `net.${state}`);
   // Verde en línea, amarillo en un chat con la pareja (ocupado para los amigos).
   $('#net-dot').className = `dot ${state === 'direct' ? 'online' : state === 'paired' ? 'busy' : state}`;
   // «Descubrir» abre la pantalla de quién está en línea (y entra en el
-  // server si hace falta); el otro botón cancela o desconecta.
-  $('#net-discover').hidden = !(state === 'offline' || state === 'online') || !s.code;
+  // server si hace falta); el otro botón cancela o deja el server.
+  $('#net-discover').hidden = !['offline', 'online', 'direct'].includes(state) || !s.code;
   const toggle = $('#net-toggle');
   toggle.textContent = t(state === 'connecting' ? 'btn.cancel' : 'net.disconnect');
   toggle.className = 'ghost small';
   toggle.disabled = false;
-  toggle.hidden = state === 'offline';
+  // Paired (or by link with people still chatting) there is no server to
+  // leave: each chat is ended on its own.
+  toggle.hidden = state === 'offline' || state === 'paired' || (state === 'direct' && chatting > 0);
 }
 
 // ---------- solicitudes (pantalla principal) ----------
@@ -314,7 +323,7 @@ export async function openDiscover() {
   updateLayers($('#discover-search'));
   renderSteps();
   renderDiscover();
-  if (net.state === 'offline') await connectServer();
+  if (net.state === 'offline' || net.state === 'direct') await connectServer();
   loadPage();
   loadFriends();
 }
@@ -351,6 +360,11 @@ onBack(closeDiscover);
 // después ya no cambia nada.
 let attempt = 0;
 
+/** Without the server: by link while someone is still chatting, or local only. */
+function stateOffServer() {
+  return net.partners.size ? 'direct' : 'offline';
+}
+
 /** Entra en el server (los pasos se ven en la cabecera y en Descubrir). */
 async function connectServer() {
   const mine = ++attempt;
@@ -361,26 +375,48 @@ async function connectServer() {
     await call('net_connect');
     if (mine === attempt) setNetState('online');
   } catch {
-    if (mine === attempt) setNetState('offline');
+    if (mine === attempt) setNetState(stateOffServer());
   }
 }
 
 $('#net-toggle').addEventListener('click', async () => {
   if (net.state === 'offline') return;
   if (net.state === 'connecting') {
-    // Cancelar mientras conecta: se vuelve a solo red local.
+    // Cancelar mientras conecta: se deja el server (los chats siguen).
     attempt++;
-    setNetState('offline');
+    setNetState(stateOffServer());
     invoke('net_disconnect').catch(() => {});
     return;
   }
-  partnerGone('hangup');
-  for (const code of [...net.partners.keys()]) partnerGone('hangup', code);
+  // Leaving the server keeps the chats already connected. Only with none
+  // left does the app go local only: then the private chats by link go too.
   $('#net-toggle').disabled = true;
-  await wipeRemotePrivate();
+  const next = stateOffServer();
+  if (next === 'offline') await wipeRemotePrivate();
   await call('net_disconnect').catch(() => {});
-  setNetState('offline');
+  setNetState(next);
 });
+
+/**
+ * Ends the chat with `code` (the partner, or one of several): they are told,
+ * the call with them ends and their chat closes. The app stays on the server
+ * if it was there; with nobody left (and no server), back to local only.
+ */
+export async function leavePartner(code) {
+  const multi = net.partners.has(code);
+  if (!multi && net.partner?.code !== code) return false;
+  const name = (multi ? net.partners.get(code) : net.partner).name;
+  if (multi) partnerGone('hangup', code);
+  else partnerGone('hangup');
+  await call('partner_leave', { code }).catch(() => {});
+  if (net.state === 'paired' || (net.state === 'direct' && !net.partners.size)) setNetState('offline');
+  else {
+    renderHeader();
+    renderDiscover();
+  }
+  toast(t('toast.chat_ended', { name }));
+  return true;
+}
 
 /** El server admite una solicitud por segundo; aquí se avisa antes de pedir. */
 const REQUEST_GAP_MS = 1000;
@@ -497,8 +533,10 @@ export function onLobbyEvent(e) {
     case 'partner_lost':
       if (net.partners.has(e.code)) {
         partnerGone('lost', e.code);
-        toast(t('toast.partner_lost_online', { name: e.name }), true);
-        renderHeader();
+        toast(t(e.online || net.partners.size ? 'toast.partner_lost_online' : 'toast.partner_lost', { name: e.name }), true);
+        // By link and nobody left: the backend went back to local only.
+        if (net.state === 'direct' && !net.partners.size) setNetState('offline');
+        else renderHeader();
         return;
       }
       // Dejó de responder: el backend ya dejó la pareja y volvió al server si pudo.
@@ -550,9 +588,9 @@ function partnerGone(reason, code = null) {
 }
 
 /**
- * Al desconectarse: los chats privados con equipos de otra red (añadidos por
- * enlace) se borran aquí y se le pide al otro que borre el suyo. El de la
- * pareja lo borra el backend al dejarla.
+ * Al volver a solo red local: los chats privados con equipos de otra red
+ * (añadidos por enlace) se borran aquí y se le pide al otro que borre el
+ * suyo. El de la pareja lo borra el backend al dejarla.
  */
 async function wipeRemotePrivate() {
   const remote = [...peers.values()].filter((p) => p.platform === 'remote').map((p) => p.addr);
@@ -568,11 +606,12 @@ async function wipeRemotePrivate() {
   );
 }
 
-/** La pareja se desconectó: el backend ya volvió a solo red local. */
+/** They ended the chat. With nobody left (and no server) the backend went back to local only. */
 export function onUnpair(peer, name) {
   if (net.partners.has(peer)) {
     partnerGone('hangup', peer);
-    renderHeader();
+    if (net.state === 'direct' && !net.partners.size) setNetState('offline');
+    else renderHeader();
     toast(t('toast.partner_left', { name }));
     return;
   }
@@ -739,6 +778,7 @@ document.addEventListener('visibilitychange', () => {
 });
 
 on('settings', renderHeader);
+on('partner:leave', leavePartner);
 on('friends:changed', renderDiscover);
 on('lang', () => {
   renderHeader();

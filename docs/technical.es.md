@@ -55,7 +55,7 @@ Si un equipo no aparece, escribe su IP en **Añadir por IP**. Suele pasar en red
 2. En **Descubrir** aparecen los demás conectados, con buscador y por páginas. Uno pulsa **Conectar** junto al otro.
 3. Al otro le llega la solicitud y pulsa **Aceptar** (o **Rechazar**).
 4. Ya estáis conectados: los dos dejáis el server, nadie más os ve ni os puede escribir, y os aparecéis en **Equipos** para enviaros archivos, chatear y llamaros como en la red local.
-5. **Desconectar** termina la conexión en los dos lados y vuelve a solo red local. Al cerrar la app también se empieza desconectado la próxima vez.
+5. **Desconectar** solo deja el server: los chats ya conectados siguen (la cabecera dice *En línea por enlace · chateando con N*, y **Descubrir** vuelve a entrar). Cada chat se termina por su cuenta, con **Terminar el chat** en su fila de **Equipos** o en la cabecera del chat: al otro se le avisa, la llamada con él se corta y, si el chat era privado, su historial se borra en los dos equipos. Cuando no queda nadie conectado y no se está en el server, la app vuelve a solo red local. Al cerrar la app también se empieza desconectado la próxima vez.
 
 El server ([`server/`](../server/README.md), para Vercel con MongoDB) solo os presenta: por él no pasan archivos, mensajes ni llamadas. iroh conecta los dos equipos directamente cuando las redes lo permiten; si no, el tráfico pasa por un relay de n0. La dirección del server se pone en ⚙ Ajustes.
 

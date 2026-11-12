@@ -746,6 +746,8 @@ function setGone(gone) {
   $('#chat-gone-bar').hidden = !gone;
   if (gone) $('#chat-gone-text').textContent = t('past.read_only', { name: peer.name });
   const live = !gone && findPeerByCode(peer.code);
+  // Connected through the server: the chat can be ended from here.
+  $('#chat-leave').hidden = live?.platform !== 'partner';
   $('#chat-sub').textContent = gone
     ? t('past.gone')
     : live?.platform === 'remote' || live?.platform === 'partner' ? t('chat.remote') : t('chat.lan');
@@ -754,6 +756,11 @@ function setGone(gone) {
 
 $('#chat-delete').addEventListener('click', () => {
   if (chat.peer) askDelete(chat.peer);
+});
+
+$('#chat-leave').addEventListener('click', () => {
+  // lobby.js ends it (see leavePartner).
+  if (chat.peer) emit('partner:leave', chat.peer.code);
 });
 
 on('peers:changed', () => {
