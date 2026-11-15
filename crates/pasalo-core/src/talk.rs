@@ -1353,7 +1353,7 @@ impl Store {
                 Some((peer, last))
             })
             .collect();
-        list.sort_by(|a, b| b.1.cmp(&a.1));
+        list.sort_by_key(|(_, last)| std::cmp::Reverse(*last));
         list
     }
 

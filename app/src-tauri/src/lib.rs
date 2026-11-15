@@ -163,7 +163,7 @@ pub fn run() {
             chat::chat_set_private, chat::chat_wipe, chat::chat_delete, chat::chat_list, chat::chat_log,
             stats::call_record, stats::stats_pending, stats::stats_upload,
             call::call_signal, call::voice_start, call::voice_mode, call::voice_mute, call::voice_speaker,
-            call::voice_stop, call::voice_stats, call::video_start, call::video_recv, call::video_send, call::video_stop, tray::tray_labels,
+            call::voice_devices, call::voice_device, call::voice_stop, call::voice_stats, call::video_start, call::video_recv, call::video_send, call::video_stop, tray::tray_labels,
             notify::notify_message, notify::notify_call, notify::notify_clear, notify::notify_take,
             notify::permissions, notify::permission_request
         ])

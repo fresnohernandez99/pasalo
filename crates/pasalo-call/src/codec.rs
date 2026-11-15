@@ -1,5 +1,5 @@
-//! Códecs de voz: Opus (libopus traducida a Rust, sin compilar C) y Codec2
-//! (Rust puro), detrás de una interfaz común de frames de PCM mono `i16`.
+//! Voice codecs: Opus (libopus translated to Rust, no C to compile) and
+//! Codec2 (pure Rust), behind a common interface of mono `i16` PCM frames.
 
 use unsafe_libopus as unsafe_opus;
 
@@ -10,7 +10,7 @@ pub(crate) trait Encoder: Send {
 }
 
 pub(crate) trait Decoder: Send {
-    /// `None` es un frame perdido: el decoder rellena lo mejor que puede.
+    /// `None` is a lost frame: the decoder fills it in as best it can.
     fn decode(&mut self, frame: Option<&[u8]>) -> Vec<i16>;
 }
 
@@ -24,6 +24,13 @@ pub(crate) enum Codec {
 pub(crate) enum Codec2Mode {
     M1300,
 }
+
+/// Codec2 1300: 40 ms frames at 8 kHz, 52 bits each. Fixed here so that
+/// asking for them costs nothing: building a `codec2::Codec2` to ask it
+/// allocates and computes FFT tables, and the sizes are needed on every
+/// packet and in the audio callback. Checked against the library in a test.
+const CODEC2_1300_SAMPLES: usize = 320;
+const CODEC2_1300_BYTES: usize = 7;
 
 impl Codec {
     pub fn for_mode(mode: Mode) -> Self {
@@ -45,7 +52,7 @@ impl Codec {
     pub fn frame_samples(&self) -> usize {
         match self {
             Codec::Opus { rate, frame_ms, .. } => (*rate * *frame_ms / 1000) as usize,
-            Codec::Codec2 { mode } => codec2::Codec2::new(mode.lib()).samples_per_frame(),
+            Codec::Codec2 { mode: Codec2Mode::M1300 } => CODEC2_1300_SAMPLES,
         }
     }
 
@@ -53,11 +60,11 @@ impl Codec {
         self.frame_samples() as u32 * 1000 / self.sample_rate()
     }
 
-    /// Bytes de cada frame si el códec los da de tamaño fijo (Codec2).
+    /// Bytes of each frame if the codec makes them fixed-size (Codec2).
     pub fn fixed_frame_bytes(&self) -> Option<usize> {
         match self {
             Codec::Opus { .. } => None,
-            Codec::Codec2 { mode } => Some(codec2::Codec2::new(mode.lib()).bits_per_frame().div_ceil(8)),
+            Codec::Codec2 { mode: Codec2Mode::M1300 } => Some(CODEC2_1300_BYTES),
         }
     }
 
@@ -86,47 +93,46 @@ impl Codec2Mode {
 
 struct OpusEncoder {
     st: *mut unsafe_opus::OpusEncoder,
+    out: Vec<u8>,
 }
 
-// El estado de libopus no se comparte entre hilos: cada encoder lo usa uno solo.
+// The libopus state is not shared between threads: each encoder is used by one.
 unsafe impl Send for OpusEncoder {}
 
 impl OpusEncoder {
     fn new(rate: u32, bitrate: i32, narrowband: bool) -> Self {
         let mut error = 0;
-        // SAFETY: parámetros válidos de libopus; se comprueba el error.
+        // SAFETY: valid libopus parameters; the error is checked.
         unsafe {
             let st = unsafe_opus::opus_encoder_create(rate as i32, 1, unsafe_opus::OPUS_APPLICATION_VOIP, &mut error);
             assert!(error == unsafe_opus::OPUS_OK && !st.is_null(), "opus_encoder_create: {error}");
             unsafe_opus::opus_encoder_ctl!(st, unsafe_opus::OPUS_SET_BITRATE_REQUEST, bitrate);
             unsafe_opus::opus_encoder_ctl!(st, unsafe_opus::OPUS_SET_SIGNAL_REQUEST, unsafe_opus::OPUS_SIGNAL_VOICE);
             unsafe_opus::opus_encoder_ctl!(st, unsafe_opus::OPUS_SET_COMPLEXITY_REQUEST, 10);
-            // Sin FEC: su copia reducida del frame anterior gasta parte del
-            // bitrate y en esta versión de libopus no se puede usar, porque
-            // reconstruir con ella satura igual que el PLC (probado). Las
-            // pérdidas se cubren con el relleno propio y, en los modos de
-            // poco consumo, con la copia del paquete anterior.
+            // No FEC: its reduced copy of the previous frame takes part of
+            // the bitrate and in this version of libopus it cannot be used,
+            // because rebuilding from it saturates just like the PLC
+            // (tested). Losses are covered by our own fill and, in the
+            // low-consumption modes, by the copy of the previous packet.
             if narrowband {
                 unsafe_opus::opus_encoder_ctl!(st, unsafe_opus::OPUS_SET_MAX_BANDWIDTH_REQUEST, unsafe_opus::OPUS_BANDWIDTH_NARROWBAND);
             }
-            Self { st }
+            Self { st, out: vec![0u8; 400] }
         }
     }
 }
 
 impl Encoder for OpusEncoder {
     fn encode(&mut self, pcm: &[i16]) -> Vec<u8> {
-        let mut out = vec![0u8; 400];
-        // SAFETY: `pcm` tiene exactamente un frame y `out` cabe en max_data_bytes.
-        let n = unsafe { unsafe_opus::opus_encode(self.st, pcm.as_ptr(), pcm.len() as i32, out.as_mut_ptr(), out.len() as i32) };
-        out.truncate(n.max(0) as usize);
-        out
+        // SAFETY: `pcm` holds exactly one frame and `out` fits max_data_bytes.
+        let n = unsafe { unsafe_opus::opus_encode(self.st, pcm.as_ptr(), pcm.len() as i32, self.out.as_mut_ptr(), self.out.len() as i32) };
+        self.out[..n.max(0) as usize].to_vec()
     }
 }
 
 impl Drop for OpusEncoder {
     fn drop(&mut self) {
-        // SAFETY: creado con opus_encoder_create y no se usa después.
+        // SAFETY: created with opus_encoder_create and not used afterwards.
         unsafe { unsafe_opus::opus_encoder_destroy(self.st) }
     }
 }
@@ -142,7 +148,7 @@ unsafe impl Send for OpusDecoder {}
 impl OpusDecoder {
     fn new(rate: u32, frame_ms: u32) -> Self {
         let mut error = 0;
-        // SAFETY: parámetros válidos; se comprueba el error.
+        // SAFETY: valid parameters; the error is checked.
         let st = unsafe { unsafe_opus::opus_decoder_create(rate as i32, 1, &mut error) };
         assert!(error == unsafe_opus::OPUS_OK && !st.is_null(), "opus_decoder_create: {error}");
         Self { st, frame: (rate * frame_ms / 1000) as usize, last: Vec::new() }
@@ -152,14 +158,14 @@ impl OpusDecoder {
 impl Decoder for OpusDecoder {
     fn decode(&mut self, frame: Option<&[u8]>) -> Vec<i16> {
         let Some(data) = frame else {
-            // Pérdida. El PLC de esta versión de libopus (`unsafe-libopus`)
-            // satura la salida y deja mal el decoder para los frames
-            // siguientes (ver la prueba de abajo), así que no se usa: se
-            // repite una vez el último frame a media voz y luego silencio.
+            // A loss. The PLC of this version of libopus (`unsafe-libopus`)
+            // saturates the output and leaves the decoder broken for the
+            // following frames (see the test below), so it is not used: the
+            // last frame is repeated once at half volume, then silence.
             return std::mem::take(&mut self.last).into_iter().map(|s| s / 2).chain(std::iter::repeat(0)).take(self.frame).collect();
         };
         let mut pcm = vec![0i16; self.frame];
-        // SAFETY: `pcm` tiene sitio para un frame completo.
+        // SAFETY: `pcm` has room for a whole frame.
         let n = unsafe { unsafe_opus::opus_decode(self.st, data.as_ptr(), data.len() as i32, pcm.as_mut_ptr(), self.frame as i32, 0) };
         pcm.truncate(n.max(0) as usize);
         pcm.resize(self.frame, 0);
@@ -170,7 +176,7 @@ impl Decoder for OpusDecoder {
 
 impl Drop for OpusDecoder {
     fn drop(&mut self) {
-        // SAFETY: creado con opus_decoder_create y no se usa después.
+        // SAFETY: created with opus_decoder_create and not used afterwards.
         unsafe { unsafe_opus::opus_decoder_destroy(self.st) }
     }
 }
@@ -188,7 +194,7 @@ impl Codec2Codec {
 
 impl Encoder for Codec2Codec {
     fn encode(&mut self, pcm: &[i16]) -> Vec<u8> {
-        let mut bits = vec![0u8; self.c2.bits_per_frame().div_ceil(8)];
+        let mut bits = vec![0u8; CODEC2_1300_BYTES];
         self.c2.encode(&mut bits, pcm);
         bits
     }
@@ -196,13 +202,13 @@ impl Encoder for Codec2Codec {
 
 impl Decoder for Codec2Codec {
     fn decode(&mut self, frame: Option<&[u8]>) -> Vec<i16> {
-        let mut pcm = vec![0i16; self.c2.samples_per_frame()];
+        let mut pcm = vec![0i16; CODEC2_1300_SAMPLES];
         match frame {
             Some(bits) => {
                 self.last = bits.to_vec();
                 self.c2.decode(&mut pcm, bits);
             }
-            // Sin PLC propio: repetir el último frame una vez suena mejor que un hueco.
+            // No PLC of its own: repeating the last frame once sounds better than a hole.
             None if !self.last.is_empty() => {
                 let last = std::mem::take(&mut self.last);
                 self.c2.decode(&mut pcm, &last);
@@ -228,8 +234,15 @@ mod tests {
         pcm.iter().map(|s| (*s as i32).abs()).max().unwrap_or(0)
     }
 
-    /// Con pérdidas el relleno no puede dispararse. El PLC de `unsafe-libopus`
-    /// daba picos de 32767 aquí, también en los frames buenos de después.
+    #[test]
+    fn codec2_sizes_match_the_library() {
+        let c2 = codec2::Codec2::new(codec2::Codec2Mode::MODE_1300);
+        assert_eq!(c2.samples_per_frame(), CODEC2_1300_SAMPLES);
+        assert_eq!(c2.bits_per_frame().div_ceil(8), CODEC2_1300_BYTES);
+    }
+
+    /// With losses the fill must not blow up. The PLC of `unsafe-libopus`
+    /// gave peaks of 32767 here, also in the good frames afterwards.
     #[test]
     fn opus_loss_concealment_stays_quiet() {
         for mode in [Mode::High, Mode::Low] {
@@ -243,8 +256,7 @@ mod tests {
                 let pcm = if i % 4 == 3 { dec.decode(None) } else { dec.decode(Some(&bits)) };
                 peaks.push(peak(&pcm));
             }
-            assert!(peaks.iter().all(|&p| p < 16_000), "{mode:?}: el relleno se dispara: {peaks:?}");
+            assert!(peaks.iter().all(|&p| p < 16_000), "{mode:?}: the fill blows up: {peaks:?}");
         }
     }
 }
-

@@ -1,8 +1,8 @@
-//! Remuestreo y detección de voz, lo justo para una llamada.
+//! Resampling and voice detection, just enough for a call.
 
-/// Cambia la frecuencia de muestreo de una señal mono que llega por trozos.
-/// Primero filtra paso bajo (FIR con ventana) para no meter aliasing al bajar
-/// de 48 kHz a 8 kHz, y después interpola linealmente.
+/// Changes the sample rate of a mono signal that arrives in chunks. First
+/// it low-passes (windowed FIR) so that going from 48 kHz down to 8 kHz
+/// does not alias, then it interpolates linearly.
 pub(crate) struct Resampler {
     step: f64,
     pos: f64,
@@ -15,7 +15,7 @@ const TAPS: usize = 31;
 
 impl Resampler {
     pub fn new(from: u32, to: u32) -> Self {
-        // Corte un poco por debajo del Nyquist de la frecuencia más baja.
+        // Cut a bit below the Nyquist of the lower rate.
         let cutoff = 0.45 * from.min(to) as f64 / from as f64;
         let mid = (TAPS / 2) as f64;
         let mut taps: Vec<f32> = (0..TAPS)
@@ -40,7 +40,7 @@ impl Resampler {
             let y = self.history.iter().zip(&self.taps).map(|(a, b)| a * b).sum();
             self.filtered.push(y);
         }
-        // Interpola entre muestras filtradas; se queda con la última para el siguiente trozo.
+        // Interpolates between filtered samples; keeps the last one for the next chunk.
         while self.pos + 1.0 < self.filtered.len() as f64 {
             let i = self.pos as usize;
             let frac = (self.pos - i as f64) as f32;
@@ -53,9 +53,9 @@ impl Resampler {
     }
 }
 
-/// Decide si un frame es voz comparando su energía con el ruido de fondo,
-/// que se va aprendiendo. Después de hablar sigue diciendo "voz" un rato
-/// para no cortar el final de las palabras.
+/// Decides whether a frame is voice by comparing its energy with the
+/// background noise, which it keeps learning. After speech it keeps saying
+/// "voice" for a while so as not to cut the end of words.
 pub(crate) struct Vad {
     noise: f32,
     hangover: u32,
@@ -67,7 +67,7 @@ impl Vad {
         Self { noise: 1e-4, hangover: 0, hold: 400 / frame_ms.max(1) }
     }
 
-    /// Corta ya el "sigue siendo voz" de después de hablar.
+    /// Cuts the "still voice" tail after speech right away.
     pub fn end_hangover(&mut self) {
         self.hangover = 0;
     }
@@ -75,7 +75,7 @@ impl Vad {
     pub fn is_voice(&mut self, frame: &[f32]) -> bool {
         let energy = frame.iter().map(|s| s * s).sum::<f32>() / frame.len().max(1) as f32;
         let loud = energy > (self.noise * 4.0).max(2e-6);
-        // El ruido de fondo sube despacio y baja rápido.
+        // Background noise rises slowly and falls fast.
         self.noise = if energy < self.noise { energy } else { self.noise * 0.995 + energy * 0.005 };
         if loud {
             self.hangover = self.hold;
@@ -90,10 +90,13 @@ pub(crate) fn rms(samples: &[f32]) -> f32 {
     (samples.iter().map(|s| s * s).sum::<f32>() / samples.len().max(1) as f32).sqrt()
 }
 
-pub(crate) fn to_i16(samples: &[f32]) -> Vec<i16> {
-    samples.iter().map(|s| (s.clamp(-1.0, 1.0) * 32767.0) as i16).collect()
+/// Converts into `out`, which is cleared first (reused between frames).
+pub(crate) fn to_i16(samples: &[f32], out: &mut Vec<i16>) {
+    out.clear();
+    out.extend(samples.iter().map(|s| (s.clamp(-1.0, 1.0) * 32767.0) as i16));
 }
 
-pub(crate) fn to_f32(samples: &[i16]) -> Vec<f32> {
-    samples.iter().map(|&s| s as f32 / 32768.0).collect()
+pub(crate) fn to_f32(samples: &[i16], out: &mut Vec<f32>) {
+    out.clear();
+    out.extend(samples.iter().map(|&s| s as f32 / 32768.0));
 }

@@ -11,7 +11,7 @@
 
 use std::sync::Arc;
 
-use pasalo_call::Mode;
+use pasalo_call::{Mode, Selection};
 use pasalo_core::Signal;
 use serde::Serialize;
 use tauri::ipc::{InvokeBody, Request, Response};
@@ -53,7 +53,14 @@ pub async fn call_signal(
 }
 
 #[tauri::command]
-pub async fn voice_start(app: AppHandle, state: State<'_, AppState>, peer: String, mode: Mode) -> CmdResult<()> {
+pub async fn voice_start(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    peer: String,
+    mode: Mode,
+    input: Option<String>,
+    output: Option<String>,
+) -> CmdResult<()> {
     stop(&app, &state);
     #[cfg(target_os = "android")]
     {
@@ -64,7 +71,7 @@ pub async fn voice_start(app: AppHandle, state: State<'_, AppState>, peer: Strin
         }
         android.call_audio(true, false);
     }
-    let started = start_voice(&state, &peer, mode).await;
+    let started = start_voice(&state, &peer, mode, Selection { input, output }).await;
     // Si no arrancó, nada se queda a medias: ni el canal ni el audio en modo llamada.
     if started.is_err() {
         if let Some(talk) = &state.talk {
@@ -80,14 +87,14 @@ pub async fn voice_start(app: AppHandle, state: State<'_, AppState>, peer: Strin
     started
 }
 
-async fn start_voice(state: &AppState, peer: &str, mode: Mode) -> CmdResult<()> {
+async fn start_voice(state: &AppState, peer: &str, mode: Mode, devices: Selection) -> CmdResult<()> {
     let talk = state.talk()?;
     let mut link = talk.voice(peer).await.map_err(CmdError::core)?;
     let sender = link.sender.clone();
     let measured = link.sender.clone();
     // Abrir los dispositivos de audio bloquea un momento.
     let call = tokio::task::spawn_blocking(move || {
-        pasalo_call::Call::start(mode, move |packet| {
+        pasalo_call::Call::start(mode, devices, move |packet| {
             sender.send(packet.into());
         })
     })
@@ -117,6 +124,26 @@ pub fn voice_mute(state: State<'_, AppState>, muted: bool) {
     if let Some(voice) = &*state.voice.lock().unwrap() {
         voice.call.set_muted(muted);
     }
+}
+
+/// The microphones and speakers to choose from (`input` and `output` of
+/// `voice_start` and `voice_device`). None on Android: see `voice_speaker`.
+#[tauri::command]
+pub async fn voice_devices() -> CmdResult<pasalo_call::DeviceList> {
+    // Asking the system for its devices blocks for a moment.
+    tokio::task::spawn_blocking(pasalo_call::devices).await.map_err(CmdError::other)
+}
+
+/// Changes the microphone and the speaker of the call in progress (`None`:
+/// the system default). If they cannot be opened it stays on the ones it had.
+#[tauri::command]
+pub async fn voice_device(state: State<'_, AppState>, input: Option<String>, output: Option<String>) -> CmdResult<()> {
+    let call = state.voice.lock().unwrap().as_ref().map(|voice| voice.call.clone());
+    let Some(call) = call else { return Ok(()) };
+    tokio::task::spawn_blocking(move || call.set_devices(Selection { input, output }))
+        .await
+        .map_err(CmdError::other)?
+        .map_err(|e| CmdError::new("audio_failed", e))
 }
 
 /// Por dónde suena en el móvil: altavoz o auricular.
