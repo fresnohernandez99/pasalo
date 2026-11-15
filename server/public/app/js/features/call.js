@@ -1,112 +1,56 @@
-// Llamadas de voz y vídeo. La voz la graba, comprime y reproduce Rust
-// (`voice_*`); el vídeo, video.js. Las dos van por la conexión de iroh con
-// el otro equipo, y las señales (invitar, contestar, cambiar de calidad…)
-// por `call_signal`.
+// Voice and video calls: the state of the current call (`live`) and the
+// signals with the other side (invite, accept, hang up, change quality…),
+// which go through `call_signal`. The voice is recorded, compressed and
+// played by Rust (`voice_*`); the video by call/camera.js. Both go over the
+// iroh connection with the other device.
 //
-// La calidad del audio y la del vídeo van por separado. Quien la cambia la
-// cambia para los dos lados: así, si uno tiene mala señal, bajan los dos.
-
-// Consumo medido con los dos lados hablando a la vez (el peor caso), con
-// todo lo que pasa por la red. Si solo habla uno, el otro gasta mucho menos.
-const VOICE_MODES = [
-  ['high', 42],
-  ['normal', 26],
-  ['low', 19],
-  ['minimum', 9],
-];
-const RING_TIMEOUT = 45_000;
-// Sin recibir nada por la conexión en este tiempo (iroh manda un keep-alive
-// cada 5 s aunque nadie hable), el otro lado ya no está.
-const LINK_TIMEOUT = 15_000;
-// `Object.hasOwn` (Chrome 93) y `crypto.randomUUID` (Chrome 92) no existen en
-// los WebView antiguos de algunos Android.
-const hasOwn = (o, k) => Object.prototype.hasOwnProperty.call(o, k);
-const newId = () => crypto.randomUUID?.() ?? Array.from(crypto.getRandomValues(new Uint8Array(16)), (b) => b.toString(16).padStart(2, '0')).join('');
-const DEFAULTS = { voiceMode: 'normal', videoAudioMode: 'low', videoQuality: 'normal', blur: false, enhance: true };
+// The audio quality and the video quality are separate. Whoever changes one
+// changes it for both sides: so if one has a bad signal, both go down.
+//
+// The rest lives in call/: settings.js (what is saved and the quality
+// lists), screen.js (what is shown), camera.js (the video), devices.js (the
+// microphones, speakers and cameras to choose from), record.js (the record
+// in the chat) and ringtone.js.
 
 import { errorText, t } from '../i18n/index.js';
 import { on } from '../lib/bus.js';
-import { $, esc } from '../lib/dom.js';
-import { initials } from '../lib/format.js';
+import { $ } from '../lib/dom.js';
 import { invoke } from '../lib/tauri.js';
 import { toast } from '../lib/toast.js';
-import { app, isMobile } from '../state.js';
-import { activePeer, onChatEvent } from './chat.js';
+import { isMobile } from '../state.js';
+import { activePeer } from './chat.js';
 import { keepCall } from './keepalive.js';
 import { onHello, onUnpair } from './lobby.js';
-import { onBack, updateLayers } from './nav.js';
+import { onBack } from './nav.js';
 import { clearNotification, notifyCall, notifyMissed, onNotification } from './notify.js';
 import { pickGame, playing } from './game.js';
 import { ensureRemotePeer } from './peers.js';
-import { BackgroundBlur, loadSegmenter } from './blur.js';
-import { VIDEO_MODES, VideoReceiver, VideoSender, decodableCodecs, pickCodec } from './video.js';
+import { VIDEO_MODES, decodableCodecs } from './video.js';
+import { flipCamera, pickCamera, setBlur, setupVideo, startVideo, stopVideo } from './call/camera.js';
+import { fillDevices, listDevices } from './call/devices.js';
+import { logCall } from './call/record.js';
+import { startRinging, stopRinging } from './call/ringtone.js';
+import { hide, openMenu, render, renderState, setMenu } from './call/screen.js';
+import { callSettings, isVoiceMode, saveCallSettings, voiceDevices } from './call/settings.js';
+import { hasOwn, newId } from './call/util.js';
+
+export { fillCallSettings } from './call/settings.js';
+
+const RING_TIMEOUT = 45_000;
+// Nothing received over the connection in this time (iroh sends a keep-alive
+// every 5 s even if nobody talks): the other side is gone.
+const LINK_TIMEOUT = 15_000;
 
 let live = null;
 let starting = false;
+const isLive = (c) => c === live;
 
-// ---------- ajustes ----------
+// ---------- signals ----------
 
-function callSettings() {
-  try {
-    return { ...DEFAULTS, ...JSON.parse(localStorage.getItem('talk') || '{}') };
-  } catch {
-    return { ...DEFAULTS };
-  }
-}
-
-function saveCallSettings(patch) {
-  try {
-    localStorage.setItem('talk', JSON.stringify({ ...callSettings(), ...patch }));
-  } catch {}
-}
-
-// Lo suyo en la pantalla de Ajustes (settings.js la abre y la cierra).
-export function fillCallSettings() {
-  const s = callSettings();
-  fillAudioModes($('#set-voice-mode'), s.voiceMode);
-  fillAudioModes($('#set-video-audio-mode'), s.videoAudioMode);
-  fillVideoModes($('#set-video-quality'), s.videoQuality);
-  $('#set-blur').checked = s.blur;
-  $('#set-enhance').checked = s.enhance;
-}
-
-for (const [id, key] of [
-  ['#set-blur', 'blur'],
-  ['#set-enhance', 'enhance'],
-]) {
-  $(id).addEventListener('change', (ev) => saveCallSettings({ [key]: ev.target.checked }));
-}
-
-for (const [id, key] of [
-  ['#set-voice-mode', 'voiceMode'],
-  ['#set-video-audio-mode', 'videoAudioMode'],
-  ['#set-video-quality', 'videoQuality'],
-]) {
-  $(id).addEventListener('change', (ev) => saveCallSettings({ [key]: ev.target.value }));
-}
-
-function fillAudioModes(select, current) {
-  select.innerHTML = VOICE_MODES.map(
-    ([mode, kbps]) => `<option value="${mode}" ${mode === current ? 'selected' : ''}>${esc(t(`voice.${mode}`, { kbps }))}</option>`,
-  ).join('');
-}
-
-function fillVideoModes(select, current) {
-  select.innerHTML = Object.entries(VIDEO_MODES)
-    .map(([q, m]) => `<option value="${q}" ${q === current ? 'selected' : ''}>${esc(t(`video.${q}`, { kbps: m.kbps }))}</option>`)
-    .join('');
-}
-
-function setQualityMenu(open) {
-  $('#call-quality-menu').hidden = !open;
-  $('#call-quality-btn').setAttribute('aria-expanded', String(open));
-}
-
-// ---------- señales ----------
-
-// Solo estas señales avisan si fallan: el resto (pedir una imagen clave,
-// cambiar de calidad, apagar la cámara…) se reintenta o da igual, y por un
-// relay lento los avisos se acumulaban justo cuando peor iba la llamada.
+// Only these signals warn if they fail: the rest (asking for a key frame,
+// changing quality, switching the camera off…) is retried or does not
+// matter, and over a slow relay the warnings piled up just when the call
+// was at its worst.
 const LOUD_SIGNALS = ['invite', 'accept'];
 
 function signal(kind, data = null) {
@@ -117,46 +61,14 @@ function signal(kind, data = null) {
   });
 }
 
-/** Una imagen comprimida en base64 (en Android la IPC no lleva binario). */
-function base64(bytes) {
-  let text = '';
-  for (let i = 0; i < bytes.length; i += 0x8000) text += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
-  return btoa(text);
-}
-
-/** En la app de Android el binario cruza la IPC como JSON: mejor en base64. */
-const sendFrame = (bytes) =>
-  invoke('video_send', app.settings?.mobile && !app.settings?.web ? { b64: base64(bytes) } : bytes);
-
-/** Recoge lo que llega del vídeo mientras dure esta llamada (ver `video_recv`). */
-async function pollVideo(c) {
-  while (c === live && c.receiver) {
-    let buffer;
-    try {
-      buffer = await invoke('video_recv');
-    } catch (err) {
-      if (err?.code === 'video_stopped') return;
-      await new Promise((resolve) => setTimeout(resolve, 500));
-      continue;
-    }
-    const bytes = new Uint8Array(buffer || []);
-    const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-    for (let at = 0; at + 4 <= bytes.length; ) {
-      const len = view.getUint32(at);
-      c.receiver?.push(bytes.subarray(at + 4, at + 4 + len));
-      at += 4 + len;
-    }
-  }
-}
-
-/** `to` es `{ code, name }`. */
+/** `to` is `{ code, name }`. */
 export async function startCall(to, media) {
   if (!to?.code) return;
   if (live || starting) {
     toast(t('call.busy_self'), true);
     return;
   }
-  // Un doble toque no puede mandar dos invitaciones.
+  // A double tap cannot send two invitations.
   starting = true;
   let codecs;
   try {
@@ -179,7 +91,8 @@ export async function startCall(to, media) {
     audio: media === 'voice' ? s.voiceMode : s.videoAudioMode,
     video: s.videoQuality,
   });
-  showCall();
+  render(live);
+  refreshDevices();
   try {
     await signal('invite', { media, mode: live.audio, video: live.video, codecs });
   } catch {
@@ -190,7 +103,7 @@ export async function startCall(to, media) {
 }
 
 function newCall(fields) {
-  return { createdAt: Date.now(), muted: false, speaker: false, camOff: false, remoteCamOff: false, theirCodecs: [], facing: 'user', blur: callSettings().blur, ...fields };
+  return { createdAt: Date.now(), muted: false, speaker: false, camOff: false, remoteCamOff: false, theirCodecs: [], facing: 'user', camera: callSettings().camera, blur: callSettings().blur, ...fields };
 }
 
 export function onSignal({ peer, name, signal: s }) {
@@ -203,35 +116,7 @@ export function onSignal({ peer, name, signal: s }) {
     return;
   }
   if (s.kind === 'invite') {
-    const media = s.data?.media === 'video' ? 'video' : 'voice';
-    // En otra llamada, o en una partida (que va encima y taparía la llamada).
-    if (live || playing()) {
-      invoke('call_signal', { peer, call: s.call, kind: 'busy', data: null }).catch(() => {});
-      // Como en WhatsApp: queda como perdida.
-      ensureRemotePeer(peer, name);
-      logCall({ id: s.call, peer: { code: peer, name }, media, role: 'callee', createdAt: Date.now() }, 'missed');
-      return;
-    }
-    ensureRemotePeer(peer, name);
-    // Un diálogo abierto (añadir equipo, un enlace…) deja el resto de la
-    // pantalla inerte: no se podría contestar.
-    for (const dialog of document.querySelectorAll('dialog[open]')) dialog.close();
-    live = newCall({
-      id: s.call,
-      peer: { code: peer, name },
-      media,
-      role: 'callee',
-      state: 'incoming',
-      audio: VOICE_MODES.some(([m]) => m === s.data?.mode) ? s.data.mode : 'normal',
-      video: hasOwn(VIDEO_MODES, s.data?.video ?? '') ? s.data.video : callSettings().videoQuality,
-      theirCodecs: s.data?.codecs || [],
-    });
-    showCall();
-    startRinging();
-    notifyCall(live);
-    // Si la señal de colgar no llega (el otro se quedó sin conexión), no se
-    // sigue sonando para siempre.
-    live.ringTimer = setTimeout(() => endCall(t('call.missed'), 'missed'), RING_TIMEOUT + 5000);
+    onInvite(peer, name, s);
     return;
   }
   if (!live || s.call !== live.id || peer !== live.peer.code) return;
@@ -253,8 +138,8 @@ export function onSignal({ peer, name, signal: s }) {
       break;
     }
     case 'mode':
-      // La otra persona cambió la calidad del audio: se usa la misma en los dos sentidos.
-      if (VOICE_MODES.some(([m]) => m === s.data?.mode)) {
+      // The other person changed the audio quality: the same is used both ways.
+      if (isVoiceMode(s.data?.mode)) {
         live.audio = s.data.mode;
         $('#call-mode').value = live.audio;
         if (live.state === 'active') invoke('voice_mode', { mode: live.audio });
@@ -273,14 +158,46 @@ export function onSignal({ peer, name, signal: s }) {
     case 'cam':
       live.remoteCamOff = s.data?.on === false;
       live.receiver?.setExpecting(!live.remoteCamOff);
-      showCall();
+      render(live);
       break;
   }
 }
 
+function onInvite(peer, name, s) {
+  const media = s.data?.media === 'video' ? 'video' : 'voice';
+  // In another call, or in a game (which sits on top and would cover the call).
+  if (live || playing()) {
+    invoke('call_signal', { peer, call: s.call, kind: 'busy', data: null }).catch(() => {});
+    // As in WhatsApp: it is logged as missed.
+    ensureRemotePeer(peer, name);
+    logCall({ id: s.call, peer: { code: peer, name }, media, role: 'callee', createdAt: Date.now() }, 'missed');
+    return;
+  }
+  ensureRemotePeer(peer, name);
+  // An open dialog (add device, a link…) leaves the rest of the screen
+  // inert: the call could not be answered.
+  for (const dialog of document.querySelectorAll('dialog[open]')) dialog.close();
+  live = newCall({
+    id: s.call,
+    peer: { code: peer, name },
+    media,
+    role: 'callee',
+    state: 'incoming',
+    audio: isVoiceMode(s.data?.mode) ? s.data.mode : 'normal',
+    video: hasOwn(VIDEO_MODES, s.data?.video ?? '') ? s.data.video : callSettings().videoQuality,
+    theirCodecs: s.data?.codecs || [],
+  });
+  render(live);
+  startRinging();
+  notifyCall(live);
+  // If the hang-up signal never arrives (the other side lost its
+  // connection), it does not ring forever.
+  live.ringTimer = setTimeout(() => endCall(t('call.missed'), 'missed'), RING_TIMEOUT + 5000);
+}
+
 async function acceptCall() {
   stopRinging();
-  // Un doble toque no contesta dos veces (dos voces, dos relojes).
+  // A double tap does not answer twice (two voices, two clocks).
   if (!live || live.state !== 'incoming') return;
   live.state = 'answering';
   $('#call-accept').disabled = true;
@@ -303,7 +220,7 @@ function declineCall() {
   endCall(null, 'declined');
 }
 
-// Contestar o rechazar desde la notificación de la llamada.
+// Answer or decline from the call notification.
 onNotification('answer', (id) => {
   if (live?.id === id) acceptCall();
 });
@@ -311,41 +228,43 @@ onNotification('decline', (id) => {
   if (live?.id === id && live.state === 'incoming') declineCall();
 });
 
-/** Cuelga. `reason` (`no_answer`) se avisa en pantalla. */
+/** Hangs up. `reason` (`no_answer`) is shown on screen. */
 function hangup(reason, outcome) {
   signal('hangup').catch(() => {});
   const result = outcome || (reason === 'no_answer' ? 'no_answer' : live?.state === 'active' ? 'completed' : 'cancelled');
   endCall(reason ? t(`call.ended_${reason}`) : null, result);
 }
 
-// ---------- audio y vídeo ----------
+// ---------- audio and video ----------
 
 async function startMedia() {
   live.state = 'active';
   keepCall(live.media);
   live.started = Date.now();
-  // En una videollamada el teléfono no va pegado a la oreja.
+  // In a video call the phone is not held to the ear.
   if (live.media === 'video' && isMobile()) live.speaker = true;
-  showCall();
-  live.clock = setInterval(() => updateCallState(), 1000);
+  render(live);
+  live.clock = setInterval(() => live && renderState(live), 1000);
   const c = live;
   try {
-    await invoke('voice_start', { peer: c.peer.code, mode: c.audio });
-    // Colgaron mientras arrancaba: que no se quede grabando sin llamada.
+    await invoke('voice_start', { peer: c.peer.code, mode: c.audio, ...voiceDevices() });
+    // Hung up while it started: it must not keep recording without a call.
     if (c !== live) {
       invoke('voice_stop').catch(() => {});
       return;
     }
     c.voiceOn = true;
     if (c.speaker) invoke('voice_speaker', { speaker: true });
-    // Silenciado mientras sonaba: la voz arranca ya silenciada.
+    // Muted while it rang: the voice starts muted.
     if (c.muted) invoke('voice_mute', { muted: true });
-    // Lo que ya llevaba la conexión al empezar: el consumo de la llamada es lo de después.
+    // What the connection already carried at the start: the call's usage is what comes after.
     c.first = await invoke('voice_stats').catch(() => null);
     c.last = null;
     c.heardAt = Date.now();
     c.statsTimer = setInterval(updateStats, 1000);
     if (c.media === 'video') await startVideo(c);
+    // On the web the devices only have a name once they were allowed.
+    refreshDevices();
   } catch (err) {
     if (c !== live) return;
     toast(errorText(err), true);
@@ -353,188 +272,23 @@ async function startMedia() {
   }
 }
 
-async function startVideo(c) {
-  c.videoUp = 0;
-  c.videoDown = 0;
-  c.receiver = new VideoReceiver({
-    canvas: $('#call-remote'),
-    enhance: callSettings().enhance,
-    needKey: () => signal('key').catch(() => {}),
-    onBytes: (n) => (c.videoDown += n),
-    onFrame: () => {
-      if (!c.hasVideo) {
-        c.hasVideo = true;
-        showCall();
-      }
-    },
-  });
-  c.receiver.setExpecting(!c.remoteCamOff);
-  await invoke('video_start', { peer: c.peer.code });
-  if (c !== live) {
-    invoke('video_stop').catch(() => {});
-    return;
-  }
-  pollVideo(c);
-
-  try {
-    c.stream = await camera(c.facing);
-  } catch {
-    toast(t('call.cam_denied'), true);
-    setCamera(false);
-    return;
-  }
-  if (c !== live) {
-    c.stream.getTracks().forEach((track) => track.stop());
-    return;
-  }
-  $('#call-local').srcObject = c.stream;
-  const codec = await pickCodec(c.theirCodecs);
-  if (!codec) {
-    toast(t('call.peer_no_video'), true);
-    return;
-  }
-  c.sender = new VideoSender({
-    stream: c.stream,
-    codec,
-    mode: c.video,
-    send: sendFrame,
-    onBytes: (n) => (c.videoUp += n),
-    onCameraLost: () => recoverCamera(c),
-    onBlurSlow: () => blurOff(c, 'call.blur_slow'),
-    onBlurFailed: () => blurOff(c, 'call.blur_failed'),
-    // La red no da abasto: se baja la calidad, también la del otro lado.
-    onDegrade: (mode) => {
-      if (c !== live) return;
-      c.video = mode;
-      $('#call-vmode').value = mode;
-      signal('video_mode', { video: mode }).catch(() => {});
-      toast(t('call.video_lowered'));
-    },
-  });
-  c.sender.setPaused(c.camOff);
-  await c.sender.start();
-  if (c.blur) setBlur(c, true);
-}
-
-function camera(facing) {
-  return navigator.mediaDevices.getUserMedia({
-    audio: false,
-    video: { facingMode: facing, width: { ideal: 640 }, height: { ideal: 480 } },
-  });
-}
-
-function blurOff(c, message) {
-  if (c !== live || !c.blur) return;
-  c.blur = false;
-  showLocal(c);
-  $('#call-blur').checked = false;
-  toast(t(message), true);
-}
-
-/** En la miniatura: lo que se envía si va con el fondo desenfocado, si no la cámara tal cual. */
-function showLocal(c) {
-  $('#call-local').srcObject = c.blur && c.sender ? c.sender.preview() : c.stream;
-}
+setupVideo({
+  isLive,
+  signal,
+  onFirstFrame: (c) => render(c),
+  onCameraDenied: () => setCamera(false),
+  onDegraded: (c, mode) => {
+    c.video = mode;
+    $('#call-vmode').value = mode;
+    signal('video_mode', { video: mode }).catch(() => {});
+    toast(t('call.video_lowered'));
+  },
+});
 
 /**
- * Activa o quita el fondo desenfocado. La primera vez se carga el modelo (un
- * segundo, más o menos): mientras tanto el vídeo sale como siempre.
- */
-async function setBlur(c, on) {
-  c.blur = on;
-  $('#call-blur').checked = on;
-  if (!on) {
-    c.sender?.setBlur(null);
-    showLocal(c);
-    return;
-  }
-  let segmenter;
-  // Mientras carga el modelo no sale vídeo: si no, se vería el fondo que se
-  // quería tapar.
-  const loading = !!c.sender;
-  if (loading) {
-    c.sender.setPaused(true);
-    toast(t('call.blur_loading'));
-  }
-  try {
-    segmenter = await loadSegmenter();
-  } catch (err) {
-    if (c === live && loading) c.sender?.setPaused(c.camOff);
-    console.warn('desenfoque', err);
-    if (c === live) {
-      c.blur = false;
-      $('#call-blur').checked = false;
-      toast(t('call.blur_failed'), true);
-    }
-    return;
-  }
-  if (c === live && loading) c.sender?.setPaused(c.camOff);
-  // Se quitó (o se colgó) mientras cargaba.
-  if (c !== live || !c.blur || !c.sender) return;
-  c.sender.setBlur(new BackgroundBlur(segmenter));
-  showLocal(c);
-}
-
-/** La cámara se cortó a mitad de llamada: se pide otra vez hasta que vuelva. */
-async function recoverCamera(c) {
-  while (c === live && c.sender) {
-    try {
-      const stream = await camera(c.facing);
-      if (c !== live || !c.sender) {
-        stream.getTracks().forEach((track) => track.stop());
-        return;
-      }
-      c.stream?.getTracks().forEach((track) => track.stop());
-      c.stream = stream;
-      await c.sender.setStream(stream);
-      showLocal(c);
-      return;
-    } catch {
-      // Otra app la tiene todavía: se reintenta en un momento.
-      await new Promise((resolve) => setTimeout(resolve, 2000));
-    }
-  }
-}
-
-/** Cambia entre la cámara de delante y la de atrás. */
-async function flipCamera() {
-  const c = live;
-  if (!c?.stream) return;
-  const facing = c.facing === 'user' ? 'environment' : 'user';
-  let stream;
-  try {
-    stream = await camera(facing);
-  } catch {
-    return;
-  }
-  if (c !== live) {
-    stream.getTracks().forEach((track) => track.stop());
-    return;
-  }
-  // La vieja se suelta después: si no, el emisor la vería cortada y la pediría de nuevo.
-  const old = c.stream;
-  c.stream = stream;
-  c.facing = facing;
-  $('#call').classList.toggle('rear', facing !== 'user');
-  await c.sender?.setStream(stream);
-  showLocal(c);
-  old.getTracks().forEach((track) => track.stop());
-}
-
-function stopVideo(c) {
-  if (c.sender?.blurUsed) c.blurUsed = true;
-  c.sender?.stop();
-  c.receiver?.stop();
-  c.stream?.getTracks().forEach((track) => track.stop());
-  c.sender = c.receiver = c.stream = null;
-  $('#call-local').srcObject = null;
-  if (c.media === 'video') invoke('video_stop').catch(() => {});
-}
-
-/**
- * Termina la llamada en pantalla. `outcome` es cómo acabó (`completed`,
+ * Ends the call on screen. `outcome` is how it ended (`completed`,
  * `missed`, `no_answer`, `declined`, `busy`, `cancelled`, `failed`, `lost`):
- * queda en el chat y en las estadísticas.
+ * it goes to the chat and to the statistics.
  */
 function endCall(message, outcome) {
   if (!live) return;
@@ -552,14 +306,11 @@ function endCall(message, outcome) {
   clearInterval(c.clock);
   if (c.state === 'active') invoke('voice_stop').catch(() => {});
   stopVideo(c);
-  $('#call').hidden = true;
-  updateLayers();
-  $('#call').classList.remove('controls-hidden', 'rear', 'swapped');
-  setQualityMenu(false);
+  hide();
   if (message) toast(message);
 }
 
-/** Cuelga la llamada con `code` porque se fue: se desconectó o se cayó la conexión. */
+/** Hangs up the call with `code` because they left: disconnected or the connection dropped. */
 export function endCallWith(code, reason = 'lost') {
   if (!live || live.peer.code !== code) return;
   signal('hangup').catch(() => {});
@@ -567,50 +318,20 @@ export function endCallWith(code, reason = 'lost') {
   endCall(t(`call.ended_${reason}`), outcome);
 }
 
-/** El núcleo vio caerse la conexión de la llamada (ya paró la voz y el vídeo). */
+/** The core saw the call's connection drop (it already stopped voice and video). */
 export function onTalkLost({ peer }) {
   if (live?.peer.code === peer) endCall(t('call.ended_lost'), live.state === 'active' ? 'lost' : 'failed');
 }
 
-/** Deja la llamada en su chat (con su consumo y duración) y en las estadísticas. */
-function logCall(c, outcome) {
-  const first = c.first || { sent: 0, received: 0, lost: 0, recovered: 0 };
-  const last = c.last || first;
-  const record = {
-    id: String(c.id || '').replace(/[^\w-]/g, '').slice(0, 80) || newId(),
-    media: c.media,
-    role: c.role,
-    outcome,
-    started: c.createdAt || Date.now(),
-    duration_ms: c.started && c.state === 'active' ? Date.now() - c.started : 0,
-    audio: c.audio || null,
-    video: c.media === 'video' ? c.video || null : null,
-    // Para comparar consumo y calidad: si se envió con el fondo desenfocado
-    // (en algún momento) y si la imagen que llegaba se mejoró en la GPU.
-    blur: c.media === 'video' ? !!(c.blurUsed || c.sender?.blurUsed) : false,
-    // (si la GPU no daba abasto, se quitó sola y cuenta como no).
-    enhance: c.media === 'video' ? !!c.receiver?.upscaler : false,
-    sent: Math.max(0, (last.sent || 0) - (first.sent || 0)),
-    received: Math.max(0, (last.received || 0) - (first.received || 0)),
-    video_sent: c.videoUp || 0,
-    video_received: c.videoDown || 0,
-    lost: Math.max(0, (last.lost || 0) - (first.lost || 0)),
-    recovered: Math.max(0, (last.recovered || 0) - (first.recovered || 0)),
-  };
-  invoke('call_record', { peer: c.peer.code, record }).then(
-    (message) => onChatEvent({ message, name: null }),
-    (err) => console.warn('registro de llamada', err),
-  );
-}
-
-// Consumo medido de la conexión (voz, vídeo y todo lo demás) y, aparte, el vídeo.
-// También vigila que siga llegando algo: si no, la llamada se acabó.
+// Measured usage of the connection (voice, video and everything else) and,
+// apart, the video. It also watches that something keeps arriving: if not,
+// the call is over.
 async function updateStats() {
   const c = live;
   const stats = await invoke('voice_stats').catch(() => null);
   if (!c || c !== live) return;
   if (!stats) {
-    // La voz ya no está en marcha (el núcleo la paró): no hay llamada.
+    // The voice is no longer running (the core stopped it): there is no call.
     if (c.voiceOn) endCallWith(c.peer.code);
     return;
   }
@@ -631,116 +352,109 @@ async function updateStats() {
   c.last = { ...stats, videoUp: c.videoUp || 0, videoDown: c.videoDown || 0 };
 }
 
-// ---------- pantalla ----------
-
-function showCall() {
+/**
+ * Fills the devices menu with what there is to choose from in this call
+ * (the camera, only in a video call). Its button shows only if there is
+ * something.
+ */
+async function refreshDevices() {
   const c = live;
-  const video = c.media === 'video';
-  const opening = $('#call').hidden;
-  $('#call').hidden = false;
-  if (opening) updateLayers(c.state === 'incoming' ? $('#call-accept') : $('#call-hangup'));
-  const hidden = $('#call').classList.contains('controls-hidden') && c.state === 'active';
-  const hasVideo = video && !!c.hasVideo && !c.remoteCamOff;
-  // Cambiadas de sitio solo mientras se vean las dos.
-  const swapped = $('#call').classList.contains('swapped') && hasVideo && !c.camOff;
-  $('#call').className = `call ${c.media} ${c.state}${hidden ? ' controls-hidden' : ''}${c.facing !== 'user' ? ' rear' : ''}${swapped ? ' swapped' : ''}`;
-  $('#call').classList.toggle('has-video', hasVideo);
-  $('#call').classList.toggle('cam-off', c.camOff);
-  $('#call-name').textContent = c.peer.name;
-  $('#call-avatar').textContent = initials(c.peer.name);
-  $('#call-remote-off').hidden = !(video && c.state === 'active' && c.remoteCamOff);
-  if (c.state !== 'active') $('#call-stats').textContent = '';
-  $('#call-accept').hidden = c.state !== 'incoming';
-  $('#call-decline').hidden = c.state !== 'incoming';
-  $('#call-hangup').hidden = c.state === 'incoming';
-  $('#call-game').hidden = c.state !== 'active';
-  $('#call-controls-live').hidden = c.state === 'incoming';
-  $('#call-speaker').hidden = !isMobile();
-  $('#call-cam').hidden = !video;
-  $('#call-flip').hidden = !video || !isMobile() || c.camOff;
-  $('#call-vmode-btn').hidden = !video;
-  $('#call-blur-row').hidden = !video;
-  $('#call-blur').checked = !!c.blur;
-  fillAudioModes($('#call-mode'), c.audio);
-  fillVideoModes($('#call-vmode'), c.video);
-  for (const [id, on] of [['#call-mute', c.muted], ['#call-speaker', c.speaker], ['#call-cam', c.camOff]]) {
-    $(id).classList.toggle('on', on);
-    $(id).setAttribute('aria-pressed', String(on));
-  }
-  $('#call-cam-label').textContent = t(c.camOff ? 'call.camera_on' : 'call.camera');
-  updateCallState();
+  if (!c) return;
+  const lists = await listDevices();
+  if (c !== live) return;
+  if (c.media !== 'video') lists.camera = [];
+  $('#call-devices-btn').hidden = !fillDevices('call-dev', lists, { ...callSettings(), camera: c.camera });
 }
 
-function updateCallState() {
-  if (!live) return;
-  let text;
-  if (live.state === 'incoming') text = t(live.media === 'voice' ? 'call.incoming_voice' : 'call.incoming_video');
-  else if (live.state === 'ringing') text = t('call.ringing');
-  else {
-    const s = Math.floor((Date.now() - live.started) / 1000);
-    text = `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
-  }
-  $('#call-state').textContent = text;
-}
+// Something was plugged in or out.
+navigator.mediaDevices?.addEventListener?.('devicechange', refreshDevices);
 
 function setCamera(on) {
   if (!live) return;
   live.camOff = !on;
   live.sender?.setPaused(live.camOff);
   signal('cam', { on }).catch(() => {});
-  showCall();
+  render(live);
 }
+
+// ---------- buttons ----------
 
 $('#call-accept').addEventListener('click', acceptCall);
 $('#call-decline').addEventListener('click', declineCall);
 $('#call-hangup').addEventListener('click', () => hangup());
-// Jugar con quien está al otro lado, sin colgar.
+// Play with whoever is on the other side, without hanging up.
 $('#call-game').addEventListener('click', () => {
   if (live?.state === 'active') pickGame(live.peer);
 });
 
-/** La llamada en curso, si la hay (`{ peer: { code, name } }`). */
+/** The current call, if any (`{ peer: { code, name } }`). */
 export const activeCall = () => (live?.state === 'active' ? live : null);
 
-/** Cuelga la llamada en curso (desde la partida, p. ej.). */
+/** Hangs up the current call (from the game, for example). */
 export function hangupCall() {
   if (live) hangup();
 }
 
-$('#call-mute').addEventListener('click', () => {
-  if (!live) return;
-  live.muted = !live.muted;
-  $('#call-mute').classList.toggle('on', live.muted);
-  $('#call-mute').setAttribute('aria-pressed', String(live.muted));
-  invoke('voice_mute', { muted: live.muted });
-});
-
-$('#call-speaker').addEventListener('click', () => {
-  if (!live) return;
-  live.speaker = !live.speaker;
-  $('#call-speaker').classList.toggle('on', live.speaker);
-  $('#call-speaker').setAttribute('aria-pressed', String(live.speaker));
-  invoke('voice_speaker', { speaker: live.speaker });
-});
+function toggle(id, key, command) {
+  $(id).addEventListener('click', () => {
+    if (!live) return;
+    live[key] = !live[key];
+    $(id).classList.toggle('on', live[key]);
+    $(id).setAttribute('aria-pressed', String(live[key]));
+    invoke(command, { [key]: live[key] });
+  });
+}
+toggle('#call-mute', 'muted', 'voice_mute');
+toggle('#call-speaker', 'speaker', 'voice_speaker');
 
 $('#call-cam').addEventListener('click', () => setCamera(!!live?.camOff));
-$('#call-flip').addEventListener('click', flipCamera);
+$('#call-flip').addEventListener('click', () => flipCamera(live));
 
-$('#call-quality-btn').addEventListener('click', () => setQualityMenu($('#call-quality-menu').hidden));
+$('#call-quality-btn').addEventListener('click', () => setMenu(openMenu() === 'quality' ? null : 'quality'));
+$('#call-devices-btn').addEventListener('click', () => {
+  const open = openMenu() !== 'devices';
+  setMenu(open ? 'devices' : null);
+  if (open) refreshDevices();
+});
+
+// The microphone and the speakers: saved for the next calls and, if the
+// voice is already running, changed in this one.
+for (const kind of ['mic', 'speaker']) {
+  $(`#call-dev-${kind}`).addEventListener('change', async (ev) => {
+    const before = callSettings()[kind];
+    saveCallSettings({ [kind]: ev.target.value });
+    if (!live?.voiceOn) return;
+    try {
+      await invoke('voice_device', voiceDevices());
+    } catch (err) {
+      // The call went on with the one it had.
+      saveCallSettings({ [kind]: before });
+      toast(errorText(err), true);
+      refreshDevices();
+    }
+  });
+}
+
+$('#call-dev-camera').addEventListener('change', async (ev) => {
+  if (!live) return;
+  const id = ev.target.value;
+  if (await pickCamera(live, id)) saveCallSettings({ camera: id });
+  else refreshDevices();
+});
 $('#call-blur').addEventListener('change', (ev) => {
   if (!live) return;
   saveCallSettings({ blur: ev.target.checked });
   setBlur(live, ev.target.checked);
 });
 
-// En una videollamada, tocar la miniatura cambia de sitio las dos imágenes;
-// tocar la grande esconde los botones y los datos (para verla entera) y otro
-// toque los vuelve a enseñar.
+// In a video call, tapping the thumbnail swaps the two images; tapping the
+// big one hides the buttons and the data (to see it whole) and another tap
+// shows them again.
 $('#call').addEventListener('click', (ev) => {
   if (ev.target.closest('.call-quality')) return;
-  // Fuera del menú de calidad, un toque solo lo cierra.
-  if (!$('#call-quality-menu').hidden) {
-    setQualityMenu(false);
+  // Outside the menus of the corner, a tap only closes the one that is open.
+  if (openMenu()) {
+    setMenu();
     return;
   }
   if (!live || live.media !== 'video' || live.state !== 'active') return;
@@ -754,8 +468,8 @@ $('#call').addEventListener('click', (ev) => {
   call.classList.toggle('controls-hidden');
 });
 
-// En una llamada, Atrás no cuelga: hay que pulsar Colgar.
-// En una partida, Atrás sale de ella (ver game.js), no de aquí.
+// In a call, Back does not hang up: Hang up has to be pressed.
+// In a game, Back leaves the game (see game.js), not the call.
 onBack(() => !!live && !playing());
 
 $('#call-mode').addEventListener('change', (ev) => {
@@ -777,30 +491,7 @@ $('#call-vmode').addEventListener('change', (ev) => {
 $('#chat-voice').addEventListener('click', () => startCall(activePeer(), 'voice'));
 $('#chat-video').addEventListener('click', () => startCall(activePeer(), 'video'));
 
-// Timbre con WebAudio, sin archivos de sonido.
-function startRinging() {
-  stopRinging();
-  const beep = () => {
-    try {
-      const ctx = (startRinging.ctx ||= new AudioContext());
-      const osc = ctx.createOscillator();
-      const gain = ctx.createGain();
-      osc.frequency.value = 660;
-      gain.gain.setValueAtTime(0.15, ctx.currentTime);
-      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.6);
-      osc.connect(gain).connect(ctx.destination);
-      osc.start();
-      osc.stop(ctx.currentTime + 0.6);
-    } catch {}
-  };
-  beep();
-  startRinging.timer = setInterval(beep, 1500);
-}
-
-function stopRinging() {
-  clearInterval(startRinging.timer);
-}
-
 on('lang', () => {
-  if (live) showCall();
+  if (live) render(live);
+  refreshDevices();
 });

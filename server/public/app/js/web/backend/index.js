@@ -17,7 +17,7 @@ import * as store from './store.js';
 import { ONCE_PREFIX, TALK_ALPN, Talk } from './talk.js';
 import { notifyCommands } from './notify.js';
 import { PasaloError, SHORT, asError, cmdError, cmdFrom, mimeFor, sleep, stripHostDots, timed, uuid } from './util.js';
-import { VoiceCall } from './voice.js';
+import { VoiceCall, voiceDevices } from './voice.js';
 
 const DEFAULT_SERVER = 'https://pasalo-server.vercel.app';
 /** Dominio de los enlaces (el mismo que abren las apps). */
@@ -605,11 +605,13 @@ const commands = {
   },
 
   call_signal: ({ peer, call, kind, data }) => s.talk.signal(peer, { call, kind, data: data ?? null }),
-  voice_start: async ({ peer, mode }) => {
+  voice_start: async ({ peer, mode, input, output }) => {
     stopVoice();
-    const voice = await VoiceCall.start(s.talk, peer, mode);
+    const voice = await VoiceCall.start(s.talk, peer, mode, { input, output });
     s.voice = voice;
   },
+  voice_devices: () => voiceDevices(),
+  voice_device: ({ input, output }) => s.voice?.setDevices({ input, output }),
   voice_mode: ({ mode }) => s.voice?.setMode(mode),
   voice_mute: ({ muted }) => s.voice?.setMuted(muted),
   // El navegador no deja elegir entre altavoz y auricular.

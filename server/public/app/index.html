@@ -253,6 +253,10 @@
         <label class="field"><span data-i18n="settings.voice_mode"></span><select id="set-voice-mode"></select></label>
         <label class="field"><span data-i18n="settings.video_audio_mode"></span><select id="set-video-audio-mode"></select></label>
         <label class="field"><span data-i18n="settings.video_quality"></span><select id="set-video-quality"></select></label>
+        <!-- Each one shows only where there is something to choose (see call/devices.js). -->
+        <label class="field" id="set-dev-mic-row" hidden><span data-i18n="devices.mic"></span><select id="set-dev-mic"></select></label>
+        <label class="field" id="set-dev-speaker-row" hidden><span data-i18n="devices.speaker"></span><select id="set-dev-speaker"></select></label>
+        <label class="field" id="set-dev-camera-row" hidden><span data-i18n="devices.camera"></span><select id="set-dev-camera"></select></label>
         <label class="switch-row field-switch"><span><span data-i18n="settings.blur"></span><small class="sub" data-i18n="settings.blur_hint"></small></span><input type="checkbox" id="set-blur"></label>
         <label class="switch-row field-switch"><span><span data-i18n="settings.enhance"></span><small class="sub" data-i18n="settings.enhance_hint"></small></span><input type="checkbox" id="set-enhance"></label>
         <p class="hint" data-i18n="settings.calls_hint"></p>
@@ -313,11 +317,20 @@
     <video id="call-local" autoplay playsinline muted></video>
     <!-- La calidad, aparte de los botones de siempre: así no se cambia sin querer. -->
     <div id="call-quality" class="call-quality">
-      <button id="call-quality-btn" class="call-quality-btn" type="button" data-i18n-title="call.quality" aria-expanded="false"><span data-icon="signal"></span></button>
+      <div class="call-quality-btns">
+        <button id="call-devices-btn" class="call-quality-btn" type="button" data-i18n-title="call.devices" aria-expanded="false" hidden><span data-icon="devices"></span></button>
+        <button id="call-quality-btn" class="call-quality-btn" type="button" data-i18n-title="call.quality" aria-expanded="false"><span data-icon="signal"></span></button>
+      </div>
       <div id="call-quality-menu" class="call-quality-menu" hidden>
         <label><span data-i18n="call.audio_q"></span><select id="call-mode"></select></label>
         <label id="call-vmode-btn"><span data-i18n="call.video_q"></span><select id="call-vmode"></select></label>
         <label id="call-blur-row" class="switch-row"><span data-i18n="call.blur"></span><input type="checkbox" id="call-blur"></label>
+      </div>
+      <!-- The microphone, the speakers and the camera in use (see call/devices.js). -->
+      <div id="call-devices-menu" class="call-quality-menu" hidden>
+        <label id="call-dev-mic-row"><span data-i18n="devices.mic"></span><select id="call-dev-mic"></select></label>
+        <label id="call-dev-speaker-row"><span data-i18n="devices.speaker"></span><select id="call-dev-speaker"></select></label>
+        <label id="call-dev-camera-row"><span data-i18n="devices.camera"></span><select id="call-dev-camera"></select></label>
       </div>
     </div>
     <div class="call-top">
