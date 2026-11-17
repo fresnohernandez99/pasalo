@@ -41,8 +41,8 @@ export class Lobby {
   }
 
   /** Una página de los que están en línea, con búsqueda por nombre. */
-  users(q, offset, limit) {
-    return this.post('users', { q, offset, limit });
+  users(q, platforms, offset, limit) {
+    return this.post('users', { q, platforms, offset, limit });
   }
 
   /** Cuáles de estos códigos (los amigos) están en el server, libres u ocupados. */

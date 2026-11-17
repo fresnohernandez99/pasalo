@@ -281,6 +281,17 @@ test('lista paginada con búsqueda', async () => {
   // Los caracteres especiales se buscan tal cual (nada de expresiones).
   assert.equal((await page({ q: '(casa)' })).total, 1);
   assert.equal((await page({ q: '.*' })).total, 0);
+  // Only some kinds of device.
+  await handle(db, 'join', { id: 'play', token: 't-play', name: 'Consola', platform: 'ps4', code: 'c-play' }, opts);
+  const consoles = await page({ platforms: ['ps4'] });
+  assert.deepEqual(consoles.users, [{ id: 'play', name: 'Consola', platform: 'ps4' }]);
+  assert.equal(consoles.total, 1);
+  assert.equal((await page({ platforms: ['ios', 'ps4'] })).total, 27);
+  assert.equal((await page({ platforms: ['ps4'], q: 'usuario' })).total, 0);
+  // Anything that is not a list of names is the same as no filter.
+  assert.equal((await page({ platforms: [] })).total, 27);
+  assert.equal((await page({ platforms: 'ps4' })).total, 27);
+  assert.equal((await page({ platforms: [{ $ne: '' }] })).total, 27);
   await assert.rejects(handle(db, 'users', { id: 'yo', token: 'mal' }, opts), (err) => err.status === 401);
 });
 

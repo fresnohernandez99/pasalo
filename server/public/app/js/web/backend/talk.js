@@ -27,6 +27,9 @@ const VIDEO_TIMEOUT = 10_000;
 /** Sin mensajes ni llamada en este tiempo, la conexión se cierra. */
 const IDLE = 90_000;
 const HOLD_RETRY = 2000;
+// A held connection that brings nothing for this long is given up (see `hold`).
+const HOLD_SILENCE = 15 * 60_000;
+const HOLD_CHECK = 30_000;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
 /** Envía `frame` (y `body`) en un stream nuevo y espera el acuse. */
@@ -300,7 +303,23 @@ export class Talk {
           await sleep(HOLD_RETRY);
         }
       }
-      await conn.waitClosed();
+      // Closed, or open and silent for HOLD_SILENCE: what arrives is
+      // counted in bytes on the wire, keep-alives included.
+      let closed = false;
+      const gone = conn.waitClosed().then(() => (closed = true), () => (closed = true));
+      let heard = [conn.wireBytes()[1], Date.now()];
+      while (!closed) {
+        await Promise.race([gone, sleep(HOLD_CHECK)]);
+        if (!this.pinned.has(code)) return true;
+        if (closed) break;
+        const received = conn.wireBytes()[1];
+        if (received !== heard[0]) heard = [received, Date.now()];
+        else if (Date.now() - heard[1] >= HOLD_SILENCE) {
+          this.pinned.delete(code);
+          conn.close(0, 'silent');
+          return false;
+        }
+      }
     }
   }
 

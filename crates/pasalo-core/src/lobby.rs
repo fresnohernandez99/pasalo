@@ -195,8 +195,9 @@ impl Lobby {
     }
 
     /// Una página de los que están en línea, con búsqueda por nombre (`q`).
-    pub async fn users(&self, q: &str, offset: u64, limit: u64) -> Result<UsersPage, Error> {
-        self.post("users", json!({ "q": q, "offset": offset, "limit": limit })).await
+    /// With `platforms`, only the devices of those kinds ("android", "ps4"…).
+    pub async fn users(&self, q: &str, platforms: &[String], offset: u64, limit: u64) -> Result<UsersPage, Error> {
+        self.post("users", json!({ "q": q, "platforms": platforms, "offset": offset, "limit": limit })).await
     }
 
     /// Cuáles de estos códigos (los amigos) están en el server, libres u ocupados.

@@ -66,6 +66,12 @@ const VIDEO_TIMEOUT: Duration = Duration::from_secs(10);
 pub const IDLE: Duration = Duration::from_secs(90);
 /// Pausa entre intentos de reconectar en [`Talk::hold`].
 const HOLD_RETRY: Duration = Duration::from_secs(2);
+/// A held connection that brings nothing from the other side for this long
+/// is given up, whatever the transport says: the keep-alives of a device
+/// that is still there arrive every few seconds.
+const HOLD_SILENCE: Duration = Duration::from_secs(15 * 60);
+/// How often a held connection is looked at for that.
+const HOLD_CHECK: Duration = Duration::from_secs(30);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -640,7 +646,8 @@ impl Talk {
     /// Mantiene abierta la conexión con `peer` (la pareja): si se cae, la
     /// vuelve a abrir. Termina con `true` al llamar a [`Talk::release`], o con
     /// `false` si no se logra conectar en `first` (la primera vez) o en
-    /// `grace` (tras un corte): el otro se fue.
+    /// `grace` (tras un corte): el otro se fue. Also `false` when the
+    /// connection stays open but nothing arrives over it for [`HOLD_SILENCE`].
     pub async fn hold(&self, peer: &str, first: Duration, grace: Duration) -> bool {
         let Some(id) = crate::parse_code(peer) else { return false };
         self.inner.pinned.lock().unwrap().insert(id);
@@ -669,7 +676,29 @@ impl Talk {
                     }
                 }
             };
-            conn.closed().await;
+            // Closed, or open and silent: what arrives is counted in UDP
+            // datagrams, keep-alives included.
+            let mut heard = (conn.stats().udp_rx.datagrams, Instant::now());
+            let closed = conn.closed();
+            tokio::pin!(closed);
+            loop {
+                tokio::select! {
+                    _ = &mut closed => break,
+                    _ = tokio::time::sleep(HOLD_CHECK) => {}
+                }
+                if !pinned() {
+                    return true;
+                }
+                let received = conn.stats().udp_rx.datagrams;
+                if received != heard.0 {
+                    heard = (received, Instant::now());
+                } else if heard.1.elapsed() >= HOLD_SILENCE {
+                    tracing::debug!("{} lleva demasiado sin dar señales", id.fmt_short());
+                    self.inner.pinned.lock().unwrap().remove(&id);
+                    self.forget_connection(id, Some(&conn)).await;
+                    return false;
+                }
+            }
         }
     }
 

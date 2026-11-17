@@ -35,6 +35,11 @@
 /* Descubrir: buscador arriba, la lista y las páginas abajo. */
 /* El buscador y las páginas se quedan a la vista al bajar por la lista. */
 #discover-search { position: sticky; top: 0; z-index: 1; width: 100%; margin: 0 0 12px; box-shadow: 0 -4px 0 4px var(--bg), 0 8px 8px -4px var(--bg); }
+/* Kinds of device to narrow the list to. */
+.discover-filter { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 12px; }
+.discover-filter .chip { display: inline-flex; align-items: center; gap: 6px; min-height: 34px; padding: 0 12px; border-radius: 999px; font-size: 14px; background: var(--surface-2); color: var(--text); }
+.discover-filter .chip .i { width: 16px; height: 16px; }
+.discover-filter .chip[aria-pressed="true"] { background: var(--accent); color: var(--accent-text); }
 .discover-list { display: grid; gap: 8px; padding-bottom: 12px; }
 #discover .discover-head { margin: 4px 6px 8px; }
 .friends-list { margin-bottom: 16px; }
@@ -105,3 +110,21 @@
 .rps-pick:disabled { cursor: default; }
 .rps-pick:disabled:not(.chosen) { opacity: .45; }
 .rps-pick:not(:disabled):active { transform: scale(.95); }
+
+/* QR scanner: a full-screen camera with a framing square. */
+.scan-overlay { position: fixed; inset: 0; z-index: 1000; background: #000; display: flex; align-items: center; justify-content: center; }
+.scan-overlay[hidden] { display: none; }
+#scan-video { width: 100%; height: 100%; object-fit: cover; }
+.scan-frame { position: absolute; width: 70vmin; height: 70vmin; border: 3px solid #fff; border-radius: 16px; box-shadow: 0 0 0 100vmax rgba(0, 0, 0, 0.45); }
+.scan-status { position: absolute; bottom: 12%; left: 0; right: 0; text-align: center; color: #fff; font-size: 1rem; padding: 0 24px; text-shadow: 0 1px 3px rgba(0, 0, 0, 0.8); }
+.scan-close { position: absolute; top: calc(16px + env(safe-area-inset-top)); right: 16px; color: #fff; background: rgba(0, 0, 0, 0.4); }
+
+/* "Add a device" row: the text box with the Scan button beside it. */
+.add-row { display: flex; gap: 8px; align-items: center; }
+.add-row #manual-ip { flex: 1; min-width: 0; }
+
+/* Chat header overflow (⋮) menu. */
+.chat-more-wrap { position: relative; }
+.chat-menu { position: absolute; top: 100%; right: 0; z-index: 50; display: flex; flex-direction: column; gap: 4px; padding: 6px; margin-top: 4px; background: var(--panel, #1d2026); border: 1px solid var(--border, #2a2e35); border-radius: 12px; box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45); }
+.chat-menu[hidden] { display: none; }
+.chat-menu .icon-btn { width: 44px; height: 44px; }

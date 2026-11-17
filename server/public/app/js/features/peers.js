@@ -18,8 +18,15 @@ import { openTextDialog, pauseFor, resumeFor, sendPaths } from './transfers.js';
 /** device_id → { device_id, name, platform, os?, addr, code? } */
 export const peers = new Map();
 
-const PLATFORMS = { macos: 'Mac', windows: 'Windows', linux: 'Linux', android: 'Android', ios: 'iPhone' };
-const KINDS = { android: 'devPhone', ios: 'devPhone', macos: 'devLaptop', windows: 'devDesktop', linux: 'devDesktop' };
+const PLATFORMS = { macos: 'Mac', windows: 'Windows', linux: 'Linux', android: 'Android', ios: 'iPhone', ps4: 'PlayStation 4' };
+const KINDS = { android: 'devPhone', ios: 'devPhone', macos: 'devLaptop', windows: 'devDesktop', linux: 'devDesktop', ps4: 'devConsole' };
+
+/** The kinds of device Discover can be narrowed to, and the platforms of each. */
+export const DEVICE_FILTERS = [
+  { id: 'phone', icon: 'devPhone', platforms: ['android', 'ios'] },
+  { id: 'computer', icon: 'devLaptop', platforms: ['macos', 'windows', 'linux'] },
+  { id: 'console', icon: 'devConsole', platforms: ['ps4'] },
+];
 
 export function platformName(platform) {
   if (['manual', 'remote', 'partner'].includes(platform)) return t(`platform.${platform}`);

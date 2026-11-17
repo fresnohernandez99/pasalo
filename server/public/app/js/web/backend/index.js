@@ -543,7 +543,7 @@ const commands = {
   },
   lobby_request: ({ to, friend }) => lobbyOr().request(to, friend === true),
   lobby_friends: ({ codes }) => lobbyOr().friends(codes || []),
-  lobby_users: ({ q, offset, limit }) => lobbyOr().users(q || '', offset || 0, limit || 20),
+  lobby_users: ({ q, platforms, offset, limit }) => lobbyOr().users(q || '', platforms || [], offset || 0, limit || 20),
   lobby_cancel: ({ request }) => lobbyOr().cancel(request),
   lobby_answer: ({ request, accept }) => lobbyOr().answer(request, accept),
 

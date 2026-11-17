@@ -47,6 +47,7 @@ const PATHS = {
   devPhone: '<rect x="7" y="2.5" width="10" height="19" rx="2"/><path d="M11 18h2"/>',
   devLaptop: '<rect x="5" y="4.5" width="14" height="10" rx="1.5"/><path d="M2.5 18.5h19"/>',
   devDesktop: '<rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/>',
+  devConsole: '<rect x="2" y="7" width="20" height="10" rx="5"/><path d="M6.5 12h3M8 10.5v3M15.5 13.2h.01M17.5 10.8h.01"/>',
 };
 
 export function icon(name, cls = '') {

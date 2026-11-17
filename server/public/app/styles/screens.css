@@ -35,6 +35,11 @@
 /* Descubrir: buscador arriba, la lista y las páginas abajo. */
 /* El buscador y las páginas se quedan a la vista al bajar por la lista. */
 #discover-search { position: sticky; top: 0; z-index: 1; width: 100%; margin: 0 0 12px; box-shadow: 0 -4px 0 4px var(--bg), 0 8px 8px -4px var(--bg); }
+/* Kinds of device to narrow the list to. */
+.discover-filter { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 12px; }
+.discover-filter .chip { display: inline-flex; align-items: center; gap: 6px; min-height: 34px; padding: 0 12px; border-radius: 999px; font-size: 14px; background: var(--surface-2); color: var(--text); }
+.discover-filter .chip .i { width: 16px; height: 16px; }
+.discover-filter .chip[aria-pressed="true"] { background: var(--accent); color: var(--accent-text); }
 .discover-list { display: grid; gap: 8px; padding-bottom: 12px; }
 #discover .discover-head { margin: 4px 6px 8px; }
 .friends-list { margin-bottom: 16px; }

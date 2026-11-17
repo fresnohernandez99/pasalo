@@ -136,11 +136,17 @@
             <div id="chat-name" class="chat-name"></div>
             <div id="chat-sub" class="sub"></div>
           </div>
-          <button id="chat-friend" class="icon-btn star" type="button" aria-pressed="false" hidden></button>
-          <button id="chat-private" class="icon-btn" type="button" aria-pressed="false" data-i18n-title="private.toggle"><span data-icon="unlock"></span></button>
           <button id="chat-voice" class="icon-btn" type="button" data-i18n-title="call.voice"><span data-icon="phone"></span></button>
           <button id="chat-video" class="icon-btn" type="button" data-i18n-title="call.video"><span data-icon="video"></span></button>
-          <button id="chat-leave" class="icon-btn danger-text" type="button" data-i18n-title="chat.end" hidden><span data-icon="hangup"></span></button>
+          <div class="chat-more-wrap">
+            <button id="chat-more" class="icon-btn" type="button" data-i18n-title="btn.more"><span data-icon="more"></span></button>
+            <div id="chat-menu" class="chat-menu" hidden>
+              <button id="chat-friend" class="icon-btn star" type="button" aria-pressed="false" hidden></button>
+              <button id="chat-share-code" class="icon-btn" type="button" data-i18n-title="chat.share_code"><span data-icon="link"></span></button>
+              <button id="chat-private" class="icon-btn" type="button" aria-pressed="false" data-i18n-title="private.toggle"><span data-icon="unlock"></span></button>
+              <button id="chat-leave" class="icon-btn danger-text" type="button" data-i18n-title="chat.end" hidden><span data-icon="hangup"></span></button>
+            </div>
+          </div>
         </header>
         <div id="chat-friend-bar" class="strip-row chat-friend-bar" hidden></div>
         <div id="chat-gone-bar" class="strip-row chat-gone-bar" hidden>
@@ -196,6 +202,7 @@
       <div id="friends-list" class="lobby-list friends-list"></div>
       <h2 id="discover-online-title" class="discover-head" data-i18n="lobby.title"></h2>
       <input id="discover-search" type="search" autocomplete="off" spellcheck="false" data-i18n-placeholder="discover.search" data-i18n-title="discover.search">
+      <div id="discover-filter" class="discover-filter" role="group"></div>
       <div id="discover-list" class="lobby-list discover-list"></div>
       <div id="discover-pager" class="discover-pager" hidden>
         <button id="discover-prev" class="ghost small" type="button" data-i18n="discover.prev"></button>
@@ -374,6 +381,13 @@
     <button id="once-close" class="icon-btn once-close" type="button" data-i18n-title="viewer.close"><span data-icon="close"></span></button>
   </div>
 
+  <div id="scan-overlay" class="scan-overlay" hidden>
+    <video id="scan-video" playsinline muted></video>
+    <div class="scan-frame"></div>
+    <div id="scan-status" class="scan-status"></div>
+    <button id="scan-close" class="icon-btn scan-close" type="button" data-i18n-title="viewer.close"><span data-icon="close"></span></button>
+  </div>
+
   <div id="viewer" class="viewer" hidden>
     <div class="viewer-bg"></div>
     <img id="viewer-img" alt="">
@@ -403,7 +417,10 @@
   <dialog id="add-dialog">
     <form id="manual">
       <h3 data-i18n="peers.add_title"></h3>
-      <input id="manual-ip" data-i18n-placeholder="peers.add_placeholder" data-i18n-title="peers.add_placeholder" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" inputmode="text">
+      <div class="add-row">
+        <input id="manual-ip" data-i18n-placeholder="peers.add_placeholder" data-i18n-title="peers.add_placeholder" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" inputmode="text">
+        <button type="button" id="add-scan" class="primary small" data-i18n="net.scan"></button>
+      </div>
       <div class="dialog-actions">
         <button type="button" class="ghost" id="add-cancel" data-i18n="btn.cancel"></button>
         <button type="submit" class="primary" data-i18n="btn.accept"></button>

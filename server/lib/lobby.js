@@ -32,6 +32,8 @@ const MAX_PAGE = 50;
 const REQUEST_GAP_MS = 1000;
 /** Equipos nuevos por IP y minuto. */
 const MAX_JOINS_PER_IP = 10;
+/** Kinds of device one `users` query can ask for. */
+const MAX_PLATFORMS = 16;
 /** Códigos por consulta de amigos. */
 const MAX_FRIENDS = 200;
 
@@ -210,6 +212,11 @@ export async function handle(db, action, body, { now = () => new Date(), sleep =
       const limit = Number.isInteger(body.limit) ? Math.min(Math.max(body.limit, 1), MAX_PAGE) : MAX_PAGE;
       const filter = { _id: { $ne: id }, ...free(), ...online() };
       if (q) filter.name = { $regex: q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), $options: 'i' };
+      // Only some kinds of device ("android", "ps4"…), if asked.
+      const platforms = Array.isArray(body.platforms)
+        ? body.platforms.filter((p) => typeof p === 'string' && p.length <= 16).slice(0, MAX_PLATFORMS)
+        : [];
+      if (platforms.length) filter.platform = { $in: platforms };
       const [list, total] = await Promise.all([
         users.find(filter, { projection: { name: 1, platform: 1 } }).collation({ locale: 'en', strength: 1 }).sort({ name: 1, _id: 1 }).skip(offset).limit(limit).toArray(),
         users.countDocuments(filter),

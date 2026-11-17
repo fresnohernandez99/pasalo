@@ -231,8 +231,14 @@ pub async fn lobby_friends(state: State<'_, AppState>, codes: Vec<String>) -> Cm
 
 /// Una página de los que están en línea, con búsqueda (pantalla Descubrir).
 #[tauri::command]
-pub async fn lobby_users(state: State<'_, AppState>, q: String, offset: u64, limit: u64) -> CmdResult<pasalo_core::UsersPage> {
-    lobby(&state).await?.users(&q, offset, limit).await.map_err(|e| CmdError::new("server", e.detail()))
+pub async fn lobby_users(
+    state: State<'_, AppState>,
+    q: String,
+    platforms: Option<Vec<String>>,
+    offset: u64,
+    limit: u64,
+) -> CmdResult<pasalo_core::UsersPage> {
+    lobby(&state).await?.users(&q, &platforms.unwrap_or_default(), offset, limit).await.map_err(|e| CmdError::new("server", e.detail()))
 }
 
 #[tauri::command]

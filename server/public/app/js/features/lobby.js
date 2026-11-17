@@ -38,7 +38,7 @@ import { openChat, wipeIfPrivate } from './chat.js';
 import { friendOf, friends, removeFriend, renameFriend } from './friends.js';
 import { keepOnline } from './keepalive.js';
 import { onBack, updateLayers } from './nav.js';
-import { addRemotePeer, avatar, ensureRemotePeer, findPeerByCode, peers, removePeer } from './peers.js';
+import { DEVICE_FILTERS, addRemotePeer, avatar, ensureRemotePeer, findPeerByCode, peers, removePeer } from './peers.js';
 import { pauseFor, resumeFor } from './transfers.js';
 
 const net = {
@@ -195,7 +195,23 @@ function renderLobby() {
 
 /** Equipos por página. */
 const PAGE = 20;
-const discover = { q: '', offset: 0, total: 0, users: [], loading: 0, error: '' };
+// `kind`: the kind of device the list is narrowed to (see DEVICE_FILTERS), or '' for all.
+const discover = { q: '', kind: '', offset: 0, total: 0, users: [], loading: 0, error: '' };
+
+/** The platforms of the kind picked, or none for all. */
+function discoverPlatforms() {
+  return DEVICE_FILTERS.find((f) => f.id === discover.kind)?.platforms || [];
+}
+
+function renderFilter() {
+  $('#discover-filter').setAttribute('aria-label', t('discover.filter'));
+  const chip = (id, label, glyph = '') =>
+    `<button class="chip" type="button" data-kind="${id}" aria-pressed="${discover.kind === id}">${glyph}${esc(label)}</button>`;
+  setHtml(
+    $('#discover-filter'),
+    chip('', t('discover.all')) + DEVICE_FILTERS.map((f) => chip(f.id, t(`discover.kind_${f.id}`), icon(f.icon))).join(''),
+  );
+}
 
 function userRow(user) {
   const pending = net.outgoing.has(user.id);
@@ -277,6 +293,8 @@ function renderDiscover() {
   renderFriends();
   const online = net.state === 'online';
   $('#discover-search').hidden = !online;
+  $('#discover-filter').hidden = !online;
+  renderFilter();
   $('#discover-online-title').hidden = !online;
   const status = $('#discover-status');
   status.hidden = net.state !== 'offline' && !(online && net.error);
@@ -288,8 +306,12 @@ function renderDiscover() {
   }
   // Los amigos ya salen arriba.
   const asking = new Set([...net.incoming.values(), ...net.presence.values()].map((u) => u.id));
-  const rows = discover.users.filter((u) => !asking.has(u.id)).map(userRow);
-  const empty = discover.q ? t('discover.no_match') : `${t('lobby.empty')} ${t('discover.hint')}`;
+  // A server from before the filter sends everyone: narrowed here too.
+  const platforms = discoverPlatforms();
+  const rows = discover.users
+    .filter((u) => !asking.has(u.id) && (!platforms.length || platforms.includes(u.platform)))
+    .map(userRow);
+  const empty = discover.q || discover.kind ? t('discover.no_match') : `${t('lobby.empty')} ${t('discover.hint')}`;
   setHtml($('#discover-list'), rows.length ? rows.join('') : `<div class="empty small">${esc(empty)}</div>`);
   const { offset, total } = discover;
   $('#discover-pager').hidden = total <= PAGE;
@@ -303,7 +325,7 @@ async function loadPage() {
   if (net.state !== 'online' || $('#discover').hidden) return;
   const mine = ++discover.loading;
   try {
-    const page = await invoke('lobby_users', { q: discover.q, offset: discover.offset, limit: PAGE });
+    const page = await invoke('lobby_users', { q: discover.q, platforms: discoverPlatforms(), offset: discover.offset, limit: PAGE });
     if (mine !== discover.loading) return;
     // Si la página se quedó vacía (se fueron), a la anterior.
     if (!page.users.length && page.total && discover.offset >= page.total) {
@@ -343,6 +365,14 @@ $('#discover-search').addEventListener('input', (ev) => {
     discover.offset = 0;
     loadPage();
   }, 300);
+});
+$('#discover-filter').addEventListener('click', (ev) => {
+  const chip = ev.target.closest('.chip');
+  if (!chip || chip.dataset.kind === discover.kind) return;
+  discover.kind = chip.dataset.kind;
+  discover.offset = 0;
+  renderFilter();
+  loadPage();
 });
 $('#discover-prev').addEventListener('click', () => {
   discover.offset = Math.max(0, discover.offset - PAGE);
@@ -783,4 +813,5 @@ on('friends:changed', renderDiscover);
 on('lang', () => {
   renderHeader();
   renderLobby();
+  renderDiscover();
 });
