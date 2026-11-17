@@ -9,6 +9,7 @@ export default {
   'theme.light': 'Light',
   'theme.dark': 'Dark',
   'me.code': 'Your code:',
+  'me.qr_title': 'Scan this with Pasalo to connect',
   'me.code_title': 'Your iroh code: whoever connects with you uses it to reach this device',
   'platform.manual': 'Added manually',
   'platform.remote': 'Remote',

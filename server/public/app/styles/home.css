@@ -244,3 +244,9 @@ body[data-tab="transfers"] :is(.topbar, .netbar) { display: none; }
 
 /* Tocar una tarjeta recibida abre su carpeta. */
 .tcard.openable { cursor: pointer; }
+
+/* This device's code as a QR for a phone to scan — only in wide layouts. */
+.me-qr { display: none; }
+@media (min-width: 860px) {
+  .me-qr.ready { display: block; width: 128px; height: 128px; border-radius: 10px; background: #fff; padding: 6px; image-rendering: pixelated; flex: none; }
+}

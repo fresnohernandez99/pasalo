@@ -18,6 +18,8 @@ import './features/settings.js';
 import './features/notify.js';
 import { onGamePeerLost, onGameSignal } from './features/game.js';
 import { takeShare } from './features/share.js';
+import './features/scan.js';
+import './features/chat-menu.js';
 import { onTransferEvent } from './features/transfers.js';
 
 // Every module parsed: this WebView can run the app (see legacy.js).

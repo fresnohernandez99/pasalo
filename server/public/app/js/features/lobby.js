@@ -127,6 +127,10 @@ listen('net_step', ({ payload }) => {
 
 // ---------- cabecera ----------
 
+// The code for which the QR image was last built, so it is not regenerated on
+// every header render.
+let myQrFor = null;
+
 export function renderHeader() {
   const s = app.settings;
   if (!s) return;
@@ -141,6 +145,25 @@ export function renderHeader() {
     const ips = s.ips.length ? s.ips.join(', ') : t('me.no_network');
     $('#me-sub').textContent = t('me.sub', { ips, port: s.port });
     if (s.code) $('#me-code').textContent = shortCode(s.code);
+  }
+  // This device's code as a QR a phone can scan to connect; shown in wide
+  // layouts (desktop / web). Built once per code.
+  const qrEl = $('#me-qr');
+  if (s.code && window.qrcode && myQrFor !== s.code) {
+    try {
+      const link = `https://pasalo-server.vercel.app/?c=${s.code}&n=${encodeURIComponent(s.name || '')}`;
+      const qr = window.qrcode(0, 'M');
+      qr.addData(link);
+      qr.make();
+      qrEl.src = qr.createDataURL(5, 2);
+      qrEl.classList.add('ready');
+      myQrFor = s.code;
+    } catch {
+      qrEl.classList.remove('ready');
+    }
+  } else if (!s.code) {
+    qrEl.classList.remove('ready');
+    myQrFor = null;
   }
   const chatting = net.partners.size;
   $('#net-state').textContent =

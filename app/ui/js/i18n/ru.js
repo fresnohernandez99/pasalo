@@ -9,6 +9,7 @@ export default {
   'theme.light': 'Светлая',
   'theme.dark': 'Тёмная',
   'me.code': 'Ваш код:',
+  'me.qr_title': 'Отсканируйте в Pasalo, чтобы подключиться',
   'me.code_title': 'Ваш код iroh: по нему собеседник находит это устройство',
   'platform.manual': 'Добавлено вручную',
   'platform.remote': 'Удалённое',

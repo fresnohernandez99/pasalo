@@ -9,6 +9,7 @@ export default {
   'theme.light': 'Claro',
   'theme.dark': 'Oscuro',
   'me.code': 'Tu código:',
+  'me.qr_title': 'Escanéalo con Pasalo para conectar',
   'me.code_title': 'Tu código de iroh: quien se conecta contigo lo usa para llegar a este equipo',
   'platform.manual': 'Añadido a mano',
   'platform.remote': 'Remoto',
