@@ -457,6 +457,7 @@ export default {
   'toast.friend_accepted': "{name} aceptó: ya sois amigos",
   'toast.friend_declined': "{name} rechazó ser tu amigo",
   'toast.friend_chat': "{name} quiere chatear contigo otra vez",
+  'toast.friend_joined': "{name} está chateando contigo",
   'past.title': "Chats anteriores",
   'past.gone': "No conectado",
   'past.friend': "Amigo · no conectado",
@@ -473,7 +474,7 @@ export default {
   'chat.share_code': 'Compartir este código',
   'toast.chat_ended': "Terminaste el chat con {name}",
   'settings.multi_chat': "Chatear con varias personas a la vez",
-  'settings.multi_chat_hint': "Al aceptar a alguien sigues en línea y puedes aceptar a más. Se aplica la próxima vez que te conectes.",
+  'settings.multi_chat_hint': "Al aceptar a alguien sigues en línea y puedes aceptar a más; tus amigos entran sin preguntar. Se aplica la próxima vez que te conectes.",
   'perm.storage': "Almacenamiento",
   'perm.storage_why': "Para guardar lo que recibes en Descargas/Pasalo, donde lo ves desde otras apps.",
 };

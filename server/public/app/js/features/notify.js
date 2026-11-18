@@ -55,6 +55,12 @@ export function notifyText(peer, text) {
   invoke('notify_message', { peer: peer.code, name: peer.name, text }).catch(() => {});
 }
 
+/** Someone asks to connect: opening it brings the app up, with the request on top. */
+export function notifyRequest(name, text) {
+  if (watching()) return;
+  invoke('notify_message', { peer: '', name, text }).catch(() => {});
+}
+
 /** Siempre, como en el teléfono: la llamada pudo sonar con la pantalla bloqueada y nadie verla. */
 export function notifyMissed({ peer, media }) {
   invoke('notify_message', { peer: peer.code, name: peer.name, text: t(media === 'video' ? 'notify.missed_video' : 'notify.missed_voice') }).catch(() => {});

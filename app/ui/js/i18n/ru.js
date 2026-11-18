@@ -457,6 +457,7 @@ export default {
   'toast.friend_accepted': "{name} принял(а) запрос: теперь вы друзья",
   'toast.friend_declined': "{name} отклонил(а) запрос в друзья",
   'toast.friend_chat': "{name} хочет снова пообщаться с вами",
+  'toast.friend_joined': "{name} общается с вами",
   'past.title': "Прошлые чаты",
   'past.gone': "Не на связи",
   'past.friend': "Друг · не на связи",
@@ -473,7 +474,7 @@ export default {
   'chat.share_code': 'Поделиться кодом',
   'toast.chat_ended': "Чат с {name} завершён",
   'settings.multi_chat': "Общаться с несколькими людьми сразу",
-  'settings.multi_chat_hint': "Приняв кого-то, вы остаётесь в сети и можете принять ещё. Действует со следующего подключения.",
+  'settings.multi_chat_hint': "Приняв кого-то, вы остаётесь в сети и можете принять ещё; друзья входят без запроса. Действует со следующего подключения.",
   'perm.storage': "Хранилище",
   'perm.storage_why': "Чтобы сохранять полученное в Загрузки/Pasalo, где это видно другим приложениям.",
 };

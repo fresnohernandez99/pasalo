@@ -33,7 +33,6 @@
             </div>
           </div>
         </div>
-        <img id="me-qr" class="me-qr" alt="" data-i18n-title="me.qr_title">
         <button id="open-settings" class="icon-btn" type="button" data-i18n-title="settings.title"><span data-icon="gear"></span></button>
       </header>
       <div class="netbar">
@@ -67,14 +66,6 @@
           <!-- Mientras se conecta: qué paso va, hasta tener el ID de iroh en la red. -->
           <div id="net-progress" class="section net-progress" hidden>
             <ol id="net-steps" class="net-steps"></ol>
-          </div>
-
-          <div id="lobby" class="section" hidden>
-            <div class="section-head">
-              <h2 data-i18n="lobby.requests"></h2>
-              <span id="lobby-status" class="sub"></span>
-            </div>
-            <div id="lobby-list" class="lobby-list"></div>
           </div>
 
           <div class="section">
@@ -128,6 +119,10 @@
       <div id="pane-empty" class="pane-empty">
         <div class="empty-icon" data-icon="chat"></div>
         <div data-i18n="chat.select"></div>
+        <figure id="me-qr-box" class="me-qr-box">
+          <img id="me-qr" class="me-qr" alt="">
+          <figcaption data-i18n="me.qr_title"></figcaption>
+        </figure>
       </div>
 
       <section id="chat" class="chat" hidden>
@@ -190,6 +185,13 @@
   </div>
 
   <!-- Ajustes: cada cambio se guarda al momento. -->
+  <!-- Requests to connect: notices on top of whatever screen is open, each
+       with its answer, until it is answered or withdrawn. -->
+  <div id="lobby" class="request-notices" hidden>
+    <div id="lobby-list" class="lobby-list"></div>
+    <span id="lobby-status" class="sub"></span>
+  </div>
+
   <!-- Descubrir: quién está en línea en el server, con búsqueda y por páginas
        (ver lobby.js). -->
   <section id="discover" class="screen" hidden>

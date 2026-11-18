@@ -15,6 +15,7 @@
 use std::io;
 use std::net::SocketAddr;
 use std::path::Path;
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, RwLock};
 use std::time::Duration;
 
@@ -34,6 +35,18 @@ pub const ALPN: &[u8] = b"pasalo/1";
 /// 12 MB/s con 100 ms de latencia; con este, una transferencia entre redes
 /// lejanas puede llenar la conexión.
 const STREAM_WINDOW: u32 = 16 * 1024 * 1024;
+
+/// What this device lets the other side have in flight per stream when it is
+/// the one receiving (see [`set_receive_window`]).
+static RECEIVE_WINDOW: AtomicU32 = AtomicU32::new(STREAM_WINDOW);
+
+/// Sets how many bytes per stream the other side may send ahead of what this
+/// device has taken, for the [`Remote`]s started from now on. Whatever
+/// arrives out of order waits in memory, up to this much (and as much again
+/// for the whole connection): a device with little memory asks for less.
+pub fn set_receive_window(bytes: u32) {
+    RECEIVE_WINDOW.store(bytes.max(64 * 1024), Ordering::Relaxed);
+}
 
 /// Punto de conexión de este equipo. Clonarlo es barato y todos los clones
 /// ven el mismo modo.
@@ -171,9 +184,10 @@ async fn bind(key: &SecretKey) -> io::Result<Endpoint> {
     // 25 ms, así que la pérdida se sigue detectando a tiempo.
     let mut acks = AckFrequencyConfig::default();
     acks.ack_eliciting_threshold(VarInt::from_u32(10)).max_ack_delay(Some(Duration::from_millis(250)));
+    let window = RECEIVE_WINDOW.load(Ordering::Relaxed);
     let transport = QuicTransportConfig::builder()
-        .stream_receive_window(VarInt::from_u32(STREAM_WINDOW))
-        .receive_window(VarInt::from_u32(2 * STREAM_WINDOW))
+        .stream_receive_window(VarInt::from_u32(window))
+        .receive_window(VarInt::from_u32(window.saturating_mul(2)))
         .send_window(2 * STREAM_WINDOW as u64)
         .ack_frequency_config(Some(acks))
         // Las imágenes del vídeo (un stream cada una, misma prioridad) salen

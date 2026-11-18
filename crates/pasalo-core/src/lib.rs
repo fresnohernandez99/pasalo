@@ -26,7 +26,7 @@ pub use events::{Direction, Event, EventSender, TransferId, new_transfer_id};
 pub use iroh::EndpointId;
 pub use lobby::{Friend, Lobby, LobbyUser, Partner, UsersPage, session_id};
 pub use receiver::Receiver;
-pub use remote::{ALPN, Remote, parse_code};
+pub use remote::{ALPN, Remote, parse_code, set_receive_window};
 pub use stats::CallStats;
 pub use sender::{Greeting, SendOptions, probe, send_paths, send_text};
 pub use talk::{ChatMessage, IDLE, MAX_AUDIO, MAX_IMAGE, ONCE_PREFIX, Signal, Status, TALK_ALPN, Talk, VideoLink, VideoSender, VoiceLink, VoiceSender};

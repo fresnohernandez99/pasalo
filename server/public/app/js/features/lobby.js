@@ -38,6 +38,7 @@ import { openChat, wipeIfPrivate } from './chat.js';
 import { friendOf, friends, removeFriend, renameFriend } from './friends.js';
 import { keepOnline } from './keepalive.js';
 import { onBack, updateLayers } from './nav.js';
+import { notifyRequest } from './notify.js';
 import { DEVICE_FILTERS, addRemotePeer, avatar, ensureRemotePeer, findPeerByCode, peers, removePeer } from './peers.js';
 import { pauseFor, resumeFor } from './transfers.js';
 
@@ -146,8 +147,9 @@ export function renderHeader() {
     $('#me-sub').textContent = t('me.sub', { ips, port: s.port });
     if (s.code) $('#me-code').textContent = shortCode(s.code);
   }
-  // This device's code as a QR a phone can scan to connect; shown in wide
-  // layouts (desktop / web). Built once per code.
+  // This device's code as a QR a phone can scan to connect; shown where a
+  // chat opens while none is open (wide layouts: desktop / web). Built once
+  // per code.
   const qrEl = $('#me-qr');
   if (s.code && window.qrcode && myQrFor !== s.code) {
     try {
@@ -156,13 +158,13 @@ export function renderHeader() {
       qr.addData(link);
       qr.make();
       qrEl.src = qr.createDataURL(5, 2);
-      qrEl.classList.add('ready');
+      qrEl.parentElement.classList.add('ready');
       myQrFor = s.code;
     } catch {
-      qrEl.classList.remove('ready');
+      qrEl.parentElement.classList.remove('ready');
     }
   } else if (!s.code) {
-    qrEl.classList.remove('ready');
+    qrEl.parentElement.classList.remove('ready');
     myQrFor = null;
   }
   const chatting = net.partners.size;
@@ -188,10 +190,10 @@ export function renderHeader() {
   toggle.hidden = state === 'offline' || state === 'paired' || (state === 'direct' && chatting > 0);
 }
 
-// ---------- solicitudes (pantalla principal) ----------
+// ---------- requests (notices over any screen) ----------
 
 function renderLobby() {
-  // Aquí solo lo que espera respuesta; la lista de gente está en Descubrir.
+  // Only what waits for an answer; the list of people is in Discover.
   $('#lobby').hidden = net.state !== 'online' || !net.incoming.size;
   if ($('#lobby').hidden) return;
   $('#lobby-status').textContent = net.error ? t('lobby.unreachable') : '';
@@ -554,10 +556,16 @@ export function onLobbyEvent(e) {
       loadPage();
       break;
     case 'lobby_request': {
-      net.incoming.set(e.request, e.from);
       const friend = e.from.code && friendOf(e.from.code);
-      if (friend) toast(t('toast.friend_chat', { name: friend.name }));
-      else toast(t('toast.wants_connect', { name: e.from.name }));
+      // Chatting with several: a friend comes straight in, nobody is asked.
+      if (friend && net.multi) {
+        admitFriend(e.request, e.from, friend);
+        return;
+      }
+      // No toast: the request itself shows on top of whatever is open (see
+      // renderLobby), and as a system notification if nobody is looking.
+      net.incoming.set(e.request, e.from);
+      notifyRequest(friend?.name || e.from.name, t(friend ? 'lobby.friend_wants' : 'lobby.wants'));
       break;
     }
     case 'lobby_request_gone':
@@ -573,6 +581,15 @@ export function onLobbyEvent(e) {
       break;
     }
     case 'lobby_paired':
+      // A friend let in without asking: their chat is there, but what is on
+      // screen stays.
+      if (net.multi && admitted.delete(e.partner.code.toLowerCase())) {
+        addPartner(e.partner);
+        renderHeader();
+        renderDiscover();
+        toast(t('toast.friend_joined', { name: friendOf(e.partner.code)?.name || e.partner.name }));
+        return;
+      }
       closeDiscover();
       if (net.multi) {
         addPartner(e.partner);
@@ -603,6 +620,26 @@ export function onLobbyEvent(e) {
   }
   renderLobby();
   renderDiscover();
+}
+
+/** Codes of the friends let in without asking, until their chat is there. */
+const admitted = new Set();
+
+/**
+ * Accepts the request of a friend right away (see `lobby_request`). If the
+ * server says no, the request stays to be answered by hand.
+ */
+async function admitFriend(request, from, friend) {
+  admitted.add(friend.code);
+  try {
+    await invoke('lobby_answer', { request, accept: true });
+  } catch {
+    admitted.delete(friend.code);
+    net.incoming.set(request, from);
+    toast(t('toast.friend_chat', { name: friend.name }));
+    renderLobby();
+    renderDiscover();
+  }
 }
 
 /** One more person to chat with, in multi mode: the app stays online. */

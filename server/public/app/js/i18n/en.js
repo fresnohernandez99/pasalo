@@ -457,6 +457,7 @@ export default {
   'toast.friend_accepted': "{name} accepted: you are now friends",
   'toast.friend_declined': "{name} declined your friend request",
   'toast.friend_chat': "{name} wants to chat with you again",
+  'toast.friend_joined': "{name} is chatting with you",
   'past.title': "Previous chats",
   'past.gone': "Not connected",
   'past.friend': "Friend · not connected",
@@ -473,7 +474,7 @@ export default {
   'chat.share_code': 'Share this code',
   'toast.chat_ended': "Ended the chat with {name}",
   'settings.multi_chat': "Chat with several people at once",
-  'settings.multi_chat_hint': "After accepting someone you stay online and can accept more. Applies the next time you connect.",
+  'settings.multi_chat_hint': "After accepting someone you stay online and can accept more; your friends come in without asking. Applies the next time you connect.",
   'perm.storage': "Storage",
   'perm.storage_why': "To save what you receive in Downloads/Pasalo, where other apps can see it.",
 };

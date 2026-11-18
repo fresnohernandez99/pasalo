@@ -144,7 +144,22 @@ body.pane-open .pane { transform: none; visibility: visible; transition: transfo
   border-radius: var(--radius);
   box-shadow: var(--shadow-1);
 }
-.lobby-row.request { background: var(--accent-soft); }
+.lobby-row.request { background: var(--surface); border: 1px solid var(--accent); box-shadow: var(--shadow-2); }
+/* Requests to connect, over any screen (Discover, a chat…): they stay until
+   answered, so nobody has to go back to find them. */
+.request-notices {
+  position: fixed;
+  z-index: 48;
+  top: calc(8px + env(safe-area-inset-top));
+  left: 50%;
+  transform: translateX(-50%);
+  width: min(520px, calc(100vw - 24px));
+  display: grid;
+  gap: 6px;
+  animation: notice-in .22s ease-out;
+}
+.request-notices .sub:empty { display: none; }
+@keyframes notice-in { from { opacity: 0; transform: translate(-50%, -12px); } }
 .lobby-who { flex: 1 1 180px; min-width: 0; display: flex; align-items: center; gap: 10px; }
 .lobby-who .info { min-width: 0; }
 /* Si no caben al lado, los botones bajan a su propia línea. */
@@ -245,8 +260,9 @@ body[data-tab="transfers"] :is(.topbar, .netbar) { display: none; }
 /* Tocar una tarjeta recibida abre su carpeta. */
 .tcard.openable { cursor: pointer; }
 
-/* This device's code as a QR for a phone to scan — only in wide layouts. */
-.me-qr { display: none; }
-@media (min-width: 860px) {
-  .me-qr.ready { display: block; width: 128px; height: 128px; border-radius: 10px; background: #fff; padding: 6px; image-rendering: pixelated; flex: none; }
-}
+/* This device's code as a QR for a phone to scan: on the right, where a chat
+   opens, while none is open — so only in wide layouts. */
+.me-qr-box { display: none; margin: 28px 0 0; }
+.me-qr-box.ready { display: grid; justify-items: center; gap: 12px; }
+.me-qr { width: 220px; height: 220px; border-radius: 14px; background: #fff; padding: 10px; image-rendering: pixelated; }
+.me-qr-box figcaption { font-size: 13px; }
