@@ -520,6 +520,7 @@ async fn cancelled_receive_stops_the_sender_and_leaves_nothing() {
         let sender = LocalInfo::new("emisor-id", "emisor");
         send_paths(new_transfer_id(), &Target::Lan(proxy), &sender, &[file], &SendOptions::default(), &tx).await
     });
+    let again = src.path().join("pelicula.mkv");
     let id = loop {
         let event = tokio::time::timeout(std::time::Duration::from_secs(10), events.recv()).await.unwrap().unwrap();
         if let Event::Progress { id, done_bytes, .. } = event
@@ -535,4 +536,11 @@ async fn cancelled_receive_stops_the_sender_and_leaves_nothing() {
     tokio::time::sleep(std::time::Duration::from_millis(200)).await;
     let left: Vec<_> = std::fs::read_dir(dst.path()).unwrap().map(|e| e.unwrap().file_name()).collect();
     assert!(left.is_empty(), "quedó algo: {left:?}");
+
+    // Sending the same file again is a new transfer, not a retry: it goes through.
+    let (tx, _rx) = mpsc::unbounded_channel();
+    let sender = LocalInfo::new("emisor-id", "emisor");
+    let result = send_paths(new_transfer_id(), &Target::Lan(addr), &sender, &[again], &SendOptions::default(), &tx).await;
+    assert!(result.is_ok(), "{result:?}");
+    assert!(dst.path().join("pelicula.mkv").exists());
 }

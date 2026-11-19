@@ -46,9 +46,13 @@ struct Inner {
     decisions: Mutex<HashMap<TransferId, oneshot::Sender<bool>>>,
     /// Clave de cada transferencia que ha empezado, para poder cancelarla.
     keys: Mutex<HashMap<TransferId, String>>,
-    /// Transferencias canceladas aquí: si el emisor vuelve a intentarlo, se
-    /// le rechaza para que no siga reintentando.
-    cancelled: Mutex<HashSet<String>>,
+    /// Transfers cancelled here, and when: the sender's next attempt is
+    /// rejected so that it stops retrying. Only that one, and only for a
+    /// while (`CANCEL_HOLDS`): sending the same thing again later is a new
+    /// transfer, not a retry.
+    cancelled: Mutex<HashMap<String, Instant>>,
+    /// The user turned the local network off: what comes in by TCP is dropped.
+    lan_off: AtomicBool,
 }
 
 /// Qué pasó con una petición.
@@ -94,6 +98,7 @@ impl Receiver {
                 decisions: Mutex::default(),
                 keys: Mutex::default(),
                 cancelled: Mutex::default(),
+                lan_off: AtomicBool::new(false),
                 lan_sessions: Arc::new(tokio::sync::Semaphore::new(MAX_LAN_SESSIONS)),
             }),
         }
@@ -117,6 +122,12 @@ impl Receiver {
         self.inner.ask.store(ask, Ordering::Relaxed);
     }
 
+    /// Whether devices of the local network may send here by TCP (they may,
+    /// until told otherwise). Off, their connections are closed unanswered.
+    pub fn set_lan(&self, on: bool) {
+        self.inner.lan_off.store(!on, Ordering::Relaxed);
+    }
+
     /// Con pareja (`Some`), solo recibe de ella por iroh y a la LAN le
     /// contesta `busy`. `None`, de todos.
     pub fn set_only(&self, device_id: Option<String>) {
@@ -136,7 +147,7 @@ impl Receiver {
     /// rechaza los reintentos del emisor. Devuelve `false` si no la conoce.
     pub fn cancel(&self, id: TransferId) -> bool {
         let Some(key) = self.inner.keys.lock().unwrap().remove(&id) else { return false };
-        self.inner.cancelled.lock().unwrap().insert(key.clone());
+        self.inner.cancelled.lock().unwrap().insert(key.clone(), Instant::now());
         let slot = self.slot(&key);
         slot.generation.send_modify(|g| *g += 1);
         let dest = self.dest();
@@ -164,6 +175,9 @@ impl Receiver {
         loop {
             match listener.accept().await {
                 Ok((stream, _)) => {
+                    if self.inner.lan_off.load(Ordering::Relaxed) {
+                        continue;
+                    }
                     // Cualquiera de la LAN puede abrir conexiones: hay un tope.
                     let Ok(permit) = self.inner.lan_sessions.clone().try_acquire_owned() else {
                         continue;
@@ -173,7 +187,7 @@ impl Receiver {
                     tokio::spawn(async move {
                         let _permit = permit;
                         let (rd, wr) = stream.into_split();
-                        this.handle(rd, wr, None).await
+                        this.handle(rd, wr, None).await;
                     });
                 }
                 Err(e) => {
@@ -209,7 +223,12 @@ impl Receiver {
                 let Ok(Ok((mut send, mut recv))) = tokio::time::timeout(SHORT, conn.accept_bi()).await else {
                     return;
                 };
-                this.handle(&mut recv, &mut send, Some(conn.remote_id())).await;
+                // Cut from here (cancelled, or replaced by a newer attempt):
+                // the sender is told to stop, or it would keep waiting for
+                // room to write into and never find out.
+                if this.handle(&mut recv, &mut send, Some(conn.remote_id())).await {
+                    let _ = recv.stop(0u32.into());
+                }
                 // Cerrar sin esperar puede perder la última respuesta: se
                 // termina el canal y se deja que el emisor cierre la conexión.
                 let _ = send.finish();
@@ -220,13 +239,17 @@ impl Receiver {
 
     /// `from`: el equipo, si llegó por iroh (autenticado por su clave);
     /// `None` si llegó por TCP de la LAN.
-    async fn handle<R, W>(&self, rd: R, wr: W, from: Option<EndpointId>)
+    ///
+    /// Returns whether the session was cut from this side.
+    async fn handle<R, W>(&self, rd: R, wr: W, from: Option<EndpointId>) -> bool
     where
         R: AsyncRead + Unpin,
         W: AsyncWrite + Unpin,
     {
         let mut started = None;
-        if let Err(e) = self.session(rd, wr, from, &mut started).await {
+        let result = self.session(rd, wr, from, &mut started).await;
+        let cut = matches!(result, Err(Error::Superseded));
+        if let Err(e) = result {
             tracing::warn!("recepción fallida: {e}");
             if let Some(id) = started {
                 let _ = self.inner.events.send(Event::TransferFailed {
@@ -239,6 +262,7 @@ impl Receiver {
                 });
             }
         }
+        cut
     }
 
     fn slot(&self, key: &str) -> Arc<Slot> {
@@ -316,7 +340,8 @@ impl Receiver {
         };
 
         let key = transfer_key(&device_id, &items);
-        if inner.cancelled.lock().unwrap().contains(&key) {
+        let cancelled = inner.cancelled.lock().unwrap().remove(&key);
+        if cancelled.is_some_and(|at| at.elapsed() < CANCEL_HOLDS) {
             write_msg(&mut wr, &Message::Reject { reason: "cancelled".into() }).await?;
             return Err(Error::Rejected("cancelled".into()));
         }
@@ -548,6 +573,9 @@ impl Receiver {
 }
 
 const LEDGER_EVERY: Duration = Duration::from_secs(1);
+/// How long a cancelled transfer keeps rejecting the sender's retry: longer
+/// than the longest wait between two attempts.
+const CANCEL_HOLDS: Duration = Duration::from_secs(60);
 /// Conexiones de la LAN atendiéndose a la vez.
 const MAX_LAN_SESSIONS: usize = 16;
 /// Lo más grande que puede ser el `Hello` (lo primero que manda cualquiera).

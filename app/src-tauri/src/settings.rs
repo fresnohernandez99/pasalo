@@ -24,6 +24,17 @@ pub struct Settings {
     /// Chat with several people at once from the server (off: one partner, as before).
     #[serde(default)]
     pub multi_chat: bool,
+    /// Announce on the second discovery port too, the one a PlayStation 4 listens on.
+    #[serde(default)]
+    pub ps4_port: bool,
+    /// The local network: finding the devices on it and being found, and
+    /// taking what they send straight over it.
+    #[serde(default = "yes")]
+    pub lan: bool,
+}
+
+fn yes() -> bool {
+    true
 }
 
 fn default_server() -> String {
@@ -50,6 +61,8 @@ pub struct Snapshot {
     /// With `multi_chat`: everyone accepted from the server so far.
     partners: Vec<Partner>,
     multi_chat: bool,
+    ps4_port: bool,
+    lan: bool,
     /// Versión instalada.
     version: &'static str,
 }
@@ -99,6 +112,8 @@ pub async fn snapshot(state: State<'_, AppState>) -> CmdResult<Snapshot> {
         partner,
         partners,
         multi_chat: settings.multi_chat,
+        ps4_port: settings.ps4_port,
+        lan: settings.lan,
         version: env!("CARGO_PKG_VERSION"),
     })
 }
@@ -191,6 +206,24 @@ pub async fn set_server(state: State<'_, AppState>, server: String) -> CmdResult
     }
     state.settings.lock().unwrap().server = server;
     state.save_settings()
+}
+
+/// Turns the local network on or off. Applies at once.
+#[tauri::command]
+pub async fn set_lan(state: State<'_, AppState>, on: bool) -> CmdResult<()> {
+    state.settings.lock().unwrap().lan = on;
+    state.save_settings()?;
+    state.restart_discovery().await;
+    Ok(())
+}
+
+/// Whether announcements also go to the port a PlayStation 4 listens on. Applies at once.
+#[tauri::command]
+pub async fn set_ps4_port(state: State<'_, AppState>, on: bool) -> CmdResult<()> {
+    state.settings.lock().unwrap().ps4_port = on;
+    state.save_settings()?;
+    state.restart_discovery().await;
+    Ok(())
 }
 
 /// The "chat with several people" setting. It applies the next time the app joins the server.
@@ -317,5 +350,5 @@ pub fn load_settings(path: &Path, app: &AppHandle) -> Settings {
     };
     #[cfg(not(target_os = "android"))]
     let name = pasalo_core::default_device_name();
-    Settings { name, dir, server, multi_chat: false }
+    Settings { name, dir, server, multi_chat: false, ps4_port: false, lan: true }
 }

@@ -475,6 +475,10 @@ export default {
   'toast.chat_ended': "Terminaste el chat con {name}",
   'settings.multi_chat': "Chatear con varias personas a la vez",
   'settings.multi_chat_hint': "Al aceptar a alguien sigues en línea y puedes aceptar a más; tus amigos entran sin preguntar. Se aplica la próxima vez que te conectes.",
+  'settings.lan': "Red local",
+  'settings.lan_hint': "Buscar los equipos de tu red, dejar que encuentren este y recibir lo que mandan directamente por ella. Apagada, solo funcionan las conexiones por internet.",
+  'settings.ps4_port': "Anunciarse también en el puerto 40645 (PlayStation 4)",
+  'settings.ps4_port_hint': "En tu red este equipo siempre se anuncia en el puerto 4645. Una PlayStation 4 no puede escuchar ahí: actívalo para que también vea este equipo.",
   'perm.storage': "Almacenamiento",
   'perm.storage_why': "Para guardar lo que recibes en Descargas/Pasalo, donde lo ves desde otras apps.",
 };

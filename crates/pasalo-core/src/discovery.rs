@@ -15,7 +15,7 @@ use socket2::{Domain, Protocol, Socket, Type};
 use tokio::net::UdpSocket;
 use tokio::task::JoinHandle;
 
-use crate::protocol::PROTOCOL_VERSION;
+use crate::protocol::{DISCOVERY_PORT, PROTOCOL_VERSION, RESTRICTED_DISCOVERY_PORT};
 use crate::{Event, EventSender, LocalInfo};
 
 const MAGIC: &str = "pasalo";
@@ -72,21 +72,39 @@ type PeerMap = Arc<Mutex<HashMap<String, (Peer, Instant)>>>;
 pub struct Discovery {
     socket: Arc<UdpSocket>,
     local: LocalInfo,
-    port: u16,
+    ports: Arc<[u16]>,
     peers: PeerMap,
     tasks: Vec<JoinHandle<()>>,
 }
 
 impl Discovery {
+    /// Listens on `port` and announces there.
     pub async fn start(local: LocalInfo, port: u16, events: EventSender) -> io::Result<Self> {
-        let socket = Arc::new(bind_udp(port)?);
+        Self::start_on(local, port, &[port], events).await
+    }
+
+    /// The same, announcing as well to the port of the devices that cannot
+    /// open the usual one, so that they see this one.
+    pub async fn start_reaching_restricted(local: LocalInfo, port: u16, events: EventSender) -> io::Result<Self> {
+        Self::start_on(local, port, &[port, RESTRICTED_DISCOVERY_PORT], events).await
+    }
+
+    /// For a device that cannot open the usual port: listens on
+    /// `RESTRICTED_DISCOVERY_PORT` and announces to both.
+    pub async fn start_restricted(local: LocalInfo, events: EventSender) -> io::Result<Self> {
+        Self::start_on(local, RESTRICTED_DISCOVERY_PORT, &[DISCOVERY_PORT, RESTRICTED_DISCOVERY_PORT], events).await
+    }
+
+    async fn start_on(local: LocalInfo, listen: u16, announce: &[u16], events: EventSender) -> io::Result<Self> {
+        let socket = Arc::new(bind_udp(listen)?);
+        let ports: Arc<[u16]> = announce.into();
         let peers = PeerMap::default();
         let tasks = vec![
-            tokio::spawn(recv_loop(socket.clone(), local.clone(), port, peers.clone(), events.clone())),
-            tokio::spawn(announce_loop(socket.clone(), local.clone(), port)),
+            tokio::spawn(recv_loop(socket.clone(), local.clone(), ports.clone(), peers.clone(), events.clone())),
+            tokio::spawn(announce_loop(socket.clone(), local.clone(), ports.clone())),
             tokio::spawn(prune_loop(peers.clone(), events)),
         ];
-        Ok(Self { socket, local, port, peers, tasks })
+        Ok(Self { socket, local, ports, peers, tasks })
     }
 
     pub fn peers(&self) -> Vec<Peer> {
@@ -97,12 +115,12 @@ impl Discovery {
 
     /// Anuncia este equipo ya, sin esperar al siguiente anuncio periódico.
     pub async fn announce(&self) {
-        broadcast(&self.socket, &beacon(&self.local, Kind::Announce), self.port).await;
+        broadcast(&self.socket, &beacon(&self.local, Kind::Announce), &self.ports).await;
     }
 
     /// Avisa a los demás de que este equipo se va.
     pub async fn shutdown(self) {
-        broadcast(&self.socket, &beacon(&self.local, Kind::Bye), self.port).await;
+        broadcast(&self.socket, &beacon(&self.local, Kind::Bye), &self.ports).await;
     }
 }
 
@@ -143,7 +161,7 @@ fn beacon(local: &LocalInfo, kind: Kind) -> Vec<u8> {
 
 /// Envía a 255.255.255.255 y a la dirección de broadcast de cada interfaz:
 /// algunos sistemas (macOS sobre todo) solo sacan el broadcast global por una.
-async fn broadcast(socket: &UdpSocket, msg: &[u8], port: u16) {
+async fn broadcast(socket: &UdpSocket, msg: &[u8], ports: &[u16]) {
     let mut targets = vec![Ipv4Addr::BROADCAST];
     if let Ok(interfaces) = if_addrs::get_if_addrs() {
         for interface in interfaces {
@@ -157,22 +175,24 @@ async fn broadcast(socket: &UdpSocket, msg: &[u8], port: u16) {
         }
     }
     for ip in targets {
-        if let Err(e) = socket.send_to(msg, (ip, port)).await {
-            tracing::debug!("no se pudo anunciar en {ip}: {e}");
+        for &port in ports {
+            if let Err(e) = socket.send_to(msg, (ip, port)).await {
+                tracing::debug!("no se pudo anunciar en {ip}:{port}: {e}");
+            }
         }
     }
 }
 
-async fn announce_loop(socket: Arc<UdpSocket>, local: LocalInfo, port: u16) {
+async fn announce_loop(socket: Arc<UdpSocket>, local: LocalInfo, ports: Arc<[u16]>) {
     let msg = beacon(&local, Kind::Announce);
     let mut tick = tokio::time::interval(ANNOUNCE_EVERY);
     loop {
         tick.tick().await;
-        broadcast(&socket, &msg, port).await;
+        broadcast(&socket, &msg, &ports).await;
     }
 }
 
-async fn recv_loop(socket: Arc<UdpSocket>, local: LocalInfo, port: u16, peers: PeerMap, events: EventSender) {
+async fn recv_loop(socket: Arc<UdpSocket>, local: LocalInfo, ports: Arc<[u16]>, peers: PeerMap, events: EventSender) {
     let mut buf = vec![0u8; 4096];
     let mut last_reply: Option<Instant> = None;
     loop {
@@ -233,7 +253,7 @@ async fn recv_loop(socket: Arc<UdpSocket>, local: LocalInfo, port: u16, peers: P
                 && last_reply.is_none_or(|at: Instant| at.elapsed() >= REPLY_EVERY)
             {
                 last_reply = Some(Instant::now());
-                broadcast(&socket, &beacon(&local, Kind::Reply), port).await;
+                broadcast(&socket, &beacon(&local, Kind::Reply), &ports).await;
             }
         }
     }

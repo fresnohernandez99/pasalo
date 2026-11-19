@@ -152,7 +152,7 @@ pub fn run() {
         .setup(setup)
         .invoke_handler(tauri::generate_handler![
             settings::snapshot, settings::refresh, settings::set_name, settings::choose_dir, settings::open_dir,
-            settings::reveal, settings::set_server, settings::set_multi_chat, settings::storage_public, settings::local_network, settings::check_update,
+            settings::reveal, settings::set_server, settings::set_multi_chat, settings::set_ps4_port, settings::set_lan, settings::storage_public, settings::local_network, settings::check_update,
             settings::open_release, settings::keep_alive, settings::local_addresses,
             files::pick_files, files::pick_folder, files::share_take, files::send, files::send_text, files::probe, files::pause,
             files::resume, files::forget, files::transfer_decide, files::cancel_incoming,

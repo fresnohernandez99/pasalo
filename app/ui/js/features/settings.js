@@ -47,6 +47,9 @@ function fill() {
   $('#open-dir').title = t('dir.open_title', { dir: s.dir });
   $('#set-server').value = s.server || '';
   $('#set-multi').checked = !!s.multi_chat;
+  $('#set-ps4-port').checked = !!s.ps4_port;
+  $('#set-ps4-port').disabled = s.lan === false;
+  $('#set-lan').checked = s.lan !== false;
   $('#set-version').textContent = s.version || '';
   $('#lang').innerHTML = Object.keys(LANGS)
     .map((code) => `<option value="${code}" ${code === currentLang() ? 'selected' : ''}>${esc(LANGS[code]['lang.name'])}</option>`)
@@ -144,6 +147,29 @@ $('#set-multi').addEventListener('change', async (ev) => {
   try {
     await call('set_multi_chat', { on });
     updateSettings({ multi_chat: on });
+    toast(t('toast.saved'));
+  } catch {
+    ev.target.checked = !on;
+  }
+});
+
+$('#set-lan').addEventListener('change', async (ev) => {
+  const on = ev.target.checked;
+  try {
+    await call('set_lan', { on });
+    updateSettings({ lan: on });
+    $('#set-ps4-port').disabled = !on;
+    toast(t('toast.saved'));
+  } catch {
+    ev.target.checked = !on;
+  }
+});
+
+$('#set-ps4-port').addEventListener('change', async (ev) => {
+  const on = ev.target.checked;
+  try {
+    await call('set_ps4_port', { on });
+    updateSettings({ ps4_port: on });
     toast(t('toast.saved'));
   } catch {
     ev.target.checked = !on;

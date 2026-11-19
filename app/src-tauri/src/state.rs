@@ -91,16 +91,33 @@ impl AppState {
         }
     }
 
+    /// Starts the search for devices on the local network again, with the
+    /// current name and settings; with the local network turned off, stops it
+    /// and forgets the devices it had found.
     pub async fn restart_discovery(&self) {
         let mut discovery = self.discovery.lock().await;
+        let (lan, ps4_port) = {
+            let settings = self.settings.lock().unwrap();
+            (settings.lan, settings.ps4_port)
+        };
+        self.receiver.set_lan(lan);
         if let Some(old) = discovery.take() {
+            if !lan {
+                for peer in old.peers() {
+                    let _ = self.events.send(pasalo_core::Event::PeerLost { device_id: peer.device_id });
+                }
+            }
             old.shutdown().await;
         }
+        if !lan {
+            return;
+        }
         let local = self.local.lock().unwrap().clone();
-        *discovery = Discovery::start(local, DISCOVERY_PORT, self.events.clone())
-            .await
-            .inspect_err(|e| eprintln!("no se pudo iniciar el descubrimiento: {e}"))
-            .ok();
+        let started = match ps4_port {
+            true => Discovery::start_reaching_restricted(local, DISCOVERY_PORT, self.events.clone()).await,
+            false => Discovery::start(local, DISCOVERY_PORT, self.events.clone()).await,
+        };
+        *discovery = started.inspect_err(|e| eprintln!("no se pudo iniciar el descubrimiento: {e}")).ok();
     }
 }
 

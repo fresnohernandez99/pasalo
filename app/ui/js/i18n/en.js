@@ -475,6 +475,10 @@ export default {
   'toast.chat_ended': "Ended the chat with {name}",
   'settings.multi_chat': "Chat with several people at once",
   'settings.multi_chat_hint': "After accepting someone you stay online and can accept more; your friends come in without asking. Applies the next time you connect.",
+  'settings.lan': "Local network",
+  'settings.lan_hint': "Find the devices on your network, let them find this one, and take what they send straight over it. Off, only connections through the internet work.",
+  'settings.ps4_port': "Also announce on port 40645 (PlayStation 4)",
+  'settings.ps4_port_hint': "On your network this device always announces itself on port 4645. A PlayStation 4 cannot listen there: turn this on so it sees this device too.",
   'perm.storage': "Storage",
   'perm.storage_why': "To save what you receive in Downloads/Pasalo, where other apps can see it.",
 };

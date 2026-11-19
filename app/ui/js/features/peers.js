@@ -111,7 +111,10 @@ export function removePeer(key) {
 }
 
 export function findPeerByCode(code) {
-  return [...peers.values()].find((p) => peerCode(p) === code) || null;
+  // The same device can be listed twice: found on this network and added
+  // earlier by its code. The one on this network counts.
+  const found = [...peers.values()].filter((p) => peerCode(p) === code);
+  return found.find((p) => p.platform !== 'remote') || found[0] || null;
 }
 
 // ---------- lista ----------
@@ -120,8 +123,11 @@ export function renderPeers() {
   // La pareja, si además está en la LAN (o se añadió antes por enlace), sale
   // una sola vez (como pareja).
   const partners = new Set([...peers.values()].filter((p) => p.platform === 'partner').map((p) => p.addr));
+  const nearby = new Set([...peers.values()].filter((p) => p.platform !== 'remote' && p.platform !== 'partner' && p.code).map((p) => p.code));
   const list = [...peers.values()]
     .filter((p) => p.platform === 'partner' || (!partners.has(p.code) && !partners.has(p.addr)))
+    // A device added by its code that is also on this network is shown once, as the nearby one.
+    .filter((p) => p.platform !== 'remote' || !nearby.has(p.addr))
     .sort((a, b) => (b.platform === 'partner') - (a.platform === 'partner') || a.name.localeCompare(b.name));
   const html = list.length
     ? list.map(peerRow).join('')

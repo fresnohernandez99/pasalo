@@ -45,6 +45,10 @@ use crate::Error;
 
 pub const PROTOCOL_VERSION: u32 = 1;
 pub const DISCOVERY_PORT: u16 = 4645;
+/// Where devices that cannot open `DISCOVERY_PORT` listen instead (a PS4 only
+/// lets an app have ports 40000 to 40999). A device announces there too
+/// when asked to (`Discovery::start_reaching_restricted`).
+pub const RESTRICTED_DISCOVERY_PORT: u16 = 40645;
 pub const TRANSFER_PORT: u16 = 4646;
 
 pub(crate) const CHUNK: usize = 256 * 1024;
